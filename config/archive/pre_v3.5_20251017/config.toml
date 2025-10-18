@@ -1,0 +1,11 @@
+[trading]
+# Paper trading mode (no real trades)
+paper_trading = true
+
+# Starting virtual balance for paper trading
+paper_balance_sol = 10.0
+paper_balance_usdc = 1000.0
+
+# Track performance
+track_performance = true
+log_trades = true

@@ -1,0 +1,281 @@
+[package]
+name = "solana-grid-bot"
+version = "0.2.5"  # 🔥 V2.5 - Regime Gate + Smart Fees + Order Lifecycle!
+edition = "2021"
+rust-version = "1.75"
+authors = ["J-MC <jmc@solana-trading.com>"]
+description = "⚡ Production-grade Solana grid trading bot with V2.5 enhancements: Market Regime Gate, Smart Fee Filtering, Dynamic Order Lifecycle, and AI-powered optimization"
+documentation = "https://docs.rs/solana-grid-bot"
+homepage = "https://github.com/j-mc/solana-grid-bot"
+repository = "https://github.com/j-mc/solana-grid-bot"
+readme = "README.md"
+license = "MIT OR Apache-2.0"
+keywords = ["solana", "trading", "defi", "grid-bot", "crypto"]
+categories = ["finance", "algorithms", "cryptography::cryptocurrencies"]
+publish = false
+exclude = [
+    ".github/*",
+    "docs/*",
+    "*.log",
+    "*.db",
+    "target/*",
+    "results/*",
+    "logs/*",
+    "node_modules/*",
+]
+
+# ═══════════════════════════════════════════════════════════════════════════
+# DEPENDENCIES - V2.5 Optimized for Maximum Performance
+# ═══════════════════════════════════════════════════════════════════════════
+
+[dependencies]
+# ───────────────────────────────────────────────────────────────────────────
+# Core Runtime & Async (Tokio 1.47 - Latest stable!)
+# ───────────────────────────────────────────────────────────────────────────
+tokio = { version = "1.47", features = ["full", "tracing"] }
+anyhow = "1.0"
+thiserror = "2.0"
+log = "0.4"
+env_logger = "0.11"
+async-trait = "0.1"
+futures = "0.3"
+
+# ───────────────────────────────────────────────────────────────────────────
+# Solana Blockchain (v3.0 - Production Ready!)
+# ───────────────────────────────────────────────────────────────────────────
+solana-client = "3.0"
+solana-sdk = "3.0"
+
+# ⚠️ CRITICAL: Force compatible versions to resolve dependency conflicts
+ahash = "0.8.11"
+hashbrown = "0.14"
+
+# ───────────────────────────────────────────────────────────────────────────
+# Serialization & Data Structures
+# ───────────────────────────────────────────────────────────────────────────
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "0.8"
+chrono = { version = "0.4", features = ["serde", "clock"] }
+uuid = { version = "1.11", features = ["v4", "serde"] }
+
+# ───────────────────────────────────────────────────────────────────────────
+# Networking & HTTP (rustls for security & performance)
+# ───────────────────────────────────────────────────────────────────────────
+reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+url = "2.5"
+
+# ───────────────────────────────────────────────────────────────────────────
+# Configuration Management
+# ───────────────────────────────────────────────────────────────────────────
+config = { version = "0.14", default-features = false, features = ["toml"] }
+dotenv = "0.15"
+validator = { version = "0.18", features = ["derive"] }
+
+# ───────────────────────────────────────────────────────────────────────────
+# CLI & User Interface - V2.5 GIGA MODE! 🔥💎🚀
+# ───────────────────────────────────────────────────────────────────────────
+clap = { version = "4.5", features = ["derive", "color", "suggestions", "env"] }
+colored = "2.1"
+dialoguer = "0.11"
+indicatif = "0.17"
+
+# ───────────────────────────────────────────────────────────────────────────
+# High-Performance Data Structures (Lock-Free Concurrency!)
+# ───────────────────────────────────────────────────────────────────────────
+dashmap = "6.1"          # Lock-free HashMap - CRITICAL for real-time pricing
+crossbeam = "0.8"        # Lock-free channels and utilities
+parking_lot = "0.12"     # Fast mutex replacement (~3x faster than std)
+arc-swap = "1.7"         # Lock-free atomic Arc swaps
+
+# ───────────────────────────────────────────────────────────────────────────
+# Utilities & Performance
+# ───────────────────────────────────────────────────────────────────────────
+fastrand = "2.3"
+lazy_static = "1.5"
+glob = "0.3"             # For result file pattern matching
+
+# ───────────────────────────────────────────────────────────────────────────
+# Optional Dependencies (Feature-Gated for Lean Builds)
+# ───────────────────────────────────────────────────────────────────────────
+
+# ✨ WebSocket support with TLS for real-time feeds (10-100x faster than HTTP!)
+tokio-tungstenite = { version = "0.28", features = ["rustls-tls-native-roots"], optional = true }
+futures-util = { version = "0.3", optional = true }
+
+# Database persistence for production
+sqlx = { version = "0.8", features = ["postgres", "runtime-tokio", "chrono", "uuid"], optional = true }
+
+# Prometheus metrics for monitoring
+prometheus = { version = "0.13", optional = true }
+
+# Advanced tracing & observability
+tracing = { version = "0.1", optional = true }
+tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
+
+# Redis caching for high-frequency data
+redis = { version = "0.26", features = ["tokio-comp", "connection-manager"], optional = true }
+
+# ═══════════════════════════════════════════════════════════════════════════
+# DEVELOPMENT DEPENDENCIES - Testing & Benchmarking
+# ═══════════════════════════════════════════════════════════════════════════
+
+[dev-dependencies]
+tokio-test = "0.4"
+criterion = { version = "0.5", features = ["async_tokio", "html_reports"] }
+mockito = "1.5"
+proptest = "1.5"
+pretty_assertions = "1.4"
+
+# ═══════════════════════════════════════════════════════════════════════════
+# FEATURE FLAGS - V2.5 Modular Architecture
+# ═══════════════════════════════════════════════════════════════════════════
+
+[features]
+default = ["simulation", "v25-enhancements"]
+
+# ── V2.5 Features ──────────────────────────────────────────────────────────
+v25-enhancements = []     # ✅ Market Regime Gate + Smart Fees + Order Lifecycle
+regime-gate = []          # 🚫 Market regime detection & auto-pause
+smart-fees = []           # 💰 Dynamic fee filtering per regime
+order-lifecycle = []      # 🔄 Auto-refresh & staleness detection
+dynamic-spacing = []      # 📊 Volatility-based grid spacing
+
+# ── Trading Modes (mutually exclusive) ─────────────────────────────────────
+simulation = []           # ✅ Safe simulation mode (no real orders)
+paper-trading = []        # 📝 Paper trading (tracks but doesn't execute)
+live-trading = []         # ⚠️  LIVE MODE - Real money! USE WITH CAUTION!
+
+# ── Optional Integrations ──────────────────────────────────────────────────
+websockets = ["tokio-tungstenite", "futures-util"]
+database = ["sqlx"]
+metrics = ["prometheus"]
+tracing-full = ["tracing", "tracing-subscriber"]
+caching = ["redis"]
+
+# ── Feature Bundles ────────────────────────────────────────────────────────
+full = ["v25-enhancements", "websockets", "database", "metrics", "tracing-full", "caching"]
+production = ["live-trading", "v25-enhancements", "database", "metrics", "tracing-full"]
+development = ["simulation", "v25-enhancements", "tracing-full"]
+
+# ═══════════════════════════════════════════════════════════════════════════
+# BUILD PROFILES - Maximum Performance Optimization
+# ═══════════════════════════════════════════════════════════════════════════
+
+[profile.dev]
+opt-level = 0               # No optimization for faster compilation
+debug = true                # Full debug symbols
+incremental = true          # Incremental compilation
+split-debuginfo = "unpacked"  # Faster debug builds on macOS
+
+[profile.release]
+opt-level = 3               # Maximum optimization
+lto = "fat"                # Aggressive link-time optimization (37% faster!)
+codegen-units = 1          # Single codegen unit for best performance
+strip = true               # Strip debug symbols (smaller binary)
+panic = "abort"            # Abort on panic (no unwinding, faster)
+overflow-checks = false    # Disable overflow checks in release
+
+[profile.release-with-debug]
+inherits = "release"
+debug = true               # Keep debug info for profiling
+strip = false
+
+[profile.bench]
+inherits = "release"
+debug = true               # Debug symbols for flamegraphs
+
+# ═══════════════════════════════════════════════════════════════════════════
+# BINARY TARGETS
+# ═══════════════════════════════════════════════════════════════════════════
+
+[[bin]]
+name = "solana-grid-bot"
+path = "src/main.rs"
+required-features = []
+
+# ═══════════════════════════════════════════════════════════════════════════
+# EXAMPLES - V2.5 Testing & Analysis Suite
+# ═══════════════════════════════════════════════════════════════════════════
+
+# ── V2.5 Core Examples ─────────────────────────────────────────────────────
+[[example]]
+name = "giga_test"
+path = "examples/giga_test.rs"
+required-features = ["v25-enhancements"]
+
+[[example]]
+name = "auto_optimizer"
+path = "examples/auto_optimizer.rs"
+required-features = []
+
+[[example]]
+name = "profile_test"
+path = "examples/profile_test.rs"
+required-features = []
+
+# ── Production Examples ────────────────────────────────────────────────────
+[[example]]
+name = "paper_trading_demo"
+path = "examples/paper_trading_demo.rs"
+required-features = []
+
+[[example]]
+name = "extended_test"
+path = "examples/extended_test.rs"
+required-features = []
+
+# ── WebSocket Examples (Optional) ──────────────────────────────────────────
+[[example]]
+name = "debug_websocket"
+path = "examples/debug_websocket.rs"
+required-features = ["websockets"]
+
+[[example]]
+name = "test_websocket"
+path = "examples/test_websocket.rs"
+required-features = ["websockets"]
+
+[[example]]
+name = "debug_pyth"
+path = "examples/debug_pyth.rs"
+required-features = ["websockets"]
+
+# ═══════════════════════════════════════════════════════════════════════════
+# BENCHMARKS - Performance Testing
+# ═══════════════════════════════════════════════════════════════════════════
+
+[[bench]]
+name = "price_feed_benchmark"
+harness = false
+
+[[bench]]
+name = "order_placement_benchmark"
+harness = false
+
+# ═══════════════════════════════════════════════════════════════════════════
+# METADATA - Documentation & Release Configuration
+# ═══════════════════════════════════════════════════════════════════════════
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+targets = ["x86_64-unknown-linux-gnu", "aarch64-apple-darwin"]
+
+[package.metadata.cargo-machete]
+ignored = ["lazy_static"]  # Used via macro expansion
+
+[package.metadata.release]
+sign-commit = true
+sign-tag = true
+pre-release-commit-message = "chore: Release v{{version}} 🚀"
+tag-message = "Release v{{version}} - PROJECT FLASH"
+tag-name = "v{{version}}"
+
+# ═══════════════════════════════════════════════════════════════════════════
+# WORKSPACE CONFIGURATION (Optional - for future multi-crate setup)
+# ═══════════════════════════════════════════════════════════════════════════
+
+# [workspace]
+# members = [".", "crates/*"]
+# resolver = "2"

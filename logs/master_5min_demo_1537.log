@@ -1,0 +1,2107 @@
+warning: field `last_lifecycle_check` is never read
+  --> src/strategies/grid_rebalancer.rs:96:5
+   |
+83 | pub struct GridRebalancer {
+   |            -------------- field in this struct
+...
+96 |     last_lifecycle_check: Arc<tokio::sync::Mutex<Instant>>,
+   |     ^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` on by default
+
+warning: method `should_place_order` is never used
+   --> src/strategies/grid_rebalancer.rs:187:14
+    |
+103 | impl GridRebalancer {
+    | ------------------- method in this implementation
+...
+187 |     async fn should_place_order(&self, side: OrderSide, price: f64, stats: &GridStats) -> bool {
+    |              ^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct
+  --> src/config/mod.rs:31:1
+   |
+31 | pub struct Config {
+   | ^^^^^^^^^^^^^^^^^
+   |
+note: the lint level is defined here
+  --> src/lib.rs:33:5
+   |
+33 |     missing_docs,
+   |     ^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+  --> src/config/mod.rs:32:5
+   |
+32 |     pub bot: BotConfig,
+   |     ^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+  --> src/config/mod.rs:33:5
+   |
+33 |     pub network: NetworkConfig,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+  --> src/config/mod.rs:34:5
+   |
+34 |     pub trading: TradingConfig,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+  --> src/config/mod.rs:35:5
+   |
+35 |     pub strategies: StrategiesConfig,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+  --> src/config/mod.rs:36:5
+   |
+36 |     pub risk: RiskConfig,
+   |     ^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+  --> src/config/mod.rs:39:5
+   |
+39 |     pub pyth: PythConfig,
+   |     ^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+  --> src/config/mod.rs:42:5
+   |
+42 |     pub performance: PerformanceConfig,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+  --> src/config/mod.rs:45:5
+   |
+45 |     pub logging: LoggingConfig,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+  --> src/config/mod.rs:48:5
+   |
+48 |     pub metrics: MetricsConfig,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+  --> src/config/mod.rs:51:5
+   |
+51 |     pub paper_trading: PaperTradingConfig,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+  --> src/config/mod.rs:54:5
+   |
+54 |     pub database: DatabaseConfig,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+  --> src/config/mod.rs:57:5
+   |
+57 |     pub alerts: AlertsConfig,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct
+  --> src/config/mod.rs:65:1
+   |
+65 | pub struct BotConfig {
+   | ^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+  --> src/config/mod.rs:66:5
+   |
+66 |     pub name: String,
+   |     ^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+  --> src/config/mod.rs:67:5
+   |
+67 |     pub version: String,
+   |     ^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+  --> src/config/mod.rs:68:5
+   |
+68 |     pub environment: String,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct
+  --> src/config/mod.rs:76:1
+   |
+76 | pub struct NetworkConfig {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+  --> src/config/mod.rs:77:5
+   |
+77 |     pub cluster: String,
+   |     ^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+  --> src/config/mod.rs:78:5
+   |
+78 |     pub rpc_url: String,
+   |     ^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+  --> src/config/mod.rs:79:5
+   |
+79 |     pub commitment: String,
+   |     ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct
+  --> src/config/mod.rs:87:1
+   |
+87 | pub struct TradingConfig {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+  --> src/config/mod.rs:91:5
+   |
+91 |     pub grid_levels: u32,
+   |     ^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+  --> src/config/mod.rs:92:5
+   |
+92 |     pub grid_spacing_percent: f64,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+  --> src/config/mod.rs:93:5
+   |
+93 |     pub min_order_size: f64,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+  --> src/config/mod.rs:94:5
+   |
+94 |     pub max_position_size: f64,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/config/mod.rs:100:5
+    |
+100 |     pub enable_dynamic_grid: bool,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/config/mod.rs:103:5
+    |
+103 |     pub reposition_threshold: f64,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/config/mod.rs:106:5
+    |
+106 |     pub volatility_window: u32,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/config/mod.rs:112:5
+    |
+112 |     pub enable_auto_rebalance: bool,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/config/mod.rs:115:5
+    |
+115 |     pub rebalance_threshold_pct: f64,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/config/mod.rs:118:5
+    |
+118 |     pub rebalance_cooldown_secs: u64,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/config/mod.rs:120:5
+    |
+120 |     pub min_usdc_reserve: f64,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/config/mod.rs:121:5
+    |
+121 |     pub min_sol_reserve: f64,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/config/mod.rs:127:5
+    |
+127 |     pub max_orders_per_side: u32,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/config/mod.rs:130:5
+    |
+130 |     pub order_refresh_interval_secs: u64,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/config/mod.rs:133:5
+    |
+133 |     pub enable_market_orders: bool,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/config/mod.rs:136:5
+    |
+136 |     pub enable_fee_optimization: bool,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/config/mod.rs:142:5
+    |
+142 |     pub min_profit_threshold_pct: f64,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/config/mod.rs:145:5
+    |
+145 |     pub max_slippage_pct: f64,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/config/mod.rs:151:5
+    |
+151 |     pub enable_price_bounds: bool,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/config/mod.rs:154:5
+    |
+154 |     pub lower_price_bound: f64,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/config/mod.rs:157:5
+    |
+157 |     pub upper_price_bound: f64,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct
+   --> src/config/mod.rs:213:1
+    |
+213 | pub struct StrategiesConfig {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/config/mod.rs:224:5
+    |
+224 |     pub momentum: MomentumStrategyConfig,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/config/mod.rs:227:5
+    |
+227 |     pub mean_reversion: MeanReversionStrategyConfig,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/config/mod.rs:230:5
+    |
+230 |     pub rsi: RsiStrategyConfig,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/config/mod.rs:237:5
+    |
+237 |     pub require_timeframe_alignment: bool,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct
+   --> src/config/mod.rs:241:1
+    |
+241 | pub struct GridStrategyConfig {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/config/mod.rs:242:5
+    |
+242 |     pub enabled: bool,
+    |     ^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/config/mod.rs:243:5
+    |
+243 |     pub weight: f64,
+    |     ^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/config/mod.rs:246:5
+    |
+246 |     pub min_confidence: f64,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct
+   --> src/config/mod.rs:250:1
+    |
+250 | pub struct MomentumStrategyConfig {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/config/mod.rs:251:5
+    |
+251 |     pub enabled: bool,
+    |     ^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/config/mod.rs:252:5
+    |
+252 |     pub weight: f64,
+    |     ^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/config/mod.rs:253:5
+    |
+253 |     pub min_confidence: f64,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/config/mod.rs:254:5
+    |
+254 |     pub lookback_period: usize,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/config/mod.rs:255:5
+    |
+255 |     pub threshold: f64,
+    |     ^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct
+   --> src/config/mod.rs:259:1
+    |
+259 | pub struct MeanReversionStrategyConfig {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/config/mod.rs:260:5
+    |
+260 |     pub enabled: bool,
+    |     ^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/config/mod.rs:261:5
+    |
+261 |     pub weight: f64,
+    |     ^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/config/mod.rs:262:5
+    |
+262 |     pub min_confidence: f64,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/config/mod.rs:263:5
+    |
+263 |     pub sma_period: usize,
+    |     ^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/config/mod.rs:264:5
+    |
+264 |     pub std_dev_multiplier: f64,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct
+   --> src/config/mod.rs:268:1
+    |
+268 | pub struct RsiStrategyConfig {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/config/mod.rs:269:5
+    |
+269 |     pub enabled: bool,
+    |     ^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/config/mod.rs:270:5
+    |
+270 |     pub weight: f64,
+    |     ^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/config/mod.rs:271:5
+    |
+271 |     pub min_confidence: f64,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/config/mod.rs:272:5
+    |
+272 |     pub period: usize,
+    |     ^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/config/mod.rs:273:5
+    |
+273 |     pub oversold_threshold: f64,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/config/mod.rs:274:5
+    |
+274 |     pub overbought_threshold: f64,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct
+   --> src/config/mod.rs:338:1
+    |
+338 | pub struct RiskConfig {
+    | ^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/config/mod.rs:339:5
+    |
+339 |     pub max_position_size_pct: f64,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/config/mod.rs:340:5
+    |
+340 |     pub max_drawdown_pct: f64,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/config/mod.rs:342:5
+    |
+342 |     pub stop_loss_pct: f64,
+    |     ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/config/mod.rs:343:5
+    |
+343 |     pub take_profit_pct: f64,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/config/mod.rs:346:5
+    |
+346 |     pub enable_circuit_breaker: bool,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/config/mod.rs:348:5
+    |
+348 |     pub circuit_breaker_threshold_pct: f64,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/config/mod.rs:349:5
+    |
+349 |     pub circuit_breaker_cooldown_secs: u64,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct
+   --> src/config/mod.rs:357:1
+    |
+357 | pub struct PythConfig {
+    | ^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/config/mod.rs:358:5
+    |
+358 |     pub http_endpoint: String,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/config/mod.rs:359:5
+    |
+359 |     pub feed_ids: Vec<String>,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/config/mod.rs:362:5
+    |
+362 |     pub update_interval_ms: u64,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct
+   --> src/config/mod.rs:382:1
+    |
+382 | pub struct PerformanceConfig {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/config/mod.rs:384:5
+    |
+384 |     pub cycle_interval_ms: u64,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/config/mod.rs:387:5
+    |
+387 |     pub startup_delay_ms: u64,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct
+   --> src/config/mod.rs:400:1
+    |
+400 | pub struct LoggingConfig {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/config/mod.rs:401:5
+    |
+401 |     pub level: String,
+    |     ^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/config/mod.rs:402:5
+    |
+402 |     pub file_path: String,
+    |     ^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/config/mod.rs:405:5
+    |
+405 |     pub enable_file_logging: bool,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct
+   --> src/config/mod.rs:419:1
+    |
+419 | pub struct MetricsConfig {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/config/mod.rs:421:5
+    |
+421 |     pub enable_metrics: bool,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/config/mod.rs:424:5
+    |
+424 |     pub stats_interval: u64,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct
+   --> src/config/mod.rs:437:1
+    |
+437 | pub struct PaperTradingConfig {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/config/mod.rs:439:5
+    |
+439 |     pub initial_usdc: f64,
+    |     ^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/config/mod.rs:442:5
+    |
+442 |     pub initial_sol: f64,
+    |     ^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/config/mod.rs:445:5
+    |
+445 |     pub test_duration_hours: usize,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct
+   --> src/config/mod.rs:459:1
+    |
+459 | pub struct DatabaseConfig {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/config/mod.rs:461:5
+    |
+461 |     pub enabled: bool,
+    |     ^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/config/mod.rs:464:5
+    |
+464 |     pub url: String,
+    |     ^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct
+   --> src/config/mod.rs:468:1
+    |
+468 | pub struct AlertsConfig {
+    | ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/config/mod.rs:470:5
+    |
+470 |     pub enabled: bool,
+    |     ^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a type alias
+  --> src/trading/mod.rs:34:1
+   |
+34 | pub type LivePriceUpdate = HttpPriceUpdate;
+   | ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a function
+  --> src/trading/mod.rs:41:1
+   |
+41 | pub async fn get_live_price(feed_id: &str) -> Option<f64> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct
+  --> src/trading/price_feed.rs:39:1
+   |
+39 | pub struct FeedError(String);
+   | ^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct
+  --> src/trading/price_feed.rs:54:1
+   |
+54 | pub struct PricePoint {
+   | ^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+  --> src/trading/price_feed.rs:55:5
+   |
+55 |     pub price:     f64,
+   |     ^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+  --> src/trading/price_feed.rs:56:5
+   |
+56 |     pub timestamp: DateTime<Utc>,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a variant
+  --> src/trading/price_feed.rs:62:5
+   |
+62 |     Mock,       // Emergency fallback
+   |     ^^^^
+
+warning: missing documentation for a variant
+  --> src/trading/price_feed.rs:63:5
+   |
+63 |     Http,       // Reliable fallback (1s updates)
+   |     ^^^^
+
+warning: missing documentation for a method
+  --> src/trading/price_feed.rs:69:5
+   |
+69 |     pub fn emoji(&self) -> &'static str {
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a method
+  --> src/trading/price_feed.rs:79:5
+   |
+79 |     pub fn name(&self) -> &'static str {
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/trading/price_feed.rs:102:5
+    |
+102 |     pub mode: FeedMode,
+    |     ^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/trading/price_feed.rs:103:5
+    |
+103 |     pub total_updates: u64,
+    |     ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/trading/price_feed.rs:104:5
+    |
+104 |     pub total_requests: u64,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/trading/price_feed.rs:105:5
+    |
+105 |     pub ws_failures: u32,
+    |     ^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/trading/price_feed.rs:106:5
+    |
+106 |     pub http_failures: u32,
+    |     ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/trading/price_feed.rs:107:5
+    |
+107 |     pub history_len: usize,
+    |     ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/trading/price_feed.rs:108:5
+    |
+108 |     pub current_volatility: f64,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/trading/price_feed.rs:109:5
+    |
+109 |     pub avg_ws_latency_ms: f64,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/trading/price_feed.rs:110:5
+    |
+110 |     pub avg_http_latency_ms: f64,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/trading/price_feed.rs:111:5
+    |
+111 |     pub cache_hit_rate: f64,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/trading/price_feed.rs:112:5
+    |
+112 |     pub uptime_seconds: u64,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> src/trading/price_feed.rs:120:1
+    |
+120 | / pub struct PriceFeed {
+121 | |     // Core data
+122 | |     current:     Arc<RwLock<f64>>,
+123 | |     history:     Arc<RwLock<VecDeque<PricePoint>>>,
+...   |
+156 | |     max_ws_failures: u32,
+157 | | }
+    | |_^
+    |
+note: the lint level is defined here
+   --> src/lib.rs:34:5
+    |
+ 34 |     missing_debug_implementations,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a method
+   --> src/trading/price_feed.rs:212:5
+    |
+212 |     pub async fn start(&self) -> Result<(), Box<dyn Error + Send + Sync>> {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a method
+   --> src/trading/price_feed.rs:416:5
+    |
+416 |     pub async fn latest_price(&self) -> f64 {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a method
+   --> src/trading/price_feed.rs:420:5
+    |
+420 |     pub async fn history_len(&self) -> usize {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a method
+   --> src/trading/price_feed.rs:424:5
+    |
+424 |     pub async fn get_mode(&self) -> FeedMode {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a method
+   --> src/trading/price_feed.rs:428:5
+    |
+428 |     pub async fn volatility(&self) -> f64 {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a method
+   --> src/trading/price_feed.rs:443:5
+    |
+443 |     pub async fn get_metrics(&self) -> PriceFeedMetrics {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+  --> src/trading/pyth_price_feed.rs:42:1
+   |
+42 | / pub struct PythPriceFeed {
+43 | |     current_price: Arc<RwLock<f64>>,
+44 | |     client: reqwest::Client,
+45 | |     is_healthy: Arc<AtomicBool>,
+...  |
+49 | |     cumulative_latency_us: Arc<AtomicU64>,
+50 | | }
+   | |_^
+
+warning: missing documentation for a struct
+  --> src/trading/pyth_price_feed.rs:42:1
+   |
+42 | pub struct PythPriceFeed {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for an associated function
+  --> src/trading/pyth_price_feed.rs:53:5
+   |
+53 |     pub fn new() -> Result<Self, Box<dyn Error>> {
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a method
+  --> src/trading/pyth_price_feed.rs:74:5
+   |
+74 |     pub async fn start(&self) -> Result<(), Box<dyn Error + Send + Sync>> {
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a method
+   --> src/trading/pyth_price_feed.rs:241:5
+    |
+241 |     pub async fn latest_price(&self) -> f64 {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a method
+   --> src/trading/pyth_price_feed.rs:246:5
+    |
+246 |     pub fn is_healthy(&self) -> bool {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a method
+   --> src/trading/pyth_price_feed.rs:251:5
+    |
+251 |     pub fn success_rate(&self) -> f64 {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a method
+   --> src/trading/pyth_price_feed.rs:260:5
+    |
+260 |     pub fn avg_latency_ms(&self) -> f64 {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> src/trading/pyth_http.rs:151:1
+    |
+151 | / pub struct PythHttpFeed {
+152 | |     /// Thread-safe price cache (uses normalized IDs without 0x)
+153 | |     price_cache: Arc<DashMap<String, PriceUpdate>>,
+...   |
+171 | |     last_update_micros: Arc<AtomicU64>,
+172 | | }
+    | |_^
+
+warning: missing documentation for a variant
+  --> src/trading/paper_trader.rs:41:5
+   |
+41 |     Buy,
+   |     ^^^
+
+warning: missing documentation for a variant
+  --> src/trading/paper_trader.rs:42:5
+   |
+42 |     Sell,
+   |     ^^^^
+
+warning: missing documentation for a variant
+  --> src/trading/paper_trader.rs:48:5
+   |
+48 |     Open,
+   |     ^^^^
+
+warning: missing documentation for a variant
+  --> src/trading/paper_trader.rs:49:5
+   |
+49 |     PartiallyFilled,
+   |     ^^^^^^^^^^^^^^^
+
+warning: missing documentation for a variant
+  --> src/trading/paper_trader.rs:50:5
+   |
+50 |     Filled,
+   |     ^^^^^^
+
+warning: missing documentation for a variant
+  --> src/trading/paper_trader.rs:51:5
+   |
+51 |     Cancelled,
+   |     ^^^^^^^^^
+
+warning: missing documentation for a variant
+  --> src/trading/paper_trader.rs:57:5
+   |
+57 |     Limit,
+   |     ^^^^^
+
+warning: missing documentation for a variant
+  --> src/trading/paper_trader.rs:58:5
+   |
+58 |     Market,
+   |     ^^^^^^
+
+warning: missing documentation for a struct field
+  --> src/trading/paper_trader.rs:64:5
+   |
+64 |     pub id: String,
+   |     ^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+  --> src/trading/paper_trader.rs:65:5
+   |
+65 |     pub side: OrderSide,
+   |     ^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+  --> src/trading/paper_trader.rs:66:5
+   |
+66 |     pub order_type: OrderType,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+  --> src/trading/paper_trader.rs:67:5
+   |
+67 |     pub status: OrderStatus,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+  --> src/trading/paper_trader.rs:68:5
+   |
+68 |     pub price: f64,
+   |     ^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+  --> src/trading/paper_trader.rs:69:5
+   |
+69 |     pub size: f64,
+   |     ^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+  --> src/trading/paper_trader.rs:70:5
+   |
+70 |     pub filled_size: f64,
+   |     ^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+  --> src/trading/paper_trader.rs:71:5
+   |
+71 |     pub created_at: i64,
+   |     ^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+  --> src/trading/paper_trader.rs:72:5
+   |
+72 |     pub filled_at: Option<i64>,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+  --> src/trading/paper_trader.rs:73:5
+   |
+73 |     pub fee_paid: f64,
+   |     ^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+  --> src/trading/paper_trader.rs:96:5
+   |
+96 |     pub order_id: String,
+   |     ^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+  --> src/trading/paper_trader.rs:97:5
+   |
+97 |     pub side: OrderSide,
+   |     ^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+  --> src/trading/paper_trader.rs:98:5
+   |
+98 |     pub price: f64,
+   |     ^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+  --> src/trading/paper_trader.rs:99:5
+   |
+99 |     pub size: f64,
+   |     ^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/trading/paper_trader.rs:100:5
+    |
+100 |     pub fee: f64,
+    |     ^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/trading/paper_trader.rs:101:5
+    |
+101 |     pub timestamp: i64,
+    |     ^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/trading/paper_trader.rs:102:5
+    |
+102 |     pub pnl: Option<f64>,
+    |     ^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/trading/paper_trader.rs:108:5
+    |
+108 |     pub balances: HashMap<String, f64>,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/trading/paper_trader.rs:109:5
+    |
+109 |     pub initial_balance_usdc: f64,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/trading/paper_trader.rs:110:5
+    |
+110 |     pub initial_balance_sol: f64,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a method
+   --> src/trading/paper_trader.rs:135:5
+    |
+135 |     pub fn set_balance(&mut self, token: &str, amount: f64) {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a method
+   --> src/trading/paper_trader.rs:139:5
+    |
+139 |     pub fn add_balance(&mut self, token: &str, amount: f64) {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a method
+   --> src/trading/paper_trader.rs:144:5
+    |
+144 |     pub fn sub_balance(&mut self, token: &str, amount: f64) -> Result<()> {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/trading/paper_trader.rs:181:5
+    |
+181 |     pub total_trades: usize,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/trading/paper_trader.rs:182:5
+    |
+182 |     pub winning_trades: usize,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/trading/paper_trader.rs:183:5
+    |
+183 |     pub losing_trades: usize,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/trading/paper_trader.rs:184:5
+    |
+184 |     pub total_pnl: f64,
+    |     ^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/trading/paper_trader.rs:185:5
+    |
+185 |     pub total_fees: f64,
+    |     ^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/trading/paper_trader.rs:186:5
+    |
+186 |     pub win_rate: f64,
+    |     ^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/trading/paper_trader.rs:187:5
+    |
+187 |     pub avg_win: f64,
+    |     ^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/trading/paper_trader.rs:188:5
+    |
+188 |     pub avg_loss: f64,
+    |     ^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/trading/paper_trader.rs:189:5
+    |
+189 |     pub largest_win: f64,
+    |     ^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/trading/paper_trader.rs:190:5
+    |
+190 |     pub largest_loss: f64,
+    |     ^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/trading/paper_trader.rs:191:5
+    |
+191 |     pub profit_factor: f64,
+    |     ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> src/trading/paper_trader.rs:200:1
+    |
+200 | / pub struct PaperTradingEngine {
+201 | |     wallet: Arc<RwLock<VirtualWallet>>,
+202 | |     open_orders: Arc<RwLock<HashMap<String, Order>>>,
+203 | |     trade_history: Arc<RwLock<VecDeque<Trade>>>,
+...   |
+207 | |     next_order_id: Arc<RwLock<u64>>,
+208 | | }
+    | |_^
+
+warning: missing documentation for a struct field
+   --> src/strategies/mod.rs:107:9
+    |
+107 |         price: f64, 
+    |         ^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/strategies/mod.rs:108:9
+    |
+108 |         size: f64, 
+    |         ^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/strategies/mod.rs:109:9
+    |
+109 |         reason: String,
+    |         ^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/strategies/mod.rs:110:9
+    |
+110 |         confidence: f64, // 0.0 - 1.0
+    |         ^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/strategies/mod.rs:115:9
+    |
+115 |         price: f64, 
+    |         ^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/strategies/mod.rs:116:9
+    |
+116 |         size: f64, 
+    |         ^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/strategies/mod.rs:117:9
+    |
+117 |         reason: String,
+    |         ^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/strategies/mod.rs:118:9
+    |
+118 |         confidence: f64,
+    |         ^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/strategies/mod.rs:122:12
+    |
+122 |     Hold { reason: Option<String> },
+    |            ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/strategies/mod.rs:126:9
+    |
+126 |         price: f64, 
+    |         ^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/strategies/mod.rs:127:9
+    |
+127 |         size: f64, 
+    |         ^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/strategies/mod.rs:128:9
+    |
+128 |         reason: String,
+    |         ^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/strategies/mod.rs:129:9
+    |
+129 |         confidence: f64,
+    |         ^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/strategies/mod.rs:134:9
+    |
+134 |         price: f64, 
+    |         ^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/strategies/mod.rs:135:9
+    |
+135 |         size: f64, 
+    |         ^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/strategies/mod.rs:136:9
+    |
+136 |         reason: String,
+    |         ^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/strategies/mod.rs:137:9
+    |
+137 |         confidence: f64,
+    |         ^^^^^^^^^^^^^^^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> src/strategies/mod.rs:460:1
+    |
+460 | / pub struct StrategyManager {
+461 | |     strategies: Vec<Box<dyn Strategy>>,
+462 | |     active_strategy: Option<usize>,
+463 | |     consensus_mode: ConsensusMode,
+464 | |     last_consensus: Option<Signal>,
+465 | | }
+    | |_^
+
+warning: missing documentation for a module
+   --> src/strategies/mod.rs:833:1
+    |
+833 | pub mod momentum {
+    | ^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a module
+   --> src/strategies/mod.rs:863:1
+    |
+863 | pub mod mean_reversion {
+    | ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a module
+   --> src/strategies/mod.rs:893:1
+    |
+893 | pub mod rsi {
+    | ^^^^^^^^^^^
+
+warning: missing documentation for a module
+   --> src/strategies/mod.rs:923:1
+    |
+923 | pub mod arbitrage {
+    | ^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct
+  --> src/strategies/grid_rebalancer.rs:26:1
+   |
+26 | pub struct GridRebalancerConfig {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+  --> src/strategies/grid_rebalancer.rs:27:5
+   |
+27 |     pub grid_spacing: f64,
+   |     ^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+  --> src/strategies/grid_rebalancer.rs:28:5
+   |
+28 |     pub order_size: f64,
+   |     ^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+  --> src/strategies/grid_rebalancer.rs:29:5
+   |
+29 |     pub min_usdc_balance: f64,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+  --> src/strategies/grid_rebalancer.rs:30:5
+   |
+30 |     pub min_sol_balance: f64,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+  --> src/strategies/grid_rebalancer.rs:31:5
+   |
+31 |     pub enabled: bool,
+   |     ^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+  --> src/strategies/grid_rebalancer.rs:34:5
+   |
+34 |     pub enable_dynamic_spacing: bool,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+  --> src/strategies/grid_rebalancer.rs:35:5
+   |
+35 |     pub enable_fee_filtering: bool,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+  --> src/strategies/grid_rebalancer.rs:36:5
+   |
+36 |     pub volatility_window_seconds: u64,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+  --> src/strategies/grid_rebalancer.rs:37:5
+   |
+37 |     pub max_spacing: f64,
+   |     ^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+  --> src/strategies/grid_rebalancer.rs:38:5
+   |
+38 |     pub min_spacing: f64,
+   |     ^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+  --> src/strategies/grid_rebalancer.rs:41:5
+   |
+41 |     pub enable_regime_gate: bool,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+  --> src/strategies/grid_rebalancer.rs:42:5
+   |
+42 |     pub min_volatility_to_trade: f64,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+  --> src/strategies/grid_rebalancer.rs:43:5
+   |
+43 |     pub pause_in_very_low_vol: bool,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+  --> src/strategies/grid_rebalancer.rs:46:5
+   |
+46 |     pub enable_order_lifecycle: bool,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+  --> src/strategies/grid_rebalancer.rs:47:5
+   |
+47 |     pub order_max_age_minutes: u64,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+  --> src/strategies/grid_rebalancer.rs:48:5
+   |
+48 |     pub order_refresh_interval_minutes: u64,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+  --> src/strategies/grid_rebalancer.rs:49:5
+   |
+49 |     pub min_orders_to_maintain: usize,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> src/strategies/grid_rebalancer.rs:83:1
+    |
+ 83 | / pub struct GridRebalancer {
+ 84 | |     config: GridRebalancerConfig,
+ 85 | |     current_price: Option<f64>,
+ 86 | |     price_history: Arc<tokio::sync::Mutex<Vec<(Instant, f64)>>>,
+...   |
+100 | |     last_signal: Arc<tokio::sync::Mutex<Option<Signal>>>,
+101 | | }
+    | |_^
+
+warning: missing documentation for a struct
+  --> src/strategies/grid_rebalancer.rs:83:1
+   |
+83 | pub struct GridRebalancer {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for an associated function
+   --> src/strategies/grid_rebalancer.rs:104:5
+    |
+104 |     pub fn new(config: GridRebalancerConfig) -> Self {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a method
+   --> src/strategies/grid_rebalancer.rs:133:5
+    |
+133 |     pub async fn update_price(&mut self, price: f64) {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a method
+   --> src/strategies/grid_rebalancer.rs:148:5
+    |
+148 |     pub async fn should_trade_now(&self) -> bool {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a method
+   --> src/strategies/grid_rebalancer.rs:238:5
+    |
+238 |     pub async fn grid_stats(&self) -> GridStats {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct
+   --> src/strategies/grid_rebalancer.rs:366:1
+    |
+366 | pub struct GridStats {
+    | ^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/strategies/grid_rebalancer.rs:367:5
+    |
+367 |     pub total_rebalances: u64,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/strategies/grid_rebalancer.rs:368:5
+    |
+368 |     pub rebalances_filtered: u64,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/strategies/grid_rebalancer.rs:369:5
+    |
+369 |     pub efficiency_percent: f64,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/strategies/grid_rebalancer.rs:370:5
+    |
+370 |     pub dynamic_spacing_enabled: bool,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/strategies/grid_rebalancer.rs:371:5
+    |
+371 |     pub current_spacing_percent: f64,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/strategies/grid_rebalancer.rs:372:5
+    |
+372 |     pub volatility: f64,
+    |     ^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/strategies/grid_rebalancer.rs:373:5
+    |
+373 |     pub market_regime: String,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/strategies/grid_rebalancer.rs:374:5
+    |
+374 |     pub trading_paused: bool,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> src/strategies/mod.rs:836:5
+    |
+836 |     pub struct MomentumStrategy;
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct
+   --> src/strategies/mod.rs:836:5
+    |
+836 |     pub struct MomentumStrategy;
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for an associated function
+   --> src/strategies/mod.rs:839:9
+    |
+839 |         pub fn new() -> Self {
+    |         ^^^^^^^^^^^^^^^^^^^^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> src/strategies/mod.rs:866:5
+    |
+866 |     pub struct MeanReversionStrategy;
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct
+   --> src/strategies/mod.rs:866:5
+    |
+866 |     pub struct MeanReversionStrategy;
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for an associated function
+   --> src/strategies/mod.rs:869:9
+    |
+869 |         pub fn new() -> Self {
+    |         ^^^^^^^^^^^^^^^^^^^^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> src/strategies/mod.rs:896:5
+    |
+896 |     pub struct RSIStrategy;
+    |     ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct
+   --> src/strategies/mod.rs:896:5
+    |
+896 |     pub struct RSIStrategy;
+    |     ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for an associated function
+   --> src/strategies/mod.rs:899:9
+    |
+899 |         pub fn new() -> Self {
+    |         ^^^^^^^^^^^^^^^^^^^^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> src/strategies/mod.rs:926:5
+    |
+926 |     pub struct ArbitrageStrategy;
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct
+   --> src/strategies/mod.rs:926:5
+    |
+926 |     pub struct ArbitrageStrategy;
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for an associated function
+   --> src/strategies/mod.rs:929:9
+    |
+929 |         pub fn new() -> Self {
+    |         ^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct
+ --> src/strategies/fee_filter.rs:8:1
+  |
+8 | pub struct FeeFilterConfig {
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+  --> src/strategies/fee_filter.rs:33:1
+   |
+33 | / pub struct FeeFilter {
+34 | |     config: FeeFilterConfig,
+35 | | }
+   | |_^
+
+warning: missing documentation for a struct
+  --> src/strategies/fee_filter.rs:33:1
+   |
+33 | pub struct FeeFilter {
+   | ^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for an associated function
+  --> src/strategies/fee_filter.rs:38:5
+   |
+38 |     pub fn new(config: FeeFilterConfig) -> Self {
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct
+ --> src/strategies/volatility_calc.rs:8:1
+  |
+8 | pub struct VolatilityCalculator {
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for an associated function
+  --> src/strategies/volatility_calc.rs:20:5
+   |
+20 |     pub fn new(max_samples: usize) -> Self {
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+  --> src/risk/position_sizer.rs:7:1
+   |
+ 7 | / pub struct PositionSizer {
+ 8 | |     max_position_usd: f64,
+ 9 | |     risk_per_trade_pct: f64,
+10 | |     kelly_fraction: f64,
+11 | | }
+   | |_^
+
+warning: missing documentation for a struct
+ --> src/risk/position_sizer.rs:7:1
+  |
+7 | pub struct PositionSizer {
+  | ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for an associated function
+  --> src/risk/position_sizer.rs:14:5
+   |
+14 |     pub fn new(config: &Config) -> Self {
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+  --> src/risk/stop_loss.rs:6:1
+   |
+ 6 | / pub struct StopLossManager {
+ 7 | |     enabled: bool,
+ 8 | |     stop_loss_pct: f64,
+ 9 | |     take_profit_pct: f64,
+10 | |     trailing_stop: bool,
+11 | |     highest_price: f64,
+12 | | }
+   | |_^
+
+warning: missing documentation for a struct
+ --> src/risk/stop_loss.rs:6:1
+  |
+6 | pub struct StopLossManager {
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for an associated function
+  --> src/risk/stop_loss.rs:15:5
+   |
+15 |     pub fn new(config: &Config) -> Self {
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a variant
+  --> src/risk/circuit_breaker.rs:47:5
+   |
+47 |     DailyLossLimit,
+   |     ^^^^^^^^^^^^^^
+
+warning: missing documentation for a variant
+  --> src/risk/circuit_breaker.rs:48:5
+   |
+48 |     MaxDrawdown,
+   |     ^^^^^^^^^^^
+
+warning: missing documentation for a variant
+  --> src/risk/circuit_breaker.rs:49:5
+   |
+49 |     ConsecutiveLosses,
+   |     ^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/risk/circuit_breaker.rs:243:5
+    |
+243 |     pub is_tripped: bool,
+    |     ^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/risk/circuit_breaker.rs:244:5
+    |
+244 |     pub trip_reason: Option<TripReason>,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/risk/circuit_breaker.rs:245:5
+    |
+245 |     pub consecutive_losses: u32,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/risk/circuit_breaker.rs:246:5
+    |
+246 |     pub daily_pnl: f64,
+    |     ^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/risk/circuit_breaker.rs:247:5
+    |
+247 |     pub current_drawdown_pct: f64,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/risk/circuit_breaker.rs:248:5
+    |
+248 |     pub cooldown_remaining: Option<Duration>,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct
+  --> src/metrics/mod.rs:10:1
+   |
+10 | pub struct PerformanceMetrics {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+  --> src/metrics/mod.rs:11:5
+   |
+11 |     pub total_trades: usize,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+  --> src/metrics/mod.rs:12:5
+   |
+12 |     pub winning_trades: usize,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+  --> src/metrics/mod.rs:13:5
+   |
+13 |     pub losing_trades: usize,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+  --> src/metrics/mod.rs:14:5
+   |
+14 |     pub win_rate: f64,
+   |     ^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+  --> src/metrics/mod.rs:15:5
+   |
+15 |     pub total_pnl: f64,
+   |     ^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+  --> src/metrics/mod.rs:16:5
+   |
+16 |     pub max_drawdown: f64,
+   |     ^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+  --> src/metrics/mod.rs:17:5
+   |
+17 |     pub sharpe_ratio: f64,
+   |     ^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+  --> src/metrics/mod.rs:18:5
+   |
+18 |     pub profit_factor: f64,
+   |     ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+  --> src/metrics/mod.rs:19:5
+   |
+19 |     pub avg_win: f64,
+   |     ^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+  --> src/metrics/mod.rs:20:5
+   |
+20 |     pub avg_loss: f64,
+   |     ^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+  --> src/metrics/mod.rs:21:5
+   |
+21 |     pub largest_win: f64,
+   |     ^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+  --> src/metrics/mod.rs:22:5
+   |
+22 |     pub largest_loss: f64,
+   |     ^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+  --> src/metrics/mod.rs:23:5
+   |
+23 |     pub total_fees: f64,
+   |     ^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+  --> src/metrics/mod.rs:24:5
+   |
+24 |     pub net_profit: f64,
+   |     ^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for an associated function
+  --> src/metrics/mod.rs:28:5
+   |
+28 | /     pub fn calculate(
+29 | |         total_trades: usize,
+30 | |         wins: usize,
+31 | |         total_pnl: f64,
+32 | |         max_dd: f64,
+33 | |         total_fees: f64,
+34 | |     ) -> Self {
+   | |_____________^
+
+warning: missing documentation for a struct
+  --> src/metrics/mod.rs:74:1
+   |
+74 | pub struct PriceTracker {
+   | ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for an associated function
+  --> src/metrics/mod.rs:80:5
+   |
+80 |     pub fn new(max_size: usize) -> Self {
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a method
+  --> src/metrics/mod.rs:87:5
+   |
+87 |     pub fn add(&mut self, price: f64) {
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a method
+  --> src/metrics/mod.rs:94:5
+   |
+94 |     pub fn volatility(&self) -> f64 {
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a method
+   --> src/metrics/mod.rs:107:5
+    |
+107 |     pub fn range(&self) -> (f64, f64) {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> src/dex/serum_client.rs:82:1
+    |
+ 82 | / pub struct SerumClient {
+ 83 | |     /// RPC client for Solana blockchain communication
+ 84 | |     #[allow(dead_code)]
+ 85 | |     rpc: Arc<RpcClient>,
+...   |
+117 | |     last_order_time: Option<SystemTime>,
+118 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+  --> src/dex/order_manager.rs:10:1
+   |
+10 | / pub struct OrderManager {
+11 | |     active_orders: HashMap<u128, PlacedOrder>,
+12 | |     filled_orders: Vec<PlacedOrder>,
+13 | |     cancelled_orders: Vec<PlacedOrder>,
+14 | | }
+   | |_^
+
+warning: missing documentation for a struct
+  --> src/dex/order_manager.rs:10:1
+   |
+10 | pub struct OrderManager {
+   | ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for an associated function
+  --> src/dex/order_manager.rs:17:5
+   |
+17 |     pub fn new() -> Self {
+   |     ^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct
+  --> src/dex/order_manager.rs:83:1
+   |
+83 | pub struct OrderStats {
+   | ^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+  --> src/dex/order_manager.rs:84:5
+   |
+84 |     pub active: usize,
+   |     ^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+  --> src/dex/order_manager.rs:85:5
+   |
+85 |     pub filled: usize,
+   |     ^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+  --> src/dex/order_manager.rs:86:5
+   |
+86 |     pub cancelled: usize,
+   |     ^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct
+  --> src/dex/market_state.rs:17:1
+   |
+17 | pub struct MarketState {
+   | ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a module
+ --> src/bots/mod.rs:2:1
+  |
+2 | pub mod arbitrage_bot;
+  | ^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a module
+ --> src/bots/mod.rs:3:1
+  |
+3 | pub mod momentum_bot;
+  | ^^^^^^^^^^^^^^^^^^^^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+  --> src/bots/grid_bot.rs:12:1
+   |
+12 | / pub struct GridBot {
+13 | |     pub manager: StrategyManager,
+14 | |     pub engine: PaperTradingEngine,
+15 | |     pub config: Config,
+...  |
+18 | |     successful_trades: u64,
+19 | | }
+   | |_^
+
+warning: missing documentation for a struct
+  --> src/bots/grid_bot.rs:12:1
+   |
+12 | pub struct GridBot {
+   | ^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+  --> src/bots/grid_bot.rs:13:5
+   |
+13 |     pub manager: StrategyManager,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+  --> src/bots/grid_bot.rs:14:5
+   |
+14 |     pub engine: PaperTradingEngine,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+  --> src/bots/grid_bot.rs:15:5
+   |
+15 |     pub config: Config,
+   |     ^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for an associated function
+  --> src/bots/grid_bot.rs:22:5
+   |
+22 |     pub fn new(config: Config) -> Result<Self> {
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a method
+  --> src/bots/grid_bot.rs:72:5
+   |
+72 |     pub async fn initialize(&mut self) -> Result<()> {
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a method
+  --> src/bots/grid_bot.rs:78:5
+   |
+78 |     pub async fn should_reposition(&self, current_price: f64, last_price: f64) -> bool {
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a method
+  --> src/bots/grid_bot.rs:89:5
+   |
+89 |     pub async fn reposition_grid(&mut self, current_price: f64, last_price: f64) -> Result<()> {
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a method
+   --> src/bots/grid_bot.rs:135:5
+    |
+135 |     pub async fn process_price_update(&mut self, price: f64, timestamp: i64) -> Result<()> {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a method
+   --> src/bots/grid_bot.rs:155:5
+    |
+155 |     pub async fn get_stats(&self) -> BotStats {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a method
+   --> src/bots/grid_bot.rs:173:5
+    |
+173 |     pub async fn display_status(&self, current_price: f64) {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct
+   --> src/bots/grid_bot.rs:201:1
+    |
+201 | pub struct BotStats {
+    | ^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/bots/grid_bot.rs:202:5
+    |
+202 |     pub total_cycles: u64,
+    |     ^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/bots/grid_bot.rs:203:5
+    |
+203 |     pub successful_trades: u64,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/bots/grid_bot.rs:204:5
+    |
+204 |     pub open_orders: usize,
+    |     ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/bots/grid_bot.rs:205:5
+    |
+205 |     pub total_value_usdc: f64,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/bots/grid_bot.rs:206:5
+    |
+206 |     pub pnl_usdc: f64,
+    |     ^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/bots/grid_bot.rs:207:5
+    |
+207 |     pub roi_percent: f64,
+    |     ^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/bots/grid_bot.rs:208:5
+    |
+208 |     pub win_rate: f64,
+    |     ^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> src/bots/grid_bot.rs:209:5
+    |
+209 |     pub total_fees: f64,
+    |     ^^^^^^^^^^^^^^^^^^^
+
+warning: `solana-grid-bot` (lib) generated 325 warnings
+warning: unused import: `debug`
+  --> src/main.rs:13:30
+   |
+13 | use log::{info, warn, error, debug};
+   |                              ^^^^^
+   |
+   = note: `#[warn(unused_imports)]` on by default
+
+warning: field `failed_price_fetches` is never read
+  --> src/main.rs:32:5
+   |
+25 | struct SessionMetrics {
+   |        -------------- field in this struct
+...
+32 |     failed_price_fetches: u32,
+   |     ^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` on by default
+
+warning: methods `min_cycle_time`, `max_cycle_time`, and `success_rate` are never used
+  --> src/main.rs:59:8
+   |
+35 | impl SessionMetrics {
+   | ------------------- methods in this implementation
+...
+59 |     fn min_cycle_time(&self) -> u64 {
+   |        ^^^^^^^^^^^^^^
+...
+63 |     fn max_cycle_time(&self) -> u64 {
+   |        ^^^^^^^^^^^^^^
+...
+71 |     fn success_rate(&self) -> f64 {
+   |        ^^^^^^^^^^^^
+
+warning: `solana-grid-bot` (bin "solana-grid-bot") generated 3 warnings (run `cargo fix --bin "solana-grid-bot"` to apply 1 suggestion)
+    Finished `release` profile [optimized] target(s) in 0.55s
+     Running `target/release/solana-grid-bot`
+
+===========================================================================
+     🚀 PROJECT FLASH V3.0 - PRODUCTION GRID TRADING BOT
+     ⚡ Hybrid Feeds • 10Hz Cycles • Real-Time Analytics
+===========================================================================
+[2025-10-17T13:37:28.475Z INFO  solana_grid_bot] 🔧 Initializing core systems...
+
+══════════════════════════════════════════════════════════════════════
+  🤖 SOLANA-GRID-BOT V0.2.5 - PROJECT FLASH
+══════════════════════════════════════════════════════════════════════
+
+  💪 Built with Rust for MAXIMUM PERFORMANCE!
+  🎯 Production-ready for Solana DEX trading
+  🔥 Dynamic Grid • Multi-Strategy • Real-time Risk Management
+
+  📦 Version:     0.2.5
+  🏗️  Build:       2025-10-17 (dev)
+  🦀 Rust:        1.70
+
+══════════════════════════════════════════════════════════════════════
+
+🔧 Loading configuration from: config/master.toml
+Error: Failed to parse TOML configuration
+
+Caused by:
+    TOML parse error at line 30, column 23
+       |
+    30 | test_duration_hours = 0.083
+       |                       ^^^^^
+    invalid type: floating point `0.083`, expected usize
+    

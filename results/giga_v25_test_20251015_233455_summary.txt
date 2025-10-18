@@ -1,0 +1,30 @@
+GIGA V2.5 TEST SUMMARY
+═══════════════════════════════════════════════════════════════
+
+Test Timestamp: 2025-10-15 23:34:55
+Version: V2.5 (Regime Gate + Smart Fees + Order Lifecycle)
+Total Tests: 3
+Actual Duration: 5.1 minutes
+Starting Price: $194.3450
+
+V2.5 ENHANCEMENTS:
+• Market Regime Gate: ✅ Enabled
+• Smart Fee Filtering: ✅ Enabled
+• Order Lifecycle: ✅ Enabled
+• Dynamic Spacing: ✅ Enabled
+• Total Filtered Trades: 0 (prevented over-trading)
+• Average Filtered per Test: 0
+• Average Trading Paused: 67.8% of time
+
+BEST PERFORMERS:
+• Best ROI: V2.5:Standard (0.00%)
+• Most Fills: V2.5:Tight (3 fills)
+
+AVERAGES:
+• Average ROI: 0.00%
+• Average Fills: 2
+• Average Value: $6949.95
+
+Results saved to:
+• JSON: results/giga_v25_test_20251015_233455.json
+• CSV: results/giga_v25_test_20251015_233455.csv

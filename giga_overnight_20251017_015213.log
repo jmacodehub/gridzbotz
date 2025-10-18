@@ -1,0 +1,149 @@
+warning: unused import: `debug`
+  --> src/trading/price_feed.rs:12:23
+   |
+12 | use log::{info, warn, debug};
+   |                       ^^^^^
+   |
+   = note: `#[warn(unused_imports)]` on by default
+
+warning: field `last_lifecycle_check` is never read
+  --> src/strategies/grid_rebalancer.rs:96:5
+   |
+83 | pub struct GridRebalancer {
+   |            -------------- field in this struct
+...
+96 |     last_lifecycle_check: Arc<tokio::sync::Mutex<Instant>>,
+   |     ^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` on by default
+
+warning: method `should_place_order` is never used
+   --> src/strategies/grid_rebalancer.rs:187:14
+    |
+103 | impl GridRebalancer {
+    | ------------------- method in this implementation
+...
+187 |     async fn should_place_order(&self, side: OrderSide, price: f64, stats: &GridStats) -> bool {
+    |              ^^^^^^^^^^^^^^^^^^
+
+warning: `solana-grid-bot` (lib) generated 3 warnings (run `cargo fix --lib -p solana-grid-bot` to apply 1 suggestion)
+   Compiling solana-grid-bot v0.2.5 (/Users/j-mc/Sol Gridz/solana-grid-bot)
+warning: unused import: `OrderSide`
+ --> examples/giga_test.rs:7:64
+  |
+7 |     Config, get_live_price, live_feed_ids, PaperTradingEngine, OrderSide
+  |                                                                ^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` on by default
+
+warning: unused imports: `info` and `warn`
+  --> examples/giga_test.rs:10:11
+   |
+10 | use log::{info, warn, LevelFilter};
+   |           ^^^^  ^^^^
+
+warning: unused import: `std::sync::Arc`
+  --> examples/giga_test.rs:12:5
+   |
+12 | use std::sync::Arc;
+   |     ^^^^^^^^^^^^^^
+
+error[E0061]: this function takes 2 arguments but 1 argument was supplied
+   --> examples/giga_test.rs:83:22
+    |
+ 83 |     let mut engine = PaperTradingEngine::new(&config);
+    |                      ^^^^^^^^^^^^^^^^^^^^^^^---------
+    |                                             ||
+    |                                             |expected `f64`, found `&Config`
+    |                                             argument #2 of type `f64` is missing
+    |
+note: associated function defined here
+   --> /Users/j-mc/Sol Gridz/solana-grid-bot/src/trading/paper_trader.rs:216:12
+    |
+216 |     pub fn new(initial_usdc: f64, initial_sol: f64) -> Self {
+    |            ^^^
+help: provide the argument
+    |
+ 83 -     let mut engine = PaperTradingEngine::new(&config);
+ 83 +     let mut engine = PaperTradingEngine::new(/* f64 */, /* f64 */);
+    |
+
+error[E0599]: no function or associated item named `from_config` found for struct `GridRebalancerConfig` in the current scope
+  --> examples/giga_test.rs:84:68
+   |
+84 |     let mut rebalancer = GridRebalancer::new(GridRebalancerConfig::from_config(&config));
+   |                                                                    ^^^^^^^^^^^ function or associated item not found in `GridRebalancerConfig`
+
+error[E0599]: no method named `on_price_tick` found for struct `PaperTradingEngine` in the current scope
+   --> examples/giga_test.rs:106:20
+    |
+106 |             engine.on_price_tick(price).await;
+    |                    ^^^^^^^^^^^^^ method not found in `PaperTradingEngine`
+
+error[E0599]: no method named `stats` found for struct `GridRebalancer` in the current scope
+   --> examples/giga_test.rs:116:27
+    |
+116 |             if rebalancer.stats().trading_paused { pause_ticks += 1; }
+    |                           ^^^^^
+    |
+   ::: /Users/j-mc/Sol Gridz/solana-grid-bot/src/strategies/mod.rs:70:8
+    |
+ 70 |     fn stats(&self) -> StrategyStats;
+    |        ----- the method is available for `GridRebalancer` here
+    |
+    = help: items from traits can only be used if the trait is in scope
+help: trait `Strategy` which provides `stats` is implemented but not in scope; perhaps you want to import it
+    |
+  6 + use solana_grid_bot::strategies::Strategy;
+    |
+help: there is a method `grid_stats` with a similar name
+    |
+116 |             if rebalancer.grid_stats().trading_paused { pause_ticks += 1; }
+    |                           +++++
+
+error[E0599]: no method named `stats` found for struct `GridRebalancer` in the current scope
+   --> examples/giga_test.rs:119:112
+    |
+119 |             writeln!(log, "[{}] price: {:.4} fills: {} state: {:?}", Utc::now(), last_price, fills, rebalancer.stats()).unwrap();
+    |                                                                                                                ^^^^^
+    |
+   ::: /Users/j-mc/Sol Gridz/solana-grid-bot/src/strategies/mod.rs:70:8
+    |
+ 70 |     fn stats(&self) -> StrategyStats;
+    |        ----- the method is available for `GridRebalancer` here
+    |
+    = help: items from traits can only be used if the trait is in scope
+help: trait `Strategy` which provides `stats` is implemented but not in scope; perhaps you want to import it
+    |
+  6 + use solana_grid_bot::strategies::Strategy;
+    |
+help: there is a method `grid_stats` with a similar name
+    |
+119 |             writeln!(log, "[{}] price: {:.4} fills: {} state: {:?}", Utc::now(), last_price, fills, rebalancer.grid_stats()).unwrap();
+    |                                                                                                                +++++
+
+error[E0599]: no method named `stats` found for struct `GridRebalancer` in the current scope
+   --> examples/giga_test.rs:126:28
+    |
+126 |     let stats = rebalancer.stats();
+    |                            ^^^^^
+    |
+   ::: /Users/j-mc/Sol Gridz/solana-grid-bot/src/strategies/mod.rs:70:8
+    |
+ 70 |     fn stats(&self) -> StrategyStats;
+    |        ----- the method is available for `GridRebalancer` here
+    |
+    = help: items from traits can only be used if the trait is in scope
+help: trait `Strategy` which provides `stats` is implemented but not in scope; perhaps you want to import it
+    |
+  6 + use solana_grid_bot::strategies::Strategy;
+    |
+help: there is a method `grid_stats` with a similar name
+    |
+126 |     let stats = rebalancer.grid_stats();
+    |                            +++++
+
+Some errors have detailed explanations: E0061, E0599.
+For more information about an error, try `rustc --explain E0061`.
+warning: `solana-grid-bot` (example "giga_test") generated 3 warnings
+error: could not compile `solana-grid-bot` (example "giga_test") due to 6 previous errors; 3 warnings emitted

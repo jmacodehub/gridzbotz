@@ -1,0 +1,26 @@
+AUTO-OPTIMIZER V2.5 ANALYSIS REPORT
+===============================================
+
+Generated: 2025-10-15 23:43:44
+Total Tests: 24
+
+BEST ROI:
+  Strategy: V2.5:MicroGrid
+  ROI: 0.08%
+  Config: 0.05% spacing, 40 levels
+
+BEST RISK-ADJUSTED (SHARPE):
+  Strategy: V2.5:MicroGrid
+  Sharpe: 0.14
+  ROI: 0.08%
+  Config: 0.05% spacing, 40 levels
+
+OVERALL STATS:
+  Avg ROI: -0.03%
+  Win Rate: 33.3%
+  Total Filtered: 105
+
+RECOMMENDED LIVE CONFIG:
+[trading]
+grid_spacing_percent = 0.05
+grid_levels = 40

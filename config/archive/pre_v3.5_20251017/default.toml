@@ -1,0 +1,284 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# 🚀 Solana Grid Trading Bot v3.0 - Production Configuration
+# ═══════════════════════════════════════════════════════════════════════════
+# 
+# Enhanced for: Modular Architecture | Multi-Strategy | Real-Time Analytics
+# Last Updated: October 17, 2025
+#
+# Quick Start:
+#   1. Copy .env.example to .env
+#   2. Set your WALLET_PATH and RPC_URL
+#   3. Run: cargo run --release
+#
+# Configuration Modes:
+#   - simulation: No real funds, mock prices
+#   - paper: Real prices, virtual wallet
+#   - live: Real trading (use with caution!)
+#
+# ═══════════════════════════════════════════════════════════════════════════
+
+[bot]
+name = "GridBot-Alpha-v3"
+version = "3.0.0"
+mode = "paper"  # "simulation" | "paper" | "live"
+description = "Lightning-fast grid trading with dynamic repositioning"
+
+[network]
+cluster = "mainnet"  # "devnet" | "mainnet"
+rpc_url = "https://api.mainnet-beta.solana.com"
+ws_url = "wss://api.mainnet-beta.solana.com"
+commitment = "confirmed"  # "processed" | "confirmed" | "finalized"
+
+# Backup RPCs (fallback on failure)
+backup_rpc_urls = [
+    "https://solana-api.projectserum.com",
+    "https://rpc.ankr.com/solana"
+]
+
+# ═══════════════════════════════════════════════════════════════════════════
+# TRADING CONFIGURATION
+# ═══════════════════════════════════════════════════════════════════════════
+
+[trading]
+# Grid Strategy Parameters
+grid_levels = 6                     # Number of grid levels (buy + sell)
+grid_spacing_percent = 0.2          # 0.2% between levels
+min_order_size = 0.1                # Minimum SOL per order
+max_position_size = 10.0            # Maximum total SOL position
+
+# Dynamic Grid Management
+enable_dynamic_grid = true          # Adjust spacing based on volatility
+reposition_threshold = 0.5          # Reposition if price moves 0.5%
+volatility_window = 100             # Candles for volatility calculation
+volatility_multiplier = 1.5         # Widen spacing in high volatility
+
+# Order Management
+order_timeout_seconds = 300         # Cancel unfilled orders after 5min
+enable_order_refresh = true         # Replace stale orders
+refresh_interval_minutes = 5        # How often to refresh orders
+
+# ═══════════════════════════════════════════════════════════════════════════
+# PAPER TRADING (Virtual Wallet)
+# ═══════════════════════════════════════════════════════════════════════════
+
+[paper_trading]
+initial_usdc = 10000.0              # Starting USDC balance
+initial_sol = 10.0                  # Starting SOL balance
+
+# Trading Fees (OpenBook mainnet)
+maker_fee = 0.0002                  # 0.02% maker fee
+taker_fee = 0.0004                  # 0.04% taker fee
+slippage = 0.0005                   # 0.05% slippage simulation
+
+# Realism Settings
+enable_partial_fills = false        # Simulate partial order fills
+simulate_network_delays = false     # Add realistic latency
+network_delay_ms = 50               # Average delay
+
+# ═══════════════════════════════════════════════════════════════════════════
+# RISK MANAGEMENT
+# ═══════════════════════════════════════════════════════════════════════════
+
+[risk]
+# Position Sizing
+max_capital_per_trade = 1000.0      # USD per trade
+risk_per_trade_percent = 1.0        # 1% of capital per trade
+position_size_mode = "fixed"        # "fixed" | "percentage" | "kelly"
+
+# Stop Loss & Take Profit
+enable_stop_loss = true
+stop_loss_percent = 5.0             # -5% stop loss
+enable_take_profit = true
+take_profit_percent = 10.0          # +10% take profit
+enable_trailing_stop = false
+trailing_stop_percent = 2.0         # Trail by 2%
+
+# Circuit Breakers
+max_daily_loss_percent = 10.0       # Halt if -10% in 24h
+max_consecutive_losses = 5          # Pause after 5 losses
+cooldown_period_seconds = 300       # 5 minute cooldown
+enable_drawdown_protection = true
+max_drawdown_percent = 15.0         # Halt at -15% drawdown
+
+# Portfolio Limits
+max_open_orders = 20                # Maximum concurrent orders
+max_daily_trades = 100              # Daily trade limit
+
+# ═══════════════════════════════════════════════════════════════════════════
+# STRATEGY CONFIGURATION
+# ═══════════════════════════════════════════════════════════════════════════
+
+[strategies]
+active = ["grid"]                   # Active strategies
+consensus_mode = "majority"         # "unanimous" | "majority" | "any"
+weight_grid = 1.0                   # Strategy weight
+weight_momentum = 0.0               # (disabled)
+weight_mean_reversion = 0.0         # (disabled)
+
+[strategies.grid]
+enabled = true
+min_volatility = 0.5                # Minimum volatility to trade
+max_volatility = 5.0                # Pause in extreme volatility
+adaptive_spacing = true             # Adjust to market conditions
+
+[strategies.momentum]
+enabled = false
+period = 14
+threshold = 0.02                    # 2% momentum threshold
+
+[strategies.mean_reversion]
+enabled = false
+lookback_period = 20
+std_dev_threshold = 2.0
+
+# ═══════════════════════════════════════════════════════════════════════════
+# PRICE FEEDS
+# ═══════════════════════════════════════════════════════════════════════════
+
+[price_feeds]
+provider = "pyth"                   # "pyth" | "switchboard" | "mock"
+sol_usd_feed = "H6ARHf6YXhGYeQfUzQNGk6rDNnLBQKrenN712K4AQJEG"  # Pyth SOL/USD
+
+# Polling Configuration
+update_interval_ms = 500            # Poll every 500ms
+cache_ttl_seconds = 30              # Price staleness threshold
+enable_websocket = false            # Use WebSocket (faster, experimental)
+
+# Price Validation
+enable_outlier_detection = true     # Filter extreme price swings
+outlier_threshold_percent = 10.0    # Flag >10% instant moves
+require_confidence = true           # Use Pyth confidence intervals
+min_confidence_percent = 95.0       # Minimum 95% confidence
+
+# Backup Feeds
+enable_fallback = true
+fallback_provider = "switchboard"
+
+# ═══════════════════════════════════════════════════════════════════════════
+# PERFORMANCE & OPTIMIZATION
+# ═══════════════════════════════════════════════════════════════════════════
+
+[performance]
+# Cycle Timing
+cycle_interval_ms = 100             # Main loop: 100ms (10Hz)
+startup_delay_ms = 1000             # Warmup: 1 second
+request_timeout_ms = 5000           # HTTP timeout: 5 seconds
+max_cycle_time_ms = 200             # Warn if cycle >200ms
+
+# Concurrency
+max_concurrent_orders = 10          # Parallel order placement
+max_concurrent_requests = 5         # Parallel API calls
+order_batch_size = 10               # Orders per batch
+
+# Memory Management
+enable_memory_profiling = false     # Track memory usage
+gc_interval_seconds = 300           # Garbage collection interval
+max_price_history = 1000            # Keep last 1000 prices
+max_trade_history = 10000           # Keep last 10k trades
+
+# Caching
+enable_response_cache = true        # Cache API responses
+cache_duration_seconds = 60         # Cache for 1 minute
+
+# ═══════════════════════════════════════════════════════════════════════════
+# LOGGING & MONITORING
+# ═══════════════════════════════════════════════════════════════════════════
+
+[logging]
+level = "info"                      # "trace" | "debug" | "info" | "warn" | "error"
+format = "pretty"                   # "pretty" | "json" | "compact"
+
+# File Logging
+file_enabled = true
+file_path = "logs/gridbot.log"
+max_file_size_mb = 100              # Rotate at 100MB
+max_backup_files = 10               # Keep 10 rotated logs
+compress_rotated = true             # Gzip old logs
+
+# Console Output
+console_colors = true               # Colorized output
+console_timestamp = true            # Show timestamps
+log_price_updates = false           # Log every price (verbose)
+log_order_fills = true              # Log filled orders
+
+# Debug Features
+enable_stack_traces = false         # Full stack traces on errors
+log_performance_metrics = true      # Log cycle times
+
+[metrics]
+enable_metrics = true               # Performance tracking
+stats_interval = 50                 # Report every 50 cycles
+display_live_stats = true           # Real-time stats
+
+# Prometheus Exporter (optional)
+export_prometheus = false
+prometheus_port = 9090
+prometheus_path = "/metrics"
+
+# Metrics to Track
+track_cycle_times = true
+track_api_latency = true
+track_order_success_rate = true
+track_pnl = true
+
+# ═══════════════════════════════════════════════════════════════════════════
+# DATABASE (Optional - Future)
+# ═══════════════════════════════════════════════════════════════════════════
+
+[database]
+enabled = false
+type = "postgresql"                 # "postgresql" | "sqlite"
+url = "postgresql://localhost/gridbot"
+pool_size = 10
+connection_timeout_seconds = 30
+
+# Tables
+store_orders = true
+store_trades = true
+store_metrics = true
+retention_days = 90                 # Keep data for 90 days
+
+# ═══════════════════════════════════════════════════════════════════════════
+# ALERTS & NOTIFICATIONS
+# ═══════════════════════════════════════════════════════════════════════════
+
+[alerts]
+enabled = false                     # Enable notifications
+
+# Channels
+slack_enabled = false
+slack_webhook = ""
+email_enabled = false
+email_smtp = ""
+telegram_enabled = false
+telegram_bot_token = ""
+telegram_chat_id = ""
+
+# Alert Triggers
+alert_on_fills = false              # Notify on order fills
+alert_on_errors = true              # Notify on errors
+alert_on_circuit_breaker = true     # Notify on halts
+alert_on_profit_target = true       # Notify on profit milestones
+profit_milestone_percent = 5.0      # Alert every +5% profit
+
+# Rate Limiting
+max_alerts_per_hour = 10            # Prevent spam
+
+# ═══════════════════════════════════════════════════════════════════════════
+# EXPERIMENTAL FEATURES (Use with caution)
+# ═══════════════════════════════════════════════════════════════════════════
+
+[experimental]
+enable_ml_predictions = false       # Machine learning price prediction
+enable_arb_detection = false        # Cross-DEX arbitrage
+enable_flash_loans = false          # Flash loan integration
+enable_mev_protection = false       # MEV sandwich attack protection
+
+# Advanced Order Types
+enable_iceberg_orders = false       # Split large orders
+enable_twap = false                 # Time-weighted average price
+enable_post_only = true             # Only place maker orders
+
+# ═══════════════════════════════════════════════════════════════════════════
+# END OF CONFIGURATION
+# ═══════════════════════════════════════════════════════════════════════════

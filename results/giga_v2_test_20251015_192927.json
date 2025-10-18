@@ -1,0 +1,146 @@
+[
+  {
+    "name": "V2:MaxLevels",
+    "total_fills": 10,
+    "final_roi": -0.08238867279130539,
+    "final_value": 6953.521200402724,
+    "total_rebalances": 0,
+    "filtered_trades": 10,
+    "efficiency": 29.411764705882355,
+    "grid_spacing": 0.15,
+    "current_spacing": 0.1,
+    "grid_levels": 35,
+    "strategies": [
+      "grid"
+    ],
+    "max_drawdown": 0.552250895477967,
+    "sharpe_ratio": -0.14918703340444367,
+    "volatility": 0.7543635959270494,
+    "market_regime": "VERY_LOW_VOL",
+    "price_range": [
+      195.57273385,
+      198.66871
+    ],
+    "duration_seconds": 3599
+  },
+  {
+    "name": "V2:Conservative",
+    "total_fills": 5,
+    "final_roi": -0.03584054170453732,
+    "final_value": 6956.760603467425,
+    "total_rebalances": 0,
+    "filtered_trades": 5,
+    "efficiency": 50.0,
+    "grid_spacing": 0.3,
+    "current_spacing": 0.1,
+    "grid_levels": 10,
+    "strategies": [
+      "grid"
+    ],
+    "max_drawdown": 0.49144709847639645,
+    "sharpe_ratio": -0.07292858542791598,
+    "volatility": 0.7543635959270494,
+    "market_regime": "VERY_LOW_VOL",
+    "price_range": [
+      195.57273385,
+      198.66871
+    ],
+    "duration_seconds": 3599
+  },
+  {
+    "name": "V2:Balanced",
+    "total_fills": 7,
+    "final_roi": -0.06017050847645432,
+    "final_value": 6955.067419077743,
+    "total_rebalances": 0,
+    "filtered_trades": 7,
+    "efficiency": 50.0,
+    "grid_spacing": 0.2,
+    "current_spacing": 0.1,
+    "grid_levels": 15,
+    "strategies": [
+      "grid"
+    ],
+    "max_drawdown": 0.5232544822481262,
+    "sharpe_ratio": -0.11499281997152885,
+    "volatility": 0.7543635959270494,
+    "market_regime": "VERY_LOW_VOL",
+    "price_range": [
+      195.57273385,
+      198.66871
+    ],
+    "duration_seconds": 3599
+  },
+  {
+    "name": "V2:Aggressive",
+    "total_fills": 10,
+    "final_roi": -0.08238867279130539,
+    "final_value": 6953.521200402724,
+    "total_rebalances": 0,
+    "filtered_trades": 10,
+    "efficiency": 50.0,
+    "grid_spacing": 0.15,
+    "current_spacing": 0.1,
+    "grid_levels": 20,
+    "strategies": [
+      "grid"
+    ],
+    "max_drawdown": 0.552250895477967,
+    "sharpe_ratio": -0.14918703340444367,
+    "volatility": 0.7543635959270494,
+    "market_regime": "VERY_LOW_VOL",
+    "price_range": [
+      195.57273385,
+      198.66871
+    ],
+    "duration_seconds": 3599
+  },
+  {
+    "name": "V2:UltraWide",
+    "total_fills": 2,
+    "final_roi": -0.007911663052479099,
+    "final_value": 6958.704245306246,
+    "total_rebalances": 0,
+    "filtered_trades": 2,
+    "efficiency": 33.33333333333333,
+    "grid_spacing": 0.75,
+    "current_spacing": 0.1,
+    "grid_levels": 6,
+    "strategies": [
+      "grid"
+    ],
+    "max_drawdown": 0.4560545477090923,
+    "sharpe_ratio": -0.01734806306004821,
+    "volatility": 0.7543635959270494,
+    "market_regime": "VERY_LOW_VOL",
+    "price_range": [
+      195.57273385,
+      198.66871
+    ],
+    "duration_seconds": 3599
+  },
+  {
+    "name": "V2:MicroGrid",
+    "total_fills": 20,
+    "final_roi": -0.25043806064028684,
+    "final_value": 6941.826215248447,
+    "total_rebalances": 0,
+    "filtered_trades": 20,
+    "efficiency": 50.0,
+    "grid_spacing": 0.05,
+    "current_spacing": 0.1,
+    "grid_levels": 40,
+    "strategies": [
+      "grid"
+    ],
+    "max_drawdown": 0.7489077453022598,
+    "sharpe_ratio": -0.3344044205861562,
+    "volatility": 0.7543635959270494,
+    "market_regime": "VERY_LOW_VOL",
+    "price_range": [
+      195.57273385,
+      198.66871
+    ],
+    "duration_seconds": 3599
+  }
+]

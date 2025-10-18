@@ -1,0 +1,248 @@
+[2025-10-17T22:35:04.179Z INFO  solana_grid_bot] 🔊 Logging initialized at Info level
+
+══════════════════════════════════════════════════════════════════════
+  🤖 SOLANA-GRID-BOT V0.2.5 - PROJECT FLASH
+══════════════════════════════════════════════════════════════════════
+
+  💪 Built with Rust for MAXIMUM PERFORMANCE!
+  🎯 Production-ready for Solana DEX trading
+  🔥 Dynamic Grid • Multi-Strategy • Real-time Risk Management
+
+  📦 Version:     0.2.5
+  🏗️  Build:       2025-10-17 (dev)
+  🦀 Rust:        1.70
+
+══════════════════════════════════════════════════════════════════════
+
+[2025-10-17T22:35:04.179Z INFO  solana_grid_bot] 🔧 Loading configuration...
+[2025-10-17T22:35:04.179Z INFO  solana_grid_bot] 📄 Loading from file: config/overnight_aggressive.toml
+[2025-10-17T22:35:04.179Z INFO  solana_grid_bot::config] 🔧 Loading configuration from: config/overnight_aggressive.toml
+[2025-10-17T22:35:04.180Z INFO  solana_grid_bot::config] 🌍 Applying environment overrides: development
+[2025-10-17T22:35:04.180Z INFO  solana_grid_bot::config] 🔧 Development environment: Moderate safety
+[2025-10-17T22:35:04.180Z INFO  solana_grid_bot::config] ✅ All configuration sections validated
+[2025-10-17T22:35:04.180Z INFO  solana_grid_bot::config] ✅ Configuration loaded and validated successfully!
+    
+[2025-10-17T22:35:04.180Z INFO  solana_grid_bot] ✅ Using config file settings (no CLI overrides)
+[2025-10-17T22:35:04.180Z INFO  solana_grid_bot::config] ✅ All configuration sections validated
+
+═══════════════════════════════════════════════════════════════════════════
+     🚀 PROJECT FLASH V3.5 - PRODUCTION GRID TRADING BOT
+     ⚡ Hybrid Feeds • 10Hz Cycles • Real-Time Analytics
+═══════════════════════════════════════════════════════════════════════════
+
+   Environment: DEVELOPMENT | Version: 3.5.0
+═══════════════════════════════════════════════════════════════════════════
+
+
+══════════════════════════════════════════════════════════════════════════════
+  🤖 PROJECT FLASH V3.5 - CONFIGURATION
+══════════════════════════════════════════════════════════════════════════════
+
+📋 BOT: Aggressive-Bot-v3.5 v3.5.0 [development]
+
+📈 TRADING:
+   Grid:             50 levels @ 0.100%
+   Order Size:       0.1 SOL
+   Auto-Rebalance:   ✅
+   Smart Rebalance:  ✅
+   Reserves:         $300 USDC + 2.0 SOL
+
+🆕 MARKET INTELLIGENCE:
+   Regime Gate:      ✅ (min vol: $0.20)
+   Pause Low Vol:    ❌
+
+🔄 ORDER LIFECYCLE:
+   Enabled:          ✅
+   Refresh:          Every 4min
+   Min Orders:       12
+   Max Age:          8min
+
+🎯 STRATEGIES:
+   Active:           grid
+   Mode:             single
+
+🛡️  RISK MANAGEMENT:
+   Max Position:     40%
+   Max Drawdown:     12.0%
+   Stop Loss:        8.0%
+   Take Profit:      15.0%
+   Circuit Breaker:  ✅ (10.0%)
+
+══════════════════════════════════════════════════════════════════════════════
+
+[2025-10-17T22:35:04.180Z INFO  solana_grid_bot] 🔧 Initializing core components...
+[2025-10-17T22:35:04.180Z INFO  solana_grid_bot] 🤖 Initializing GridBot...
+[2025-10-17T22:35:04.180Z INFO  solana_grid_bot::bots::grid_bot] ═══════════════════════════════════════════════════════════
+[2025-10-17T22:35:04.180Z INFO  solana_grid_bot::bots::grid_bot] 🤖 Initializing GridBot V3.5...
+[2025-10-17T22:35:04.180Z INFO  solana_grid_bot::bots::grid_bot] ═══════════════════════════════════════════════════════════
+[2025-10-17T22:35:04.180Z INFO  solana_grid_bot::strategies] 🎯 Initializing Multi-Strategy Manager
+[2025-10-17T22:35:04.180Z INFO  solana_grid_bot::bots::grid_bot] 📊 Creating grid rebalancer from config...
+[2025-10-17T22:35:04.180Z INFO  solana_grid_bot::bots::grid_bot] 🎯 Initializing grid rebalancer strategy...
+[2025-10-17T22:35:04.180Z INFO  solana_grid_bot::strategies::grid_rebalancer] ═══════════════════════════════════════════════════════════
+[2025-10-17T22:35:04.180Z INFO  solana_grid_bot::strategies::grid_rebalancer] 🎯 Grid Rebalancer V3.5 Initializing...
+[2025-10-17T22:35:04.180Z INFO  solana_grid_bot::strategies::grid_rebalancer] ═══════════════════════════════════════════════════════════
+[2025-10-17T22:35:04.180Z INFO  solana_grid_bot::strategies::grid_rebalancer] 📊 CORE SETTINGS:
+[2025-10-17T22:35:04.180Z INFO  solana_grid_bot::strategies::grid_rebalancer]    Base spacing:     0.100%
+[2025-10-17T22:35:04.180Z INFO  solana_grid_bot::strategies::grid_rebalancer]    Order size:       0.1 SOL
+[2025-10-17T22:35:04.180Z INFO  solana_grid_bot::strategies::grid_rebalancer]    Reserves:         $300 USDC / 2 SOL
+[2025-10-17T22:35:04.180Z INFO  solana_grid_bot::strategies::grid_rebalancer] 📈 DYNAMIC FEATURES:
+[2025-10-17T22:35:04.180Z INFO  solana_grid_bot::strategies::grid_rebalancer]    Dynamic spacing:  ✅
+[2025-10-17T22:35:04.180Z INFO  solana_grid_bot::strategies::grid_rebalancer]      Range:          0.100% - 0.750%
+[2025-10-17T22:35:04.180Z INFO  solana_grid_bot::strategies::grid_rebalancer]    Fee filtering:    ✅
+[2025-10-17T22:35:04.181Z INFO  solana_grid_bot::strategies::grid_rebalancer] 🛡️ MARKET REGIME GATE:
+[2025-10-17T22:35:04.181Z INFO  solana_grid_bot::strategies::grid_rebalancer]    Enabled:          ✅
+[2025-10-17T22:35:04.181Z INFO  solana_grid_bot::strategies::grid_rebalancer]    Min volatility:   20.000%
+[2025-10-17T22:35:04.181Z INFO  solana_grid_bot::strategies::grid_rebalancer]    Pause low vol:    ❌
+[2025-10-17T22:35:04.181Z INFO  solana_grid_bot::strategies::grid_rebalancer] 🔄 ORDER LIFECYCLE:
+[2025-10-17T22:35:04.181Z INFO  solana_grid_bot::strategies::grid_rebalancer]    Enabled:          ✅
+[2025-10-17T22:35:04.181Z INFO  solana_grid_bot::strategies::grid_rebalancer]    Max age:          8m
+[2025-10-17T22:35:04.181Z INFO  solana_grid_bot::strategies::grid_rebalancer]    Refresh interval: 4m
+[2025-10-17T22:35:04.181Z INFO  solana_grid_bot::strategies::grid_rebalancer]    Min orders:       12
+[2025-10-17T22:35:04.181Z INFO  solana_grid_bot::strategies::grid_rebalancer] ═══════════════════════════════════════════════════════════
+[2025-10-17T22:35:04.181Z INFO  solana_grid_bot::strategies] 📈 Adding strategy: Grid Rebalancer V3.5
+[2025-10-17T22:35:04.181Z INFO  solana_grid_bot::bots::grid_bot] ✅ Grid rebalancer strategy loaded
+[2025-10-17T22:35:04.181Z INFO  solana_grid_bot::bots::grid_bot] 💰 Initializing paper trading engine...
+[2025-10-17T22:35:04.181Z INFO  solana_grid_bot::trading::paper_trader] 🎮 Initializing Paper Trading Engine V3.0
+[2025-10-17T22:35:04.181Z INFO  solana_grid_bot::trading::paper_trader] 💰 Virtual wallet initialized: $5000.00 USDC, 10.0000 SOL
+[2025-10-17T22:35:04.181Z INFO  solana_grid_bot::trading::paper_trader] 💸 Custom fees: Maker 0.0200%, Taker 0.0400%
+[2025-10-17T22:35:04.181Z INFO  solana_grid_bot::trading::paper_trader] 📉 Custom slippage: 0.0500%
+[2025-10-17T22:35:04.181Z INFO  solana_grid_bot::bots::grid_bot] ✅ Paper trading engine initialized
+[2025-10-17T22:35:04.181Z INFO  solana_grid_bot::bots::grid_bot]    Initial Capital: $5000.00 USDC + 10 SOL
+[2025-10-17T22:35:04.181Z INFO  solana_grid_bot::bots::grid_bot] ═══════════════════════════════════════════════════════════
+[2025-10-17T22:35:04.181Z INFO  solana_grid_bot::bots::grid_bot] ✅ GridBot V3.5 initialization complete!
+[2025-10-17T22:35:04.181Z INFO  solana_grid_bot::bots::grid_bot] ═══════════════════════════════════════════════════════════
+    
+[2025-10-17T22:35:04.181Z INFO  solana_grid_bot::bots::grid_bot] 🔧 Performing async initialization...
+[2025-10-17T22:35:04.181Z INFO  solana_grid_bot::bots::grid_bot] ✅ GridBot initialization complete
+[2025-10-17T22:35:04.181Z INFO  solana_grid_bot] ✅ GridBot ready
+[2025-10-17T22:35:04.181Z INFO  solana_grid_bot] 🚀 Initializing V3.5 Hybrid Price Feed...
+[2025-10-17T22:35:04.181Z INFO  solana_grid_bot::trading::price_feed] 🚀 Initializing Production Price Feed V3.0
+[2025-10-17T22:35:04.181Z INFO  solana_grid_bot::trading::price_feed]    Architecture: HTTP-First (WebSocket-Ready)
+[2025-10-17T22:35:04.181Z INFO  solana_grid_bot::trading::price_feed]    Feed ID: 0xef0d8b6fda2ceba41da15d4095d1da392a0d2f8e...
+[2025-10-17T22:35:04.181Z INFO  solana_grid_bot::trading::price_feed] 🔧 Starting production price feed...
+[2025-10-17T22:35:04.181Z INFO  solana_grid_bot::trading::price_feed] 🌐 Initializing HTTP feed...
+[2025-10-17T22:35:04.181Z INFO  solana_grid_bot::trading::pyth_http] ✅ Creating Pyth HTTP feed (Hermes v2)
+[2025-10-17T22:35:04.181Z INFO  solana_grid_bot::trading::pyth_http] 📡 Monitoring 1 price feeds
+[2025-10-17T22:35:04.181Z INFO  solana_grid_bot::trading::pyth_http] 🚀 Starting Pyth Hermes HTTP polling
+[2025-10-17T22:35:04.181Z INFO  solana_grid_bot::trading::pyth_http] 📡 Endpoint: https://hermes.pyth.network/v2/updates/price/latest
+[2025-10-17T22:35:04.181Z INFO  solana_grid_bot::trading::pyth_http] ⏱️  Poll interval: 1000ms
+[2025-10-17T22:35:04.344Z INFO  solana_grid_bot::trading::pyth_http] 📥 First response received: 3017 bytes
+[2025-10-17T22:35:04.344Z INFO  solana_grid_bot::trading::pyth_http] 🎉 First price update received!
+[2025-10-17T22:35:04.344Z INFO  solana_grid_bot::trading::pyth_http] 📊 1 price feeds active
+[2025-10-17T22:35:06.182Z INFO  solana_grid_bot::trading::pyth_http] ✅ Price feed active - receiving live data
+[2025-10-17T22:35:06.182Z INFO  solana_grid_bot::trading::price_feed] ✅ HTTP feed ready (1s polling)
+[2025-10-17T22:35:06.182Z INFO  solana_grid_bot] ✅ Price feed started
+[2025-10-17T22:35:06.182Z INFO  solana_grid_bot] ⏳ Warming up price feed (1000 ms)...
+[2025-10-17T22:35:07.184Z INFO  solana_grid_bot] 💰 Initial SOL/USD: $183.6474
+[2025-10-17T22:35:07.184Z INFO  solana_grid_bot] 📡 Feed Mode: Http
+[2025-10-17T22:35:07.184Z INFO  solana_grid_bot] 🔥 STARTING TRADING LOOP
+[2025-10-17T22:35:07.184Z INFO  solana_grid_bot]    Total Cycles:     288000
+[2025-10-17T22:35:07.184Z INFO  solana_grid_bot]    Cycle Interval:   100ms (10Hz)
+[2025-10-17T22:35:07.184Z INFO  solana_grid_bot]    Duration:         480.0 minutes
+[2025-10-17T22:35:07.184Z INFO  solana_grid_bot]    Stats Interval:   Every 50 cycles
+
+[2025-10-17T22:35:07.184Z INFO  solana_grid_bot::bots::grid_bot] 🎯 Grid not initialized - will initialize on first cycle
+[2025-10-17T22:35:07.184Z INFO  solana_grid_bot::bots::grid_bot] 🎯 Placing initial grid at $183.6474
+[2025-10-17T22:35:07.185Z INFO  solana_grid_bot::bots::grid_bot] 📊 Placed 50 orders (25 buy, 25 sell), 0 failed
+[2025-10-17T22:35:07.185Z INFO  solana_grid_bot::bots::grid_bot] ✅ Initial grid placed successfully
+Cycle    1/288000 ➡️ | SOL $ 183.6474 (+0.000%) | Vol:  0.00% | 🔄 Rebalanced
+[2025-10-17T22:35:07.185Z WARN  solana_grid_bot::strategies::grid_rebalancer] 🚫 REGIME GATE: Pausing - Volatility 0.000% < min 20.000%
+Cycle    2/288000 ➡️ | SOL $ 183.6486 (+0.001%) | Vol:  0.00% | ✓ Grid stable
+Cycle    3/288000 ➡️ | SOL $ 183.6486 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle    4/288000 ➡️ | SOL $ 183.6486 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle    5/288000 ➡️ | SOL $ 183.6486 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle    6/288000 ➡️ | SOL $ 183.6486 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle    7/288000 ➡️ | SOL $ 183.6486 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle    8/288000 ➡️ | SOL $ 183.6486 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle    9/288000 ➡️ | SOL $ 183.6486 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle   10/288000 ➡️ | SOL $ 183.6486 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle   11/288000 ➡️ | SOL $ 183.6486 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle   12/288000 ➡️ | SOL $ 183.6477 (-0.001%) | Vol:  0.00% | ✓ Grid stable
+Cycle   13/288000 ➡️ | SOL $ 183.6477 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle   14/288000 ➡️ | SOL $ 183.6477 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle   15/288000 ➡️ | SOL $ 183.6477 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle   16/288000 ➡️ | SOL $ 183.6477 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle   17/288000 ➡️ | SOL $ 183.6477 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle   18/288000 ➡️ | SOL $ 183.6477 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle   19/288000 ➡️ | SOL $ 183.6477 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle   20/288000 ➡️ | SOL $ 183.6477 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+[2025-10-17T22:35:09.159Z WARN  solana_grid_bot] 🛑 Ctrl+C received - initiating graceful shutdown
+[2025-10-17T22:35:09.221Z WARN  solana_grid_bot] 🛑 Graceful shutdown at cycle 21/288000
+[2025-10-17T22:35:09.221Z INFO  solana_grid_bot] 🧹 Cleaning up components...
+[2025-10-17T22:35:09.221Z INFO  solana_grid_bot] Price feed cleanup complete
+
+════════════════════════════════════════════════════════════
+   🤖 GRID BOT V3.5 - STATUS REPORT
+════════════════════════════════════════════════════════════
+
+📊 Bot Performance:
+  Total Cycles:      20
+  Successful Trades: 0
+  Grid Repositions:  0
+  Open Orders:       50
+
+💰 Portfolio:
+  Total Value:       $6836.48
+  P&L:               $0.00
+  ROI:               0.00%
+
+📈 Trading Stats:
+  Win Rate:          0.00%
+  Total Fees:        $0.00
+
+💵 Current Price:    $183.6477
+
+════════════════════════════════════════════════════════════
+
+╔═══════════════════════════════════════════════════════════════╗
+║        📊 MULTI-STRATEGY PERFORMANCE REPORT                  ║
+╚═══════════════════════════════════════════════════════════════╝
+
+🎯 Consensus Mode: Weighted Average
+📈 Total Strategies: 1 (1 enabled)
+
+🎯 Grid Rebalancer V3.5 ⭐ (ACTIVE)
+   ├─ Signals:  20 (Buy: 0, Sell: 0, Hold: 20)
+   └─ No trades executed yet
+
+🎯 Last Consensus Signal:
+   ⏸️  HOLD | Neutral: 0% buy, 0% sell
+
+[2025-10-17T22:35:09.222Z INFO  solana_grid_bot] ✅ Cleanup complete
+
+════════════════════════════════════════════════════════════
+  📊 SESSION PERFORMANCE SUMMARY
+════════════════════════════════════════════════════════════
+
+⏱️  TIMING:
+   Runtime:          2.04s
+   Total Cycles:     288000
+   Successful:       20 (100.0%)
+   Failed:           0
+
+⚡ CYCLE PERFORMANCE:
+   Average:          0.00ms
+   Min:              0ms
+   Max:              0ms
+   Slow Cycles:      0
+   Throughput:       9.8 cycles/sec
+
+🎯 TRADING ACTIVITY:
+   Grid Repositions: 1
+   Price Updates:    20
+   Regime Blocks:    0
+
+⚠️  ERRORS:
+   Total Errors:     0
+   Failed Fetches:   0
+
+════════════════════════════════════════════════════════════
+
+[2025-10-17T22:35:09.222Z INFO  solana_grid_bot] 📡 Feed Statistics:
+[2025-10-17T22:35:09.222Z INFO  solana_grid_bot]    Mode:             Http
+[2025-10-17T22:35:09.222Z INFO  solana_grid_bot]    Total Updates:    31
+[2025-10-17T22:35:09.222Z INFO  solana_grid_bot]    Success Rate:     100.0%
+[2025-10-17T22:35:09.222Z INFO  solana_grid_bot] 🌙 Session complete | Runtime: 2.04s | Avg: 0.00ms
+
+✅ Trading session completed successfully!
+

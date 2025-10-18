@@ -1,0 +1,732 @@
+
+══════════════════════════════════════════════════════════════════════
+  🤖 SOLANA-GRID-BOT V0.2.5 - PROJECT FLASH
+══════════════════════════════════════════════════════════════════════
+
+  💪 Built with Rust for MAXIMUM PERFORMANCE!
+  🎯 Production-ready for Solana DEX trading
+  🔥 Dynamic Grid • Multi-Strategy • Real-time Risk Management
+
+  📦 Version:     0.2.5
+  🏗️  Build:       2025-10-17 (dev)
+  🦀 Rust:        1.70
+
+══════════════════════════════════════════════════════════════════════
+
+
+═══════════════════════════════════════════════════════════════════════════
+     🚀 PROJECT FLASH V3.5 - PRODUCTION GRID TRADING BOT
+     ⚡ Hybrid Feeds • 10Hz Cycles • Real-Time Analytics
+═══════════════════════════════════════════════════════════════════════════
+
+   Environment: PRODUCTION | Version: 3.5.0
+═══════════════════════════════════════════════════════════════════════════
+
+
+══════════════════════════════════════════════════════════════════════════════
+  🤖 PROJECT FLASH V3.5 - CONFIGURATION
+══════════════════════════════════════════════════════════════════════════════
+
+📋 BOT: Balanced-Bot-v3.5 v3.5.0 [production]
+
+📈 TRADING:
+   Grid:             35 levels @ 0.150%
+   Order Size:       0.1 SOL
+   Auto-Rebalance:   ✅
+   Smart Rebalance:  ✅
+   Reserves:         $300 USDC + 2.0 SOL
+
+🆕 MARKET INTELLIGENCE:
+   Regime Gate:      ✅ (min vol: $0.30)
+   Pause Low Vol:    ❌
+
+🔄 ORDER LIFECYCLE:
+   Enabled:          ✅
+   Refresh:          Every 5min
+   Min Orders:       8
+   Max Age:          10min
+
+🎯 STRATEGIES:
+   Active:           grid
+   Mode:             single
+
+🛡️  RISK MANAGEMENT:
+   Max Position:     30%
+   Max Drawdown:     10.0%
+   Stop Loss:        5.0%
+   Take Profit:      10.0%
+   Circuit Breaker:  ✅ (8.0%)
+
+══════════════════════════════════════════════════════════════════════════════
+
+
+Cycle    1/600  ➡️ | SOL $ 185.5115 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle    2/600  ➡️ | SOL $ 185.5115 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle    3/600  ➡️ | SOL $ 185.5115 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle    4/600  ➡️ | SOL $ 185.5115 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle    5/600  ➡️ | SOL $ 185.5115 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle    6/600  ➡️ | SOL $ 185.5115 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle    7/600  ➡️ | SOL $ 185.5115 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle    8/600  ➡️ | SOL $ 185.5115 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle    9/600  ➡️ | SOL $ 185.5115 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle   10/600  ➡️ | SOL $ 185.5115 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle   11/600  ➡️ | SOL $ 185.5115 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle   12/600  ➡️ | SOL $ 185.5115 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle   13/600  ➡️ | SOL $ 185.5115 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle   14/600  ➡️ | SOL $ 185.5117 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle   15/600  ➡️ | SOL $ 185.5117 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle   16/600  ➡️ | SOL $ 185.5117 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle   17/600  ➡️ | SOL $ 185.5117 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle   18/600  ➡️ | SOL $ 185.5117 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle   19/600  ➡️ | SOL $ 185.5117 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle   20/600  ➡️ | SOL $ 185.5117 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle   21/600  ➡️ | SOL $ 185.5117 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle   22/600  ➡️ | SOL $ 185.5117 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle   23/600  ➡️ | SOL $ 185.5117 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle   24/600  ➡️ | SOL $ 185.5115 (-0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle   25/600  ➡️ | SOL $ 185.5115 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle   26/600  ➡️ | SOL $ 185.5115 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle   27/600  ➡️ | SOL $ 185.5115 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle   28/600  ➡️ | SOL $ 185.5115 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle   29/600  ➡️ | SOL $ 185.5115 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle   30/600  ➡️ | SOL $ 185.5115 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle   31/600  ➡️ | SOL $ 185.5115 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle   32/600  ➡️ | SOL $ 185.5115 (-0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle   33/600  ➡️ | SOL $ 185.5115 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle   34/600  ➡️ | SOL $ 185.5115 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle   35/600  ➡️ | SOL $ 185.5115 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle   36/600  ➡️ | SOL $ 185.5115 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle   37/600  ➡️ | SOL $ 185.5115 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle   38/600  ➡️ | SOL $ 185.5115 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle   39/600  ➡️ | SOL $ 185.5115 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle   40/600  ➡️ | SOL $ 185.5115 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle   41/600  ➡️ | SOL $ 185.5115 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle   42/600  ➡️ | SOL $ 185.5115 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle   43/600  ➡️ | SOL $ 185.5115 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle   44/600  ➡️ | SOL $ 185.5115 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle   45/600  ➡️ | SOL $ 185.5115 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle   46/600  ➡️ | SOL $ 185.5115 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle   47/600  ➡️ | SOL $ 185.5115 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle   48/600  ➡️ | SOL $ 185.5115 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle   49/600  ➡️ | SOL $ 185.5115 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle   50/600  ➡️ | SOL $ 185.5115 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle   51/600  ➡️ | SOL $ 185.5115 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle   52/600  ➡️ | SOL $ 185.5110 (-0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle   53/600  ➡️ | SOL $ 185.5110 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle   54/600  ➡️ | SOL $ 185.5110 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle   55/600  ➡️ | SOL $ 185.5110 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle   56/600  ➡️ | SOL $ 185.5110 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle   57/600  ➡️ | SOL $ 185.5110 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle   58/600  ➡️ | SOL $ 185.5110 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle   59/600  ➡️ | SOL $ 185.5110 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle   60/600  ➡️ | SOL $ 185.5110 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle   61/600  ➡️ | SOL $ 185.5110 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle   62/600  ➡️ | SOL $ 185.5110 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle   63/600  ➡️ | SOL $ 185.5110 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle   64/600  ➡️ | SOL $ 185.5110 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle   65/600  ➡️ | SOL $ 185.5110 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle   66/600  ➡️ | SOL $ 185.5110 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle   67/600  ➡️ | SOL $ 185.5110 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle   68/600  ➡️ | SOL $ 185.5110 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle   69/600  ➡️ | SOL $ 185.5110 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle   70/600  ➡️ | SOL $ 185.5110 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle   71/600  ➡️ | SOL $ 185.5110 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle   72/600  ➡️ | SOL $ 185.5110 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle   73/600  ➡️ | SOL $ 185.5099 (-0.001%) | Vol:  0.00% | ✓ Grid stable
+Cycle   74/600  ➡️ | SOL $ 185.5099 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle   75/600  ➡️ | SOL $ 185.5099 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle   76/600  ➡️ | SOL $ 185.5099 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle   77/600  ➡️ | SOL $ 185.5099 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle   78/600  ➡️ | SOL $ 185.5099 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle   79/600  ➡️ | SOL $ 185.5099 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle   80/600  ➡️ | SOL $ 185.5099 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle   81/600  ➡️ | SOL $ 185.5099 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle   82/600  ➡️ | SOL $ 185.5099 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle   83/600  ➡️ | SOL $ 185.5093 (-0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle   84/600  ➡️ | SOL $ 185.5093 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle   85/600  ➡️ | SOL $ 185.5093 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle   86/600  ➡️ | SOL $ 185.5093 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle   87/600  ➡️ | SOL $ 185.5093 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle   88/600  ➡️ | SOL $ 185.5093 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle   89/600  ➡️ | SOL $ 185.5093 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle   90/600  ➡️ | SOL $ 185.5093 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle   91/600  ➡️ | SOL $ 185.5014 (-0.004%) | Vol:  0.00% | ✓ Grid stable
+Cycle   92/600  ➡️ | SOL $ 185.5014 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle   93/600  ➡️ | SOL $ 185.5014 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle   94/600  ➡️ | SOL $ 185.5014 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle   95/600  ➡️ | SOL $ 185.5014 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle   96/600  ➡️ | SOL $ 185.5014 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle   97/600  ➡️ | SOL $ 185.5014 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle   98/600  ➡️ | SOL $ 185.5014 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle   99/600  ➡️ | SOL $ 185.5014 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  100/600  ➡️ | SOL $ 185.5014 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  101/600  ➡️ | SOL $ 185.5014 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  102/600  ➡️ | SOL $ 185.5014 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  103/600  📈 | SOL $ 185.5333 (+0.017%) | Vol:  0.00% | ✓ Grid stable
+Cycle  104/600  ➡️ | SOL $ 185.5333 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  105/600  ➡️ | SOL $ 185.5333 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  106/600  ➡️ | SOL $ 185.5333 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  107/600  ➡️ | SOL $ 185.5333 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  108/600  ➡️ | SOL $ 185.5333 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  109/600  ➡️ | SOL $ 185.5333 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  110/600  📈 | SOL $ 185.5650 (+0.017%) | Vol:  0.00% | ✓ Grid stable
+Cycle  111/600  ➡️ | SOL $ 185.5650 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  112/600  ➡️ | SOL $ 185.5650 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  113/600  ➡️ | SOL $ 185.5650 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  114/600  ➡️ | SOL $ 185.5650 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  115/600  ➡️ | SOL $ 185.5650 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  116/600  ➡️ | SOL $ 185.5650 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  117/600  ➡️ | SOL $ 185.5650 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  118/600  ➡️ | SOL $ 185.5650 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  119/600  ➡️ | SOL $ 185.5650 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  120/600  ➡️ | SOL $ 185.5650 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  121/600  📈 | SOL $ 185.5803 (+0.008%) | Vol:  0.00% | ✓ Grid stable
+Cycle  122/600  ➡️ | SOL $ 185.5803 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  123/600  ➡️ | SOL $ 185.5803 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  124/600  ➡️ | SOL $ 185.5803 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  125/600  ➡️ | SOL $ 185.5803 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  126/600  ➡️ | SOL $ 185.5803 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  127/600  ➡️ | SOL $ 185.5803 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  128/600  ➡️ | SOL $ 185.5803 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  129/600  ➡️ | SOL $ 185.5803 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  130/600  ➡️ | SOL $ 185.5803 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  131/600  📈 | SOL $ 185.5998 (+0.011%) | Vol:  0.00% | ✓ Grid stable
+Cycle  132/600  ➡️ | SOL $ 185.5998 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  133/600  ➡️ | SOL $ 185.5998 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  134/600  ➡️ | SOL $ 185.5998 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  135/600  ➡️ | SOL $ 185.5998 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  136/600  ➡️ | SOL $ 185.5998 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  137/600  ➡️ | SOL $ 185.5998 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  138/600  ➡️ | SOL $ 185.5998 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  139/600  ➡️ | SOL $ 185.5998 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  140/600  ➡️ | SOL $ 185.5998 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  141/600  📈 | SOL $ 185.6138 (+0.008%) | Vol:  0.00% | ✓ Grid stable
+Cycle  142/600  ➡️ | SOL $ 185.6138 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  143/600  ➡️ | SOL $ 185.6138 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  144/600  ➡️ | SOL $ 185.6138 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  145/600  ➡️ | SOL $ 185.6138 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  146/600  ➡️ | SOL $ 185.6138 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  147/600  ➡️ | SOL $ 185.6138 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  148/600  ➡️ | SOL $ 185.6138 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  149/600  ➡️ | SOL $ 185.6138 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  150/600  ➡️ | SOL $ 185.6140 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  151/600  ➡️ | SOL $ 185.6140 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  152/600  ➡️ | SOL $ 185.6140 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  153/600  ➡️ | SOL $ 185.6140 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  154/600  ➡️ | SOL $ 185.6140 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  155/600  ➡️ | SOL $ 185.6140 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  156/600  ➡️ | SOL $ 185.6140 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  157/600  ➡️ | SOL $ 185.6140 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  158/600  ➡️ | SOL $ 185.6140 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  159/600  ➡️ | SOL $ 185.6140 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  160/600  ➡️ | SOL $ 185.6140 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  161/600  ➡️ | SOL $ 185.6157 (+0.001%) | Vol:  0.00% | ✓ Grid stable
+Cycle  162/600  ➡️ | SOL $ 185.6157 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  163/600  ➡️ | SOL $ 185.6157 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  164/600  ➡️ | SOL $ 185.6157 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  165/600  ➡️ | SOL $ 185.6157 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  166/600  ➡️ | SOL $ 185.6157 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  167/600  ➡️ | SOL $ 185.6157 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  168/600  ➡️ | SOL $ 185.6157 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  169/600  ➡️ | SOL $ 185.6209 (+0.003%) | Vol:  0.00% | ✓ Grid stable
+Cycle  170/600  ➡️ | SOL $ 185.6209 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  171/600  ➡️ | SOL $ 185.6209 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  172/600  ➡️ | SOL $ 185.6209 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  173/600  ➡️ | SOL $ 185.6209 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  174/600  ➡️ | SOL $ 185.6209 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  175/600  ➡️ | SOL $ 185.6209 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  176/600  ➡️ | SOL $ 185.6209 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  177/600  ➡️ | SOL $ 185.6209 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  178/600  ➡️ | SOL $ 185.6209 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  179/600  📈 | SOL $ 185.6369 (+0.009%) | Vol:  0.00% | ✓ Grid stable
+Cycle  180/600  ➡️ | SOL $ 185.6369 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  181/600  ➡️ | SOL $ 185.6369 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  182/600  ➡️ | SOL $ 185.6369 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  183/600  ➡️ | SOL $ 185.6369 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  184/600  ➡️ | SOL $ 185.6369 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  185/600  ➡️ | SOL $ 185.6369 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  186/600  ➡️ | SOL $ 185.6369 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  187/600  ➡️ | SOL $ 185.6369 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  188/600  ➡️ | SOL $ 185.6369 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  189/600  ➡️ | SOL $ 185.6409 (+0.002%) | Vol:  0.00% | ✓ Grid stable
+Cycle  190/600  ➡️ | SOL $ 185.6409 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  191/600  ➡️ | SOL $ 185.6409 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  192/600  ➡️ | SOL $ 185.6409 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  193/600  ➡️ | SOL $ 185.6409 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  194/600  ➡️ | SOL $ 185.6409 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  195/600  ➡️ | SOL $ 185.6409 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  196/600  ➡️ | SOL $ 185.6409 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  197/600  ➡️ | SOL $ 185.6409 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  198/600  ➡️ | SOL $ 185.6409 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  199/600  ➡️ | SOL $ 185.6409 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  200/600  ➡️ | SOL $ 185.6420 (+0.001%) | Vol:  0.00% | ✓ Grid stable
+Cycle  201/600  ➡️ | SOL $ 185.6420 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  202/600  ➡️ | SOL $ 185.6420 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  203/600  ➡️ | SOL $ 185.6420 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  204/600  ➡️ | SOL $ 185.6420 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  205/600  ➡️ | SOL $ 185.6420 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  206/600  ➡️ | SOL $ 185.6420 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  207/600  ➡️ | SOL $ 185.6420 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  208/600  ➡️ | SOL $ 185.6420 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  209/600  📈 | SOL $ 185.6527 (+0.006%) | Vol:  0.00% | ✓ Grid stable
+Cycle  210/600  ➡️ | SOL $ 185.6527 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  211/600  ➡️ | SOL $ 185.6527 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  212/600  ➡️ | SOL $ 185.6527 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  213/600  ➡️ | SOL $ 185.6527 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  214/600  ➡️ | SOL $ 185.6527 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  215/600  ➡️ | SOL $ 185.6527 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  216/600  ➡️ | SOL $ 185.6527 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  217/600  ➡️ | SOL $ 185.6527 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  218/600  ➡️ | SOL $ 185.6527 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  219/600  ➡️ | SOL $ 185.6589 (+0.003%) | Vol:  0.00% | ✓ Grid stable
+Cycle  220/600  ➡️ | SOL $ 185.6589 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  221/600  ➡️ | SOL $ 185.6589 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  222/600  ➡️ | SOL $ 185.6589 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  223/600  ➡️ | SOL $ 185.6589 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  224/600  ➡️ | SOL $ 185.6589 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  225/600  ➡️ | SOL $ 185.6589 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  226/600  ➡️ | SOL $ 185.6589 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  227/600  ➡️ | SOL $ 185.6589 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  228/600  ➡️ | SOL $ 185.6579 (-0.001%) | Vol:  0.00% | ✓ Grid stable
+Cycle  229/600  ➡️ | SOL $ 185.6579 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  230/600  ➡️ | SOL $ 185.6579 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  231/600  ➡️ | SOL $ 185.6579 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  232/600  ➡️ | SOL $ 185.6579 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  233/600  ➡️ | SOL $ 185.6579 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  234/600  ➡️ | SOL $ 185.6579 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  235/600  ➡️ | SOL $ 185.6579 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  236/600  ➡️ | SOL $ 185.6579 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  237/600  ➡️ | SOL $ 185.6579 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  238/600  ➡️ | SOL $ 185.6629 (+0.003%) | Vol:  0.00% | ✓ Grid stable
+Cycle  239/600  ➡️ | SOL $ 185.6629 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  240/600  ➡️ | SOL $ 185.6629 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  241/600  ➡️ | SOL $ 185.6629 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  242/600  ➡️ | SOL $ 185.6629 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  243/600  ➡️ | SOL $ 185.6629 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  244/600  ➡️ | SOL $ 185.6629 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  245/600  ➡️ | SOL $ 185.6629 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  246/600  ➡️ | SOL $ 185.6629 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  247/600  ➡️ | SOL $ 185.6629 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  248/600  ➡️ | SOL $ 185.6623 (-0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  249/600  ➡️ | SOL $ 185.6623 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  250/600  ➡️ | SOL $ 185.6623 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  251/600  ➡️ | SOL $ 185.6623 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  252/600  ➡️ | SOL $ 185.6623 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  253/600  ➡️ | SOL $ 185.6623 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  254/600  ➡️ | SOL $ 185.6623 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  255/600  ➡️ | SOL $ 185.6623 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  256/600  ➡️ | SOL $ 185.6623 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  257/600  ➡️ | SOL $ 185.6623 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  258/600  ➡️ | SOL $ 185.6623 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  259/600  ➡️ | SOL $ 185.6631 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  260/600  ➡️ | SOL $ 185.6631 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  261/600  ➡️ | SOL $ 185.6631 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  262/600  ➡️ | SOL $ 185.6631 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  263/600  ➡️ | SOL $ 185.6631 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  264/600  ➡️ | SOL $ 185.6631 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  265/600  ➡️ | SOL $ 185.6631 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  266/600  ➡️ | SOL $ 185.6631 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  267/600  ➡️ | SOL $ 185.6623 (-0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  268/600  ➡️ | SOL $ 185.6623 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  269/600  ➡️ | SOL $ 185.6623 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  270/600  ➡️ | SOL $ 185.6623 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  271/600  ➡️ | SOL $ 185.6623 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  272/600  ➡️ | SOL $ 185.6623 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  273/600  ➡️ | SOL $ 185.6623 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  274/600  ➡️ | SOL $ 185.6623 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  275/600  ➡️ | SOL $ 185.6623 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  276/600  ➡️ | SOL $ 185.6623 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  277/600  ➡️ | SOL $ 185.6623 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  278/600  ➡️ | SOL $ 185.6607 (-0.001%) | Vol:  0.00% | ✓ Grid stable
+Cycle  279/600  ➡️ | SOL $ 185.6607 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  280/600  ➡️ | SOL $ 185.6607 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  281/600  ➡️ | SOL $ 185.6607 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  282/600  ➡️ | SOL $ 185.6607 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  283/600  ➡️ | SOL $ 185.6607 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  284/600  ➡️ | SOL $ 185.6607 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  285/600  ➡️ | SOL $ 185.6607 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  286/600  ➡️ | SOL $ 185.6607 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  287/600  ➡️ | SOL $ 185.6607 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  288/600  ➡️ | SOL $ 185.6561 (-0.002%) | Vol:  0.00% | ✓ Grid stable
+Cycle  289/600  ➡️ | SOL $ 185.6561 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  290/600  ➡️ | SOL $ 185.6561 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  291/600  ➡️ | SOL $ 185.6561 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  292/600  ➡️ | SOL $ 185.6561 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  293/600  ➡️ | SOL $ 185.6561 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  294/600  ➡️ | SOL $ 185.6561 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  295/600  ➡️ | SOL $ 185.6561 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  296/600  ➡️ | SOL $ 185.6561 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  297/600  ➡️ | SOL $ 185.6499 (-0.003%) | Vol:  0.00% | ✓ Grid stable
+Cycle  298/600  ➡️ | SOL $ 185.6499 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  299/600  ➡️ | SOL $ 185.6499 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  300/600  ➡️ | SOL $ 185.6499 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  301/600  ➡️ | SOL $ 185.6499 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  302/600  ➡️ | SOL $ 185.6499 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  303/600  ➡️ | SOL $ 185.6499 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  304/600  ➡️ | SOL $ 185.6499 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  305/600  ➡️ | SOL $ 185.6499 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  306/600  ➡️ | SOL $ 185.6499 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  307/600  ➡️ | SOL $ 185.6450 (-0.003%) | Vol:  0.00% | ✓ Grid stable
+Cycle  308/600  ➡️ | SOL $ 185.6450 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  309/600  ➡️ | SOL $ 185.6450 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  310/600  ➡️ | SOL $ 185.6450 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  311/600  ➡️ | SOL $ 185.6450 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  312/600  ➡️ | SOL $ 185.6450 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  313/600  ➡️ | SOL $ 185.6450 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  314/600  ➡️ | SOL $ 185.6450 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  315/600  ➡️ | SOL $ 185.6450 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  316/600  ➡️ | SOL $ 185.6392 (-0.003%) | Vol:  0.00% | ✓ Grid stable
+Cycle  317/600  ➡️ | SOL $ 185.6392 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  318/600  ➡️ | SOL $ 185.6392 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  319/600  ➡️ | SOL $ 185.6392 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  320/600  ➡️ | SOL $ 185.6392 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  321/600  ➡️ | SOL $ 185.6392 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  322/600  ➡️ | SOL $ 185.6392 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  323/600  ➡️ | SOL $ 185.6392 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  324/600  ➡️ | SOL $ 185.6392 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  325/600  ➡️ | SOL $ 185.6392 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  326/600  ➡️ | SOL $ 185.6392 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  327/600  ➡️ | SOL $ 185.6392 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  328/600  ➡️ | SOL $ 185.6392 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  329/600  ➡️ | SOL $ 185.6392 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  330/600  ➡️ | SOL $ 185.6392 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  331/600  ➡️ | SOL $ 185.6392 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  332/600  ➡️ | SOL $ 185.6392 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  333/600  ➡️ | SOL $ 185.6392 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  334/600  ➡️ | SOL $ 185.6392 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  335/600  ➡️ | SOL $ 185.6392 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  336/600  ➡️ | SOL $ 185.6392 (-0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  337/600  ➡️ | SOL $ 185.6392 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  338/600  ➡️ | SOL $ 185.6392 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  339/600  ➡️ | SOL $ 185.6392 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  340/600  ➡️ | SOL $ 185.6392 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  341/600  ➡️ | SOL $ 185.6392 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  342/600  ➡️ | SOL $ 185.6392 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  343/600  ➡️ | SOL $ 185.6392 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  344/600  ➡️ | SOL $ 185.6392 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  345/600  ➡️ | SOL $ 185.6392 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  346/600  ➡️ | SOL $ 185.6455 (+0.003%) | Vol:  0.00% | ✓ Grid stable
+Cycle  347/600  ➡️ | SOL $ 185.6455 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  348/600  ➡️ | SOL $ 185.6455 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  349/600  ➡️ | SOL $ 185.6455 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  350/600  ➡️ | SOL $ 185.6455 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  351/600  ➡️ | SOL $ 185.6455 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  352/600  ➡️ | SOL $ 185.6455 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  353/600  ➡️ | SOL $ 185.6455 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  354/600  ➡️ | SOL $ 185.6455 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  355/600  ➡️ | SOL $ 185.6455 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  356/600  ➡️ | SOL $ 185.6479 (+0.001%) | Vol:  0.00% | ✓ Grid stable
+Cycle  357/600  ➡️ | SOL $ 185.6479 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  358/600  ➡️ | SOL $ 185.6479 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  359/600  ➡️ | SOL $ 185.6479 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  360/600  ➡️ | SOL $ 185.6479 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  361/600  ➡️ | SOL $ 185.6479 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  362/600  ➡️ | SOL $ 185.6479 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  363/600  ➡️ | SOL $ 185.6479 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  364/600  ➡️ | SOL $ 185.6479 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  365/600  ➡️ | SOL $ 185.6479 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  366/600  📈 | SOL $ 185.6710 (+0.012%) | Vol:  0.00% | ✓ Grid stable
+Cycle  367/600  ➡️ | SOL $ 185.6710 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  368/600  ➡️ | SOL $ 185.6710 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  369/600  ➡️ | SOL $ 185.6710 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  370/600  ➡️ | SOL $ 185.6710 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  371/600  ➡️ | SOL $ 185.6710 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  372/600  ➡️ | SOL $ 185.6710 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  373/600  ➡️ | SOL $ 185.6710 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  374/600  ➡️ | SOL $ 185.6710 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  375/600  ➡️ | SOL $ 185.6710 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  376/600  📈 | SOL $ 185.7048 (+0.018%) | Vol:  0.00% | ✓ Grid stable
+Cycle  377/600  ➡️ | SOL $ 185.7048 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  378/600  ➡️ | SOL $ 185.7048 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  379/600  ➡️ | SOL $ 185.7048 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  380/600  ➡️ | SOL $ 185.7048 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  381/600  ➡️ | SOL $ 185.7048 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  382/600  ➡️ | SOL $ 185.7048 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  383/600  ➡️ | SOL $ 185.7048 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  384/600  ➡️ | SOL $ 185.7048 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  385/600  ➡️ | SOL $ 185.7048 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  386/600  ➡️ | SOL $ 185.7048 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  387/600  📈 | SOL $ 185.7395 (+0.019%) | Vol:  0.00% | ✓ Grid stable
+Cycle  388/600  ➡️ | SOL $ 185.7395 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  389/600  ➡️ | SOL $ 185.7395 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  390/600  ➡️ | SOL $ 185.7395 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  391/600  ➡️ | SOL $ 185.7395 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  392/600  ➡️ | SOL $ 185.7395 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  393/600  ➡️ | SOL $ 185.7395 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  394/600  ➡️ | SOL $ 185.7395 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  395/600  📈 | SOL $ 185.7810 (+0.022%) | Vol:  0.00% | ✓ Grid stable
+Cycle  396/600  ➡️ | SOL $ 185.7810 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  397/600  ➡️ | SOL $ 185.7810 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  398/600  ➡️ | SOL $ 185.7810 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  399/600  ➡️ | SOL $ 185.7810 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  400/600  ➡️ | SOL $ 185.7810 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  401/600  ➡️ | SOL $ 185.7810 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  402/600  ➡️ | SOL $ 185.7810 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  403/600  ➡️ | SOL $ 185.7810 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  404/600  ➡️ | SOL $ 185.7810 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  405/600  📈 | SOL $ 185.8462 (+0.035%) | Vol:  0.00% | ✓ Grid stable
+Cycle  406/600  ➡️ | SOL $ 185.8462 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  407/600  ➡️ | SOL $ 185.8462 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  408/600  ➡️ | SOL $ 185.8462 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  409/600  ➡️ | SOL $ 185.8462 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  410/600  ➡️ | SOL $ 185.8462 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  411/600  ➡️ | SOL $ 185.8462 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  412/600  ➡️ | SOL $ 185.8462 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  413/600  ➡️ | SOL $ 185.8462 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  414/600  ➡️ | SOL $ 185.8462 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  415/600  📈 | SOL $ 185.8783 (+0.017%) | Vol:  0.00% | ✓ Grid stable
+Cycle  416/600  ➡️ | SOL $ 185.8783 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  417/600  ➡️ | SOL $ 185.8783 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  418/600  ➡️ | SOL $ 185.8783 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  419/600  ➡️ | SOL $ 185.8783 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  420/600  ➡️ | SOL $ 185.8783 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  421/600  ➡️ | SOL $ 185.8783 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  422/600  ➡️ | SOL $ 185.8783 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  423/600  ➡️ | SOL $ 185.8783 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  424/600  📈 | SOL $ 185.9036 (+0.014%) | Vol:  0.00% | ✓ Grid stable
+Cycle  425/600  ➡️ | SOL $ 185.9036 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  426/600  ➡️ | SOL $ 185.9036 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  427/600  ➡️ | SOL $ 185.9036 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  428/600  ➡️ | SOL $ 185.9036 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  429/600  ➡️ | SOL $ 185.9036 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  430/600  ➡️ | SOL $ 185.9036 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  431/600  ➡️ | SOL $ 185.9036 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  432/600  ➡️ | SOL $ 185.9036 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  433/600  ➡️ | SOL $ 185.9036 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  434/600  ➡️ | SOL $ 185.9021 (-0.001%) | Vol:  0.00% | ✓ Grid stable
+Cycle  435/600  ➡️ | SOL $ 185.9021 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  436/600  ➡️ | SOL $ 185.9021 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  437/600  ➡️ | SOL $ 185.9021 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  438/600  ➡️ | SOL $ 185.9021 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  439/600  ➡️ | SOL $ 185.9021 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  440/600  ➡️ | SOL $ 185.9021 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  441/600  ➡️ | SOL $ 185.9021 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  442/600  ➡️ | SOL $ 185.9021 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  443/600  ➡️ | SOL $ 185.9021 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  444/600  📉 | SOL $ 185.8911 (-0.006%) | Vol:  0.00% | ✓ Grid stable
+Cycle  445/600  ➡️ | SOL $ 185.8911 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  446/600  ➡️ | SOL $ 185.8911 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  447/600  ➡️ | SOL $ 185.8911 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  448/600  ➡️ | SOL $ 185.8911 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  449/600  ➡️ | SOL $ 185.8911 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  450/600  ➡️ | SOL $ 185.8911 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  451/600  ➡️ | SOL $ 185.8911 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  452/600  ➡️ | SOL $ 185.8911 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  453/600  ➡️ | SOL $ 185.8911 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  454/600  ➡️ | SOL $ 185.8911 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  455/600  ➡️ | SOL $ 185.8909 (-0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  456/600  ➡️ | SOL $ 185.8909 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  457/600  ➡️ | SOL $ 185.8909 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  458/600  ➡️ | SOL $ 185.8909 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  459/600  ➡️ | SOL $ 185.8909 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  460/600  ➡️ | SOL $ 185.8909 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  461/600  ➡️ | SOL $ 185.8909 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  462/600  ➡️ | SOL $ 185.8909 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  463/600  ➡️ | SOL $ 185.8909 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  464/600  ➡️ | SOL $ 185.8915 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  465/600  ➡️ | SOL $ 185.8915 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  466/600  ➡️ | SOL $ 185.8915 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  467/600  ➡️ | SOL $ 185.8915 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  468/600  ➡️ | SOL $ 185.8915 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  469/600  ➡️ | SOL $ 185.8915 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  470/600  ➡️ | SOL $ 185.8915 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  471/600  ➡️ | SOL $ 185.8915 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  472/600  ➡️ | SOL $ 185.8915 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  473/600  ➡️ | SOL $ 185.8998 (+0.004%) | Vol:  0.00% | ✓ Grid stable
+Cycle  474/600  ➡️ | SOL $ 185.8998 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  475/600  ➡️ | SOL $ 185.8998 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  476/600  ➡️ | SOL $ 185.8998 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  477/600  ➡️ | SOL $ 185.8998 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  478/600  ➡️ | SOL $ 185.8998 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  479/600  ➡️ | SOL $ 185.8998 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  480/600  ➡️ | SOL $ 185.8998 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  481/600  ➡️ | SOL $ 185.8998 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  482/600  ➡️ | SOL $ 185.8998 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  483/600  ➡️ | SOL $ 185.8985 (-0.001%) | Vol:  0.00% | ✓ Grid stable
+Cycle  484/600  ➡️ | SOL $ 185.8985 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  485/600  ➡️ | SOL $ 185.8985 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  486/600  ➡️ | SOL $ 185.8985 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  487/600  ➡️ | SOL $ 185.8985 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  488/600  ➡️ | SOL $ 185.8985 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  489/600  ➡️ | SOL $ 185.8985 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  490/600  ➡️ | SOL $ 185.8985 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  491/600  ➡️ | SOL $ 185.8985 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  492/600  ➡️ | SOL $ 185.8985 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  493/600  ➡️ | SOL $ 185.8985 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  494/600  📉 | SOL $ 185.8855 (-0.007%) | Vol:  0.00% | ✓ Grid stable
+Cycle  495/600  ➡️ | SOL $ 185.8855 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  496/600  ➡️ | SOL $ 185.8855 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  497/600  ➡️ | SOL $ 185.8855 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  498/600  ➡️ | SOL $ 185.8855 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  499/600  ➡️ | SOL $ 185.8855 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  500/600  ➡️ | SOL $ 185.8855 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  501/600  ➡️ | SOL $ 185.8855 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  502/600  ➡️ | SOL $ 185.8855 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  503/600  📉 | SOL $ 185.8719 (-0.007%) | Vol:  0.00% | ✓ Grid stable
+Cycle  504/600  ➡️ | SOL $ 185.8719 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  505/600  ➡️ | SOL $ 185.8719 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  506/600  ➡️ | SOL $ 185.8719 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  507/600  ➡️ | SOL $ 185.8719 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  508/600  ➡️ | SOL $ 185.8719 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  509/600  ➡️ | SOL $ 185.8719 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  510/600  ➡️ | SOL $ 185.8719 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  511/600  ➡️ | SOL $ 185.8719 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  512/600  ➡️ | SOL $ 185.8719 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  513/600  ➡️ | SOL $ 185.8721 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  514/600  ➡️ | SOL $ 185.8721 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  515/600  ➡️ | SOL $ 185.8721 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  516/600  ➡️ | SOL $ 185.8721 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  517/600  ➡️ | SOL $ 185.8721 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  518/600  ➡️ | SOL $ 185.8721 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  519/600  ➡️ | SOL $ 185.8721 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  520/600  ➡️ | SOL $ 185.8721 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  521/600  ➡️ | SOL $ 185.8721 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  522/600  ➡️ | SOL $ 185.8721 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  523/600  ➡️ | SOL $ 185.8721 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  524/600  📈 | SOL $ 185.8916 (+0.010%) | Vol:  0.00% | ✓ Grid stable
+Cycle  525/600  ➡️ | SOL $ 185.8916 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  526/600  ➡️ | SOL $ 185.8916 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  527/600  ➡️ | SOL $ 185.8916 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  528/600  ➡️ | SOL $ 185.8916 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  529/600  ➡️ | SOL $ 185.8916 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  530/600  ➡️ | SOL $ 185.8916 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  531/600  ➡️ | SOL $ 185.8916 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  532/600  ➡️ | SOL $ 185.8919 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  533/600  ➡️ | SOL $ 185.8919 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  534/600  ➡️ | SOL $ 185.8919 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  535/600  ➡️ | SOL $ 185.8919 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  536/600  ➡️ | SOL $ 185.8919 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  537/600  ➡️ | SOL $ 185.8919 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  538/600  ➡️ | SOL $ 185.8919 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  539/600  ➡️ | SOL $ 185.8919 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  540/600  ➡️ | SOL $ 185.8919 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  541/600  ➡️ | SOL $ 185.8919 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  542/600  ➡️ | SOL $ 185.8919 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  543/600  📈 | SOL $ 185.9388 (+0.025%) | Vol:  0.00% | ✓ Grid stable
+Cycle  544/600  ➡️ | SOL $ 185.9388 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  545/600  ➡️ | SOL $ 185.9388 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  546/600  ➡️ | SOL $ 185.9388 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  547/600  ➡️ | SOL $ 185.9388 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  548/600  ➡️ | SOL $ 185.9388 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  549/600  ➡️ | SOL $ 185.9388 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  550/600  ➡️ | SOL $ 185.9388 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  551/600  ➡️ | SOL $ 185.9388 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  552/600  ➡️ | SOL $ 185.9388 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  553/600  📉 | SOL $ 185.9250 (-0.007%) | Vol:  0.00% | ✓ Grid stable
+Cycle  554/600  ➡️ | SOL $ 185.9250 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  555/600  ➡️ | SOL $ 185.9250 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  556/600  ➡️ | SOL $ 185.9250 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  557/600  ➡️ | SOL $ 185.9250 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  558/600  ➡️ | SOL $ 185.9250 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  559/600  ➡️ | SOL $ 185.9250 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  560/600  ➡️ | SOL $ 185.9250 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  561/600  ➡️ | SOL $ 185.9250 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  562/600  📉 | SOL $ 185.9011 (-0.013%) | Vol:  0.00% | ✓ Grid stable
+Cycle  563/600  ➡️ | SOL $ 185.9011 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  564/600  ➡️ | SOL $ 185.9011 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  565/600  ➡️ | SOL $ 185.9011 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  566/600  ➡️ | SOL $ 185.9011 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  567/600  ➡️ | SOL $ 185.9011 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  568/600  ➡️ | SOL $ 185.9011 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  569/600  ➡️ | SOL $ 185.9011 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  570/600  ➡️ | SOL $ 185.9011 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  571/600  ➡️ | SOL $ 185.9011 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  572/600  ➡️ | SOL $ 185.8935 (-0.004%) | Vol:  0.00% | ✓ Grid stable
+Cycle  573/600  ➡️ | SOL $ 185.8935 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  574/600  ➡️ | SOL $ 185.8935 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  575/600  ➡️ | SOL $ 185.8935 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  576/600  ➡️ | SOL $ 185.8935 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  577/600  ➡️ | SOL $ 185.8935 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  578/600  ➡️ | SOL $ 185.8935 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  579/600  ➡️ | SOL $ 185.8935 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  580/600  ➡️ | SOL $ 185.8935 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  581/600  ➡️ | SOL $ 185.8928 (-0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  582/600  ➡️ | SOL $ 185.8928 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  583/600  ➡️ | SOL $ 185.8928 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  584/600  ➡️ | SOL $ 185.8928 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  585/600  ➡️ | SOL $ 185.8928 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  586/600  ➡️ | SOL $ 185.8928 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  587/600  ➡️ | SOL $ 185.8928 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  588/600  ➡️ | SOL $ 185.8928 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  589/600  ➡️ | SOL $ 185.8928 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  590/600  ➡️ | SOL $ 185.8928 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  591/600  ➡️ | SOL $ 185.8928 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  592/600  ➡️ | SOL $ 185.8956 (+0.002%) | Vol:  0.00% | ✓ Grid stable
+Cycle  593/600  ➡️ | SOL $ 185.8956 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  594/600  ➡️ | SOL $ 185.8956 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  595/600  ➡️ | SOL $ 185.8956 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  596/600  ➡️ | SOL $ 185.8956 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  597/600  ➡️ | SOL $ 185.8956 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  598/600  ➡️ | SOL $ 185.8956 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  599/600  ➡️ | SOL $ 185.8956 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+Cycle  600/600  ➡️ | SOL $ 185.8956 (+0.000%) | Vol:  0.00% | ✓ Grid stable
+
+════════════════════════════════════════════════════════════
+   🤖 GRID BOT V3.5 - STATUS REPORT
+════════════════════════════════════════════════════════════
+
+📊 Bot Performance:
+  Total Cycles:      600
+  Successful Trades: 0
+  Grid Repositions:  0
+  Open Orders:       0
+
+💰 Portfolio:
+  Total Value:       $6858.96
+  P&L:               $0.00
+  ROI:               0.00%
+
+📈 Trading Stats:
+  Win Rate:          0.00%
+  Total Fees:        $0.00
+
+💵 Current Price:    $185.8956
+
+════════════════════════════════════════════════════════════
+
+╔═══════════════════════════════════════════════════════════════╗
+║        📊 MULTI-STRATEGY PERFORMANCE REPORT                  ║
+╚═══════════════════════════════════════════════════════════════╝
+
+🎯 Consensus Mode: Weighted Average
+📈 Total Strategies: 1 (1 enabled)
+
+🎯 Grid Rebalancer V3.5 ⭐ (ACTIVE)
+   ├─ Signals:  600 (Buy: 0, Sell: 0, Hold: 600)
+   └─ No trades executed yet
+
+🎯 Last Consensus Signal:
+   ⏸️  HOLD | Neutral: 0% buy, 0% sell
+
+
+════════════════════════════════════════════════════════════
+  📊 SESSION PERFORMANCE SUMMARY
+════════════════════════════════════════════════════════════
+
+⏱️  TIMING:
+   Runtime:          61.14s
+   Total Cycles:     600
+   Successful:       600 (100.0%)
+   Failed:           0
+
+⚡ CYCLE PERFORMANCE:
+   Average:          0.00ms
+   Min:              0ms
+   Max:              0ms
+   Slow Cycles:      0
+   Throughput:       9.8 cycles/sec
+
+🎯 TRADING ACTIVITY:
+   Grid Repositions: 0
+   Price Updates:    600
+   Regime Blocks:    0
+
+⚠️  ERRORS:
+   Total Errors:     0
+   Failed Fetches:   0
+
+════════════════════════════════════════════════════════════
+
+
+✅ Trading session completed successfully!
+

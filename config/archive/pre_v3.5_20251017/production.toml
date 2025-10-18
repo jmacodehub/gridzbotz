@@ -1,0 +1,32 @@
+# Production environment overrides
+
+[bot]
+mode = "live"
+
+[network]
+cluster = "mainnet"
+rpc_url = "${RPC_URL}"  # From environment variable
+commitment = "finalized"
+
+[trading]
+enable_dynamic_grid = true
+grid_levels = 20
+grid_spacing_percent = 0.3
+
+[risk]
+enable_stop_loss = true
+max_daily_loss_percent = 5.0
+
+[logging]
+level = "info"
+file_enabled = true
+
+[metrics]
+enable_metrics = true
+export_prometheus = true
+
+[database]
+enabled = true
+
+[alerts]
+enabled = true

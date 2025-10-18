@@ -1,0 +1,357 @@
+//! ═══════════════════════════════════════════════════════════════════════════
+//! 🚀 Solana Grid Trading Bot v3.0 – Production Edition
+//! Modular | Robust | Extensible | Lightning-Fast
+//! October 17, 2025
+//! ═══════════════════════════════════════════════════════════════════════════
+
+use solana_grid_bot::init;
+use solana_grid_bot::config::Config;
+use solana_grid_bot::bots::GridBot;
+use solana_grid_bot::trading::{get_live_price, live_feed_ids};
+use std::{error::Error, time::Instant};
+use log::{info, warn, error, debug};
+use tokio::time::{sleep, Duration};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CONSTANTS
+// ═══════════════════════════════════════════════════════════════════════════
+
+const DEMO_CYCLES: u32 = 50;
+const CYCLE_INTERVAL_MS: u64 = 100;
+const STARTUP_DELAY_MS: u64 = 1000;
+const PRICE_HISTORY_SIZE: usize = 20;
+const SLOW_CYCLE_THRESHOLD_MS: u64 = 200;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SESSION METRICS
+// ═══════════════════════════════════════════════════════════════════════════
+
+struct SessionMetrics {
+    start_time: Instant,
+    cycle_times: Vec<u64>,
+    repositions: u32,
+    errors: u32,
+    price_updates: u64,
+    successful_cycles: u32,
+    failed_price_fetches: u32,
+}
+
+impl SessionMetrics {
+    fn new() -> Self {
+        Self {
+            start_time: Instant::now(),
+            cycle_times: Vec::with_capacity(DEMO_CYCLES as usize),
+            repositions: 0,
+            errors: 0,
+            price_updates: 0,
+            successful_cycles: 0,
+            failed_price_fetches: 0,
+        }
+    }
+    
+    fn record_cycle(&mut self, duration_ms: u64) {
+        self.cycle_times.push(duration_ms);
+        self.successful_cycles += 1;
+    }
+    
+    fn avg_cycle_time(&self) -> f64 {
+        if self.cycle_times.is_empty() {
+            0.0
+        } else {
+            self.cycle_times.iter().sum::<u64>() as f64 / self.cycle_times.len() as f64
+        }
+    }
+    
+    fn min_cycle_time(&self) -> u64 {
+        *self.cycle_times.iter().min().unwrap_or(&0)
+    }
+    
+    fn max_cycle_time(&self) -> u64 {
+        *self.cycle_times.iter().max().unwrap_or(&0)
+    }
+    
+    fn elapsed_secs(&self) -> f64 {
+        self.start_time.elapsed().as_secs_f64()
+    }
+    
+    fn success_rate(&self) -> f64 {
+        if self.price_updates == 0 {
+            return 0.0;
+        }
+        ((self.price_updates - self.failed_price_fetches as u64) as f64 / self.price_updates as f64) * 100.0
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// UI HELPERS
+// ═══════════════════════════════════════════════════════════════════════════
+
+fn print_banner() {
+    let border = "═".repeat(78);
+    println!("\n{}", border);
+    println!("     🚀 SOLANA GRID TRADING BOT v3.0 - PRODUCTION EDITION");
+    println!("     ⚡ Lightning-Fast Cycles • Live Feeds • Dynamic Grids");
+    println!("{}", border);
+}
+
+fn progress_bar(current: u32, total: u32) -> String {
+    let percentage = (current as f64 / total as f64 * 100.0) as u32;
+    let filled = (percentage / 5) as usize;
+    let empty = 20 - filled;
+    format!("[{}{}] {}%", "█".repeat(filled), "░".repeat(empty), percentage)
+}
+
+fn calculate_volatility(prices: &[f64]) -> f64 {
+    if prices.len() < 2 {
+        return 0.0;
+    }
+    let mean = prices.iter().sum::<f64>() / prices.len() as f64;
+    let variance = prices.iter()
+        .map(|&p| (p - mean).powi(2))
+        .sum::<f64>() / prices.len() as f64;
+    (variance.sqrt() / mean) * 100.0
+}
+
+fn print_summary(metrics: &SessionMetrics, cycles_completed: u32, feed_health: bool) {
+    let border = "═".repeat(78);
+    println!("\n{}", border);
+    println!("     📊 SESSION SUMMARY - PERFORMANCE REPORT");
+    println!("{}", border);
+    
+    println!("\n⏱️  TIMING METRICS:");
+    println!("   Total Runtime:       {:.2}s", metrics.elapsed_secs());
+    println!("   Cycles Completed:    {}/{}", cycles_completed, DEMO_CYCLES);
+    println!("   Avg Cycle Time:      {:.2}ms 🎯", metrics.avg_cycle_time());
+    println!("   Min Cycle Time:      {}ms ⚡", metrics.min_cycle_time());
+    println!("   Max Cycle Time:      {}ms", metrics.max_cycle_time());
+    
+    println!("\n📈 TRADING METRICS:");
+    println!("   Grid Repositions:    {} times", metrics.repositions);
+    println!("   Price Updates:       {} total", metrics.price_updates);
+    println!("   Successful Cycles:   {}", metrics.successful_cycles);
+    println!("   Errors Encountered:  {}", metrics.errors);
+    
+    println!("\n🌐 NETWORK HEALTH:");
+    println!("   Price Feed:          {}", if feed_health { "✅ Healthy" } else { "🔴 Degraded" });
+    println!("   RPC Success Rate:    {:.1}%", metrics.success_rate());
+    println!("   Failed Fetches:      {}", metrics.failed_price_fetches);
+    
+    let avg = metrics.avg_cycle_time();
+    println!("\n🏆 PERFORMANCE VERDICT:");
+    if avg < 150.0 {
+        println!("   Status:              ⚡ EXCELLENT - Lightning Fast!");
+    } else if avg < 300.0 {
+        println!("   Status:              ✅ GOOD - Under 300ms");
+    } else if avg < 600.0 {
+        println!("   Status:              👍 ACCEPTABLE - Under 600ms");
+    } else {
+        println!("   Status:              ⚠️  NEEDS OPTIMIZATION");
+    }
+    
+    println!("\n{}\n", border);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// MAIN
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn Error>> {
+    // Initialize logger
+    env_logger::Builder::from_default_env()
+        .filter_level(log::LevelFilter::Info)
+        .format_timestamp_millis()
+        .init();
+
+    print_banner();
+    let mut metrics = SessionMetrics::new();
+
+    // ─────────────────────────────────────────────────────────────────────
+    // INITIALIZATION
+    // ─────────────────────────────────────────────────────────────────────
+    
+    info!("🔧 Initializing core systems...");
+    init().map_err(|e| format!("❌ Core init failed: {}", e))?;
+    
+    let config = Config::load()
+        .map_err(|e| format!("❌ Config load failed: {}", e))?;
+    info!("✅ Core initialized & config loaded");
+    config.display_summary();
+
+    info!("🤖 Setting up GridBot...");
+    let mut bot = GridBot::new(config.clone())
+        .map_err(|e| format!("❌ GridBot creation failed: {}", e))?;
+    bot.initialize().await
+        .map_err(|e| format!("❌ GridBot initialization failed: {}", e))?;
+    info!("✅ GridBot ready for trading");
+
+    // ─────────────────────────────────────────────────────────────────────
+    // WARM UP PRICE FEED
+    // ─────────────────────────────────────────────────────────────────────
+    
+    println!("\n⏳ Warming up price feed ({} ms)...", STARTUP_DELAY_MS);
+    sleep(Duration::from_millis(STARTUP_DELAY_MS)).await;
+    
+    let initial_price = get_live_price(live_feed_ids::SOL_USD).await
+        .ok_or("❌ Failed to fetch initial price")?;
+    println!("💰 Initial SOL/USD: ${:.4}\n", initial_price);
+
+    // ─────────────────────────────────────────────────────────────────────
+    // GRACEFUL SHUTDOWN SETUP
+    // ─────────────────────────────────────────────────────────────────────
+    
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let shutdown_clone = Arc::clone(&shutdown);
+    
+    tokio::spawn(async move {
+        tokio::signal::ctrl_c().await.expect("Failed to listen for Ctrl+C");
+        warn!("🛑 Shutdown signal received");
+        shutdown_clone.store(true, Ordering::Relaxed);
+    });
+
+    // ─────────────────────────────────────────────────────────────────────
+    // MAIN TRADING LOOP
+    // ─────────────────────────────────────────────────────────────────────
+    
+    println!("🔥 STARTING OPTIMIZED DEMO ({} cycles @ {}ms intervals)\n", DEMO_CYCLES, CYCLE_INTERVAL_MS);
+    println!("{}", "─".repeat(78));
+
+    let mut last_price = initial_price;
+    let mut price_history: Vec<f64> = Vec::with_capacity(PRICE_HISTORY_SIZE);
+    price_history.push(initial_price);
+
+    for cycle in 1..=DEMO_CYCLES {
+        // Check for shutdown signal
+        if shutdown.load(Ordering::Relaxed) {
+            warn!("🛑 Graceful shutdown initiated at cycle {}", cycle);
+            break;
+        }
+        
+        let cycle_start = Instant::now();
+
+        // ─────────────────────────────────────────────────────────────────
+        // FETCH PRICE
+        // ─────────────────────────────────────────────────────────────────
+        
+        let price = match get_live_price(live_feed_ids::SOL_USD).await {
+            Some(p) => {
+                metrics.price_updates += 1;
+                p
+            }
+            None => {
+                metrics.errors += 1;
+                metrics.failed_price_fetches += 1;
+                error!("❌ Price feed error at cycle {}", cycle);
+                sleep(Duration::from_millis(CYCLE_INTERVAL_MS)).await;
+                continue;
+            }
+        };
+
+        // ─────────────────────────────────────────────────────────────────
+        // UPDATE PRICE HISTORY & CALCULATE METRICS
+        // ─────────────────────────────────────────────────────────────────
+        
+        price_history.push(price);
+        if price_history.len() > PRICE_HISTORY_SIZE {
+            price_history.remove(0);
+        }
+        
+        let price_change = ((price - last_price) / last_price) * 100.0;
+        let volatility = calculate_volatility(&price_history);
+
+        let trend_emoji = match price_change {
+            pc if pc.abs() < 0.005 => "➡️",
+            pc if pc > 0.05 => "🚀",
+            pc if pc > 0.0 => "📈",
+            pc if pc < -0.05 => "💥",
+            _ => "📉",
+        };
+
+        print!("Cycle {:>3}/{:<3} {} | SOL ${:>9.4} ({:>+6.3}%) | Vol: {:>5.2}% | ",
+               cycle, DEMO_CYCLES, trend_emoji, price, price_change, volatility);
+
+        // ─────────────────────────────────────────────────────────────────
+        // GRID REPOSITIONING
+        // ─────────────────────────────────────────────────────────────────
+        
+        if bot.should_reposition(price, last_price).await {
+            match bot.reposition_grid(price, last_price).await {
+                Ok(_) => {
+                    metrics.repositions += 1;
+                    println!("🎯 REPOSITIONED");
+                }
+                Err(e) => {
+                    metrics.errors += 1;
+                    println!("⚠️  REPOSITION FAILED");
+                    error!("Reposition error: {}", e);
+                }
+            }
+        } else {
+            println!("✓ Grid stable");
+        }
+
+        // ─────────────────────────────────────────────────────────────────
+        // PROCESS PRICE UPDATE IN BOT
+        // ─────────────────────────────────────────────────────────────────
+        
+        if let Err(e) = bot.process_price_update(price, chrono::Utc::now().timestamp()).await {
+            error!("Failed to process price update: {}", e);
+            metrics.errors += 1;
+        }
+
+        last_price = price;
+
+        // ─────────────────────────────────────────────────────────────────
+        // PROGRESS REPORTING
+        // ─────────────────────────────────────────────────────────────────
+        
+        if cycle % (DEMO_CYCLES / 10).max(1) == 0 {
+            println!("   {}", progress_bar(cycle, DEMO_CYCLES));
+        }
+
+        let cycle_duration_ms = cycle_start.elapsed().as_millis() as u64;
+        metrics.record_cycle(cycle_duration_ms);
+        
+        if cycle_duration_ms > SLOW_CYCLE_THRESHOLD_MS {
+            warn!("⏱️  Slow cycle #{}: {}ms (target: <{}ms)", 
+                  cycle, cycle_duration_ms, SLOW_CYCLE_THRESHOLD_MS);
+        }
+        
+        debug!("Cycle {} completed in {}ms", cycle, cycle_duration_ms);
+
+        // Periodic status update
+        if cycle % (DEMO_CYCLES / 4) == 0 && cycle > 0 {
+            info!("📊 Progress: {}/{} | Avg: {:.1}ms | Repositions: {} | Vol: {:.2}%",
+                  cycle, DEMO_CYCLES, metrics.avg_cycle_time(), metrics.repositions, volatility);
+        }
+
+        // ─────────────────────────────────────────────────────────────────
+        // SLEEP TO MAINTAIN CYCLE INTERVAL
+        // ─────────────────────────────────────────────────────────────────
+        
+        let elapsed_ms = cycle_start.elapsed().as_millis() as u64;
+        if elapsed_ms < CYCLE_INTERVAL_MS {
+            sleep(Duration::from_millis(CYCLE_INTERVAL_MS - elapsed_ms)).await;
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // FINAL SUMMARY
+    // ─────────────────────────────────────────────────────────────────────
+    
+    let feed_health = metrics.failed_price_fetches < 5; // Less than 5 failures = healthy
+    let cycles_completed = metrics.successful_cycles;
+    
+    print_summary(&metrics, cycles_completed, feed_health);
+
+    // Display bot stats
+    bot.display_status(last_price).await;
+
+    info!("🌙 GridBot session completed successfully");
+    info!("💾 Total runtime: {:.2}s | Avg cycle: {:.2}ms", 
+          metrics.elapsed_secs(), metrics.avg_cycle_time());
+
+    Ok(())
+}

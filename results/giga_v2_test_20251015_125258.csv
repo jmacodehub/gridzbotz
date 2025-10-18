@@ -1,0 +1,7 @@
+Rank,Strategy,ROI,Fills,Filtered,Value,Rebalances,Efficiency,BaseSpacing,FinalSpacing,Levels,Sharpe,MaxDrawdown,Volatility,MarketRegime
+1,V2:UltraWide,-0.00,1,1,7042.66,0,16.67,0.75,0.10,6,-0.01,0.37,0.7077,VERY_LOW_VOL
+2,V2:Conservative,-0.02,3,3,7041.71,0,30.00,0.30,0.10,10,-0.04,0.40,0.7077,VERY_LOW_VOL
+3,V2:Balanced,-0.03,5,5,7040.92,0,35.71,0.20,0.10,15,-0.07,0.42,0.7077,VERY_LOW_VOL
+4,V2:MaxLevels,-0.04,7,7,7040.12,0,20.59,0.15,0.10,35,-0.09,0.44,0.7077,VERY_LOW_VOL
+5,V2:Aggressive,-0.04,7,7,7040.12,0,35.00,0.15,0.10,20,-0.09,0.44,0.7077,VERY_LOW_VOL
+6,V2:MicroGrid,-0.11,22,22,7035.30,0,55.00,0.05,0.10,40,-0.19,0.56,0.7077,VERY_LOW_VOL

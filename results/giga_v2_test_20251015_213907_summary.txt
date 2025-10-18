@@ -1,0 +1,27 @@
+GIGA V2 TEST SUMMARY
+═══════════════════════════════════════════════════════════════
+
+Test Timestamp: 2025-10-15 21:39:07
+Version: V2 (Fee Filter + Dynamic Spacing)
+Total Tests: 3
+Actual Duration: 5.1 minutes
+Starting Price: $196.8006
+
+V2 ENHANCEMENTS:
+• Fee Filtering: ✅ Enabled
+• Dynamic Spacing: ✅ Enabled
+• Total Filtered Trades: 6 (prevented over-trading)
+• Average Filtered per Test: 2
+
+BEST PERFORMERS:
+• Best ROI: Grid:Wide (-0.00%)
+• Most Fills: Grid:Tight (3 fills)
+
+AVERAGES:
+• Average ROI: -0.01%
+• Average Fills: 2
+• Average Value: $6956.11
+
+Results saved to:
+• JSON: results/giga_v2_test_20251015_213907.json
+• CSV: results/giga_v2_test_20251015_213907.csv

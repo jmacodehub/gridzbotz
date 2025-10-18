@@ -1,0 +1,109 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# AGGRESSIVE HIGH-FREQUENCY CONFIGURATION
+# Tighter grid, more fills, higher risk/reward
+# ═══════════════════════════════════════════════════════════════════════════
+
+[bot]
+name = "Project Flash Grid Bot"
+version = "0.2.0"
+mode = "paper"
+
+[network]
+cluster = "devnet"
+rpc_url = "https://api.devnet.solana.com"
+ws_url = "wss://api.devnet.solana.com"
+commitment = "confirmed"
+
+[trading]
+grid_levels = 40
+grid_spacing_percent = 0.15
+min_order_size = 0.8
+max_position_size = 15.0
+enable_dynamic_grid = false
+reposition_threshold = 1.5
+volatility_window = 50
+enable_auto_rebalance = true
+min_usdc_reserve = 100.0
+min_sol_reserve = 0.5
+
+[strategies]
+active = ["grid"]
+consensus_mode = "single"
+
+[strategies.grid]
+enabled = true
+weight = 1.0
+min_confidence = 0.4
+
+[strategies.momentum]
+enabled = false
+weight = 1.0
+min_confidence = 0.5
+lookback_period = 15
+threshold = 0.015
+
+[strategies.mean_reversion]
+enabled = false
+weight = 0.8
+min_confidence = 0.5
+sma_period = 15
+std_dev_multiplier = 1.5
+
+[strategies.rsi]
+enabled = false
+weight = 1.0
+min_confidence = 0.6
+period = 10
+oversold_threshold = 25.0
+overbought_threshold = 75.0
+
+[risk]
+max_capital_per_trade = 2000.0
+risk_per_trade_percent = 3.0
+enable_stop_loss = true
+stop_loss_percent = 8.0
+enable_take_profit = true
+take_profit_percent = 15.0
+enable_trailing_stop = false
+max_daily_loss_percent = 15.0
+max_consecutive_losses = 7
+cooldown_period_seconds = 180
+enable_circuit_breaker = true
+circuit_breaker_threshold = 20.0
+
+[price_feed]
+source = "pyth"
+update_interval_ms = 500
+ws_enabled = false
+cache_ttl_seconds = 15
+
+[performance]
+cycle_interval_ms = 500
+startup_delay_ms = 500
+request_timeout_ms = 3000
+max_concurrent_orders = 50
+order_batch_size = 20
+enable_memory_profiling = false
+gc_interval_seconds = 600
+
+[logging]
+level = "info"
+format = "pretty"
+file_enabled = true
+file_path = "logs/aggressive.log"
+max_file_size_mb = 100
+console_colors = true
+
+[metrics]
+enable_metrics = true
+stats_interval = 25
+export_prometheus = false
+prometheus_port = 9090
+
+[paper_trading]
+initial_usdc = 5000.0
+initial_sol = 10.0
+test_duration_hours = 4
+status_interval_sec = 900
+save_results = true
+results_file = "results/aggressive_test.json"

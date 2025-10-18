@@ -1,0 +1,416 @@
+[
+  {
+    "name": "Grid:Conservative",
+    "total_fills": 46,
+    "final_roi": 0.06383972196276257,
+    "final_value": 7029.1260016961605,
+    "total_rebalances": 46,
+    "efficiency": 459.99999999999994,
+    "grid_spacing": 0.3,
+    "grid_levels": 10,
+    "strategies": [
+      "grid"
+    ],
+    "max_drawdown": 1.0512332682353485,
+    "sharpe_ratio": 0.060728407187804326,
+    "volatility": 1.6245388830794898,
+    "price_range": [
+      197.3645119,
+      205.92972249000002
+    ],
+    "duration_seconds": 28799
+  },
+  {
+    "name": "Grid:Balanced",
+    "total_fills": 83,
+    "final_roi": 0.05702926695389529,
+    "final_value": 7028.647591647943,
+    "total_rebalances": 83,
+    "efficiency": 592.8571428571429,
+    "grid_spacing": 0.2,
+    "grid_levels": 15,
+    "strategies": [
+      "grid"
+    ],
+    "max_drawdown": 1.1220897343385514,
+    "sharpe_ratio": 0.050824158896269435,
+    "volatility": 1.6245388830794898,
+    "price_range": [
+      197.3645119,
+      205.92972249000002
+    ],
+    "duration_seconds": 28799
+  },
+  {
+    "name": "Grid:Aggressive",
+    "total_fills": 142,
+    "final_roi": 0.04965633356708216,
+    "final_value": 7028.1296695102155,
+    "total_rebalances": 142,
+    "efficiency": 710.0,
+    "grid_spacing": 0.15,
+    "grid_levels": 20,
+    "strategies": [
+      "grid"
+    ],
+    "max_drawdown": 1.216994561285285,
+    "sharpe_ratio": 0.04080242849617948,
+    "volatility": 1.6245388830794898,
+    "price_range": [
+      197.3645119,
+      205.92972249000002
+    ],
+    "duration_seconds": 28799
+  },
+  {
+    "name": "Grid:UltraTight",
+    "total_fills": 242,
+    "final_roi": -0.0002160261304426092,
+    "final_value": 7024.626315038811,
+    "total_rebalances": 242,
+    "efficiency": 1008.3333333333334,
+    "grid_spacing": 0.1,
+    "grid_levels": 25,
+    "strategies": [
+      "grid"
+    ],
+    "max_drawdown": 1.312280516830327,
+    "sharpe_ratio": -0.00016461886591473383,
+    "volatility": 1.6245388830794898,
+    "price_range": [
+      197.3645119,
+      205.92972249000002
+    ],
+    "duration_seconds": 28799
+  },
+  {
+    "name": "Grid:WideSpread",
+    "total_fills": 21,
+    "final_roi": 0.05824898845504937,
+    "final_value": 7028.733272710577,
+    "total_rebalances": 21,
+    "efficiency": 262.5,
+    "grid_spacing": 0.5,
+    "grid_levels": 8,
+    "strategies": [
+      "grid"
+    ],
+    "max_drawdown": 0.9998263619196125,
+    "sharpe_ratio": 0.05825910445411187,
+    "volatility": 1.6245388830794898,
+    "price_range": [
+      197.3645119,
+      205.92972249000002
+    ],
+    "duration_seconds": 28799
+  },
+  {
+    "name": "Strat:GridOnly",
+    "total_fills": 83,
+    "final_roi": 0.05702926695389529,
+    "final_value": 7028.647591647943,
+    "total_rebalances": 83,
+    "efficiency": 592.8571428571429,
+    "grid_spacing": 0.2,
+    "grid_levels": 15,
+    "strategies": [
+      "grid"
+    ],
+    "max_drawdown": 1.1220897343385514,
+    "sharpe_ratio": 0.050824158896269435,
+    "volatility": 1.6245388830794898,
+    "price_range": [
+      197.3645119,
+      205.92972249000002
+    ],
+    "duration_seconds": 28799
+  },
+  {
+    "name": "Strat:Grid+Mom",
+    "total_fills": 83,
+    "final_roi": 0.05702926695389529,
+    "final_value": 7028.647591647943,
+    "total_rebalances": 83,
+    "efficiency": 592.8571428571429,
+    "grid_spacing": 0.2,
+    "grid_levels": 15,
+    "strategies": [
+      "grid",
+      "momentum"
+    ],
+    "max_drawdown": 1.1220897343385514,
+    "sharpe_ratio": 0.050824158896269435,
+    "volatility": 1.6245388830794898,
+    "price_range": [
+      197.3645119,
+      205.92972249000002
+    ],
+    "duration_seconds": 28799
+  },
+  {
+    "name": "Strat:Grid+RSI",
+    "total_fills": 83,
+    "final_roi": 0.05702926695389529,
+    "final_value": 7028.647591647943,
+    "total_rebalances": 83,
+    "efficiency": 592.8571428571429,
+    "grid_spacing": 0.2,
+    "grid_levels": 15,
+    "strategies": [
+      "grid",
+      "rsi"
+    ],
+    "max_drawdown": 1.1220897343385514,
+    "sharpe_ratio": 0.050824158896269435,
+    "volatility": 1.6245388830794898,
+    "price_range": [
+      197.3645119,
+      205.92972249000002
+    ],
+    "duration_seconds": 28799
+  },
+  {
+    "name": "Strat:Grid+MeanRev",
+    "total_fills": 83,
+    "final_roi": 0.05702926695389529,
+    "final_value": 7028.647591647943,
+    "total_rebalances": 83,
+    "efficiency": 592.8571428571429,
+    "grid_spacing": 0.2,
+    "grid_levels": 15,
+    "strategies": [
+      "grid",
+      "mean_reversion"
+    ],
+    "max_drawdown": 1.1220897343385514,
+    "sharpe_ratio": 0.050824158896269435,
+    "volatility": 1.6245388830794898,
+    "price_range": [
+      197.3645119,
+      205.92972249000002
+    ],
+    "duration_seconds": 28799
+  },
+  {
+    "name": "Strat:Grid+Arb",
+    "total_fills": 83,
+    "final_roi": 0.05702926695389529,
+    "final_value": 7028.647591647943,
+    "total_rebalances": 83,
+    "efficiency": 592.8571428571429,
+    "grid_spacing": 0.2,
+    "grid_levels": 15,
+    "strategies": [
+      "grid",
+      "arbitrage"
+    ],
+    "max_drawdown": 1.1220897343385514,
+    "sharpe_ratio": 0.050824158896269435,
+    "volatility": 1.6245388830794898,
+    "price_range": [
+      197.3645119,
+      205.92972249000002
+    ],
+    "duration_seconds": 28799
+  },
+  {
+    "name": "Strat:ALL",
+    "total_fills": 83,
+    "final_roi": 0.05702926695389529,
+    "final_value": 7028.647591647943,
+    "total_rebalances": 83,
+    "efficiency": 592.8571428571429,
+    "grid_spacing": 0.2,
+    "grid_levels": 15,
+    "strategies": [
+      "grid",
+      "momentum",
+      "rsi",
+      "mean_reversion",
+      "arbitrage"
+    ],
+    "max_drawdown": 1.1220897343385514,
+    "sharpe_ratio": 0.050824158896269435,
+    "volatility": 1.6245388830794898,
+    "price_range": [
+      197.3645119,
+      205.92972249000002
+    ],
+    "duration_seconds": 28799
+  },
+  {
+    "name": "Hybrid:TightMomentum",
+    "total_fills": 242,
+    "final_roi": -0.0002160261304426092,
+    "final_value": 7024.626315038811,
+    "total_rebalances": 242,
+    "efficiency": 1008.3333333333334,
+    "grid_spacing": 0.1,
+    "grid_levels": 25,
+    "strategies": [
+      "grid",
+      "momentum"
+    ],
+    "max_drawdown": 1.312280516830327,
+    "sharpe_ratio": -0.00016461886591473383,
+    "volatility": 1.6245388830794898,
+    "price_range": [
+      197.3645119,
+      205.92972249000002
+    ],
+    "duration_seconds": 28799
+  },
+  {
+    "name": "Hybrid:WideMulti",
+    "total_fills": 21,
+    "final_roi": 0.05824898845504937,
+    "final_value": 7028.733272710577,
+    "total_rebalances": 21,
+    "efficiency": 262.5,
+    "grid_spacing": 0.5,
+    "grid_levels": 8,
+    "strategies": [
+      "grid",
+      "rsi",
+      "arbitrage"
+    ],
+    "max_drawdown": 0.9998263619196125,
+    "sharpe_ratio": 0.05825910445411187,
+    "volatility": 1.6245388830794898,
+    "price_range": [
+      197.3645119,
+      205.92972249000002
+    ],
+    "duration_seconds": 28799
+  },
+  {
+    "name": "Hybrid:BalancedALL",
+    "total_fills": 83,
+    "final_roi": 0.05702926695389529,
+    "final_value": 7028.647591647943,
+    "total_rebalances": 83,
+    "efficiency": 592.8571428571429,
+    "grid_spacing": 0.2,
+    "grid_levels": 15,
+    "strategies": [
+      "grid",
+      "momentum",
+      "rsi",
+      "mean_reversion",
+      "arbitrage"
+    ],
+    "max_drawdown": 1.1220897343385514,
+    "sharpe_ratio": 0.050824158896269435,
+    "volatility": 1.6245388830794898,
+    "price_range": [
+      197.3645119,
+      205.92972249000002
+    ],
+    "duration_seconds": 28799
+  },
+  {
+    "name": "Extreme:MicroGrid",
+    "total_fills": 605,
+    "final_roi": -0.21109621020328795,
+    "final_value": 7009.812738134031,
+    "total_rebalances": 603,
+    "efficiency": 1512.5,
+    "grid_spacing": 0.05,
+    "grid_levels": 40,
+    "strategies": [
+      "grid"
+    ],
+    "max_drawdown": 1.632085307150442,
+    "sharpe_ratio": -0.12934140714240838,
+    "volatility": 1.6245388830794898,
+    "price_range": [
+      197.3645119,
+      205.92972249000002
+    ],
+    "duration_seconds": 28799
+  },
+  {
+    "name": "Extreme:MacroGrid",
+    "total_fills": 8,
+    "final_roi": 0.052305279661835534,
+    "final_value": 7028.315748476638,
+    "total_rebalances": 8,
+    "efficiency": 200.0,
+    "grid_spacing": 1.0,
+    "grid_levels": 5,
+    "strategies": [
+      "grid"
+    ],
+    "max_drawdown": 0.9404098549309665,
+    "sharpe_ratio": 0.05561966347712844,
+    "volatility": 1.6245388830794898,
+    "price_range": [
+      197.3645119,
+      205.92972249000002
+    ],
+    "duration_seconds": 28799
+  },
+  {
+    "name": "Extreme:MegaTight",
+    "total_fills": 345,
+    "final_roi": -0.04757018980225351,
+    "final_value": 7021.299854810231,
+    "total_rebalances": 345,
+    "efficiency": 1150.0,
+    "grid_spacing": 0.08,
+    "grid_levels": 30,
+    "strategies": [
+      "grid"
+    ],
+    "max_drawdown": 1.418610236248941,
+    "sharpe_ratio": -0.03353295259453195,
+    "volatility": 1.6245388830794898,
+    "price_range": [
+      197.3645119,
+      205.92972249000002
+    ],
+    "duration_seconds": 28799
+  },
+  {
+    "name": "Extreme:UltraWide",
+    "total_fills": 13,
+    "final_roi": 0.05976461790564465,
+    "final_value": 7028.8397402457995,
+    "total_rebalances": 13,
+    "efficiency": 216.66666666666666,
+    "grid_spacing": 0.75,
+    "grid_levels": 6,
+    "strategies": [
+      "grid"
+    ],
+    "max_drawdown": 0.9628852241514637,
+    "sharpe_ratio": 0.06206826775051183,
+    "volatility": 1.6245388830794898,
+    "price_range": [
+      197.3645119,
+      205.92972249000002
+    ],
+    "duration_seconds": 28799
+  },
+  {
+    "name": "Extreme:MaxLevels",
+    "total_fills": 204,
+    "final_roi": 0.07602153285110924,
+    "final_value": 7029.981730238069,
+    "total_rebalances": 204,
+    "efficiency": 600.0,
+    "grid_spacing": 0.15,
+    "grid_levels": 35,
+    "strategies": [
+      "grid"
+    ],
+    "max_drawdown": 1.3101471994375442,
+    "sharpe_ratio": 0.05802518440961889,
+    "volatility": 1.6245388830794898,
+    "price_range": [
+      197.3645119,
+      205.92972249000002
+    ],
+    "duration_seconds": 28799
+  }
+]

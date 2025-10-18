@@ -1,0 +1,21 @@
+GIGA TEST SUMMARY
+═══════════════════════════════════════════════════════════════
+
+Test Timestamp: 2025-10-15 05:26:52
+Total Tests: 19
+Test Duration: 8.0 hours
+Starting Price: $203.4388
+
+BEST PERFORMERS:
+• Best ROI: Extreme:MaxLevels (0.08%)
+• Most Fills: Extreme:MicroGrid (605 fills)
+• Highest Value: Extreme:MaxLevels ($7029.98)
+
+AVERAGES:
+• Average ROI: 0.03%
+• Average Fills: 134
+• Average Value: $7026.92
+
+Results saved to:
+• JSON: results/giga_test_20251015_052652.json
+• CSV: results/giga_test_20251015_052652.csv

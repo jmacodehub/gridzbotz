@@ -1,0 +1,8 @@
+Bot,Spacing,Cycles,Total,Completion,Trades,Repos,Paused,TradesPerHour,TradeFrequency
+aggressive,0.1,195969,288000,68.04,25,8,0,2.69,0.0128
+balanced,0.15,196013,288000,68.06,14,4,0,1.51,0.0071
+conservative,0.3,196050,288000,68.07,7,2,0,0.75,0.0036
+multi_strategy,0.2,195895,288000,68.02,15,4,0,1.61,0.0077
+super_aggressive,0.07,195917,288000,68.03,38,8,0,4.09,0.0194
+testing,0.15,195938,288000,68.03,14,4,0,1.51,0.0071
+ultra_aggressive,0.03,195878,288000,68.01,80,8,0,8.60,0.0408

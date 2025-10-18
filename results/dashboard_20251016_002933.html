@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html><head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Project Flash V2.5 Dashboard</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+body {
+    background: linear-gradient(135deg, #0a0e27 0%, #1a1f3a 100%);
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+}
+.card {
+    background: rgba(26, 31, 58, 0.8);
+    backdrop-filter: blur(10px);
+    border-radius: 16px;
+    padding: 24px;
+    border: 1px solid rgba(102, 126, 234, 0.1);
+}
+.glow {
+    box-shadow: 0 0 30px rgba(102, 126, 234, 0.3);
+}
+</style>
+</head>
+<body class="text-white p-8">
+
+<div class="max-w-7xl mx-auto">
+  <!-- Header -->
+  <div class="card glow mb-8 text-center">
+    <h1 class="text-5xl font-bold bg-gradient-to-r from-purple-400 via-pink-500 to-blue-500 bg-clip-text text-transparent">
+      🔥💎 PROJECT FLASH V2.5 🚀💎🔥
+    </h1>
+    <p class="mt-4 text-xl text-gray-300">Results Dashboard - 2025-10-16 00:29:33</p>
+    <div class="mt-4 text-sm text-gray-400">Auto-refreshes every 30 seconds</div>
+  </div>
+
+  <!-- Stats Grid -->
+  <div class="grid grid-cols-4 gap-6 mb-8">
+    <div class="card border-l-4 border-blue-500">
+      <div class="text-gray-400 text-sm">Total Tests</div>
+      <div class="text-4xl font-bold text-blue-400 mt-2">24</div>
+    </div>
+    <div class="card border-l-4 border-green-500">
+      <div class="text-gray-400 text-sm">Average ROI</div>
+      <div class="text-4xl font-bold text-red-400 mt-2">-0.03%</div>
+    </div>
+    <div class="card border-l-4 border-yellow-500">
+      <div class="text-gray-400 text-sm">Win Rate</div>
+      <div class="text-4xl font-bold text-yellow-400 mt-2">33.3%</div>
+    </div>
+    <div class="card border-l-4 border-red-500">
+      <div class="text-gray-400 text-sm">Filtered Trades</div>
+      <div class="text-4xl font-bold text-red-400 mt-2">105</div>
+    </div>
+  </div>
+
+  <!-- Charts Row -->
+  <div class="grid grid-cols-2 gap-6 mb-8">
+    <div class="card">
+      <h2 class="text-xl font-bold mb-4">📊 ROI Distribution</h2>
+      <canvas id="roiChart"></canvas>
+    </div>
+    <div class="card">
+      <h2 class="text-xl font-bold mb-4">📈 Performance Comparison</h2>
+      <canvas id="perfChart"></canvas>
+    </div>
+  </div>
+
+  <!-- Results Table -->
+  <div class="card">
+    <h2 class="text-2xl font-bold mb-6">📋 Detailed Results</h2>
+    <div class="overflow-x-auto">
+      <table class="w-full">
+        <thead>
+          <tr class="border-b border-gray-700 text-left">
+            <th class="p-3">Rank</th>
+            <th class="p-3">Strategy</th>
+            <th class="p-3 text-right">ROI</th>
+            <th class="p-3 text-right">Sharpe</th>
+            <th class="p-3 text-right">Fills</th>
+            <th class="p-3 text-right">Filtered</th>
+          </tr>
+        </thead>
+        <tbody><tr class="border-b border-gray-700 hover:bg-gray-700/50 transition">
+      <td class="p-3 font-bold">#1</td>
+      <td class="p-3">V2.5:MicroGrid</td>
+      <td class="p-3 text-right text-green-400 font-bold">0.08%</td>
+      <td class="p-3 text-right text-yellow-400">0.14</td>
+      <td class="p-3 text-right">27</td>
+      <td class="p-3 text-right text-red-400">0</td>
+    </tr><tr class="border-b border-gray-700 hover:bg-gray-700/50 transition">
+      <td class="p-3 font-bold">#2</td>
+      <td class="p-3">V2.5:MaxLevels</td>
+      <td class="p-3 text-right text-green-400 font-bold">0.03%</td>
+      <td class="p-3 text-right text-yellow-400">0.07</td>
+      <td class="p-3 text-right">9</td>
+      <td class="p-3 text-right text-red-400">0</td>
+    </tr><tr class="border-b border-gray-700 hover:bg-gray-700/50 transition">
+      <td class="p-3 font-bold">#3</td>
+      <td class="p-3">V2.5:Aggressive</td>
+      <td class="p-3 text-right text-green-400 font-bold">0.03%</td>
+      <td class="p-3 text-right text-yellow-400">0.07</td>
+      <td class="p-3 text-right">9</td>
+      <td class="p-3 text-right text-red-400">0</td>
+    </tr><tr class="border-b border-gray-700 hover:bg-gray-700/50 transition">
+      <td class="p-3 font-bold">#4</td>
+      <td class="p-3">V2.5:Balanced</td>
+      <td class="p-3 text-right text-green-400 font-bold">0.02%</td>
+      <td class="p-3 text-right text-yellow-400">0.04</td>
+      <td class="p-3 text-right">6</td>
+      <td class="p-3 text-right text-red-400">0</td>
+    </tr><tr class="border-b border-gray-700 hover:bg-gray-700/50 transition">
+      <td class="p-3 font-bold">#5</td>
+      <td class="p-3">V2.5:Conservative</td>
+      <td class="p-3 text-right text-green-400 font-bold">0.02%</td>
+      <td class="p-3 text-right text-yellow-400">0.03</td>
+      <td class="p-3 text-right">4</td>
+      <td class="p-3 text-right text-red-400">0</td>
+    </tr><tr class="border-b border-gray-700 hover:bg-gray-700/50 transition">
+      <td class="p-3 font-bold">#6</td>
+      <td class="p-3">V2.5:UltraWide</td>
+      <td class="p-3 text-right text-green-400 font-bold">0.00%</td>
+      <td class="p-3 text-right text-yellow-400">0.01</td>
+      <td class="p-3 text-right">1</td>
+      <td class="p-3 text-right text-red-400">0</td>
+    </tr><tr class="border-b border-gray-700 hover:bg-gray-700/50 transition">
+      <td class="p-3 font-bold">#7</td>
+      <td class="p-3">V2.5:Standard</td>
+      <td class="p-3 text-right text-green-400 font-bold">0.00%</td>
+      <td class="p-3 text-right text-yellow-400">0.05</td>
+      <td class="p-3 text-right">2</td>
+      <td class="p-3 text-right text-red-400">0</td>
+    </tr><tr class="border-b border-gray-700 hover:bg-gray-700/50 transition">
+      <td class="p-3 font-bold">#8</td>
+      <td class="p-3">V2.5:Tight</td>
+      <td class="p-3 text-right text-green-400 font-bold">0.00%</td>
+      <td class="p-3 text-right text-yellow-400">0.01</td>
+      <td class="p-3 text-right">3</td>
+      <td class="p-3 text-right text-red-400">0</td>
+    </tr><tr class="border-b border-gray-700 hover:bg-gray-700/50 transition">
+      <td class="p-3 font-bold">#9</td>
+      <td class="p-3">V2.5:Wide</td>
+      <td class="p-3 text-right text-red-400 font-bold">-0.00%</td>
+      <td class="p-3 text-right text-yellow-400">-0.02</td>
+      <td class="p-3 text-right">1</td>
+      <td class="p-3 text-right text-red-400">0</td>
+    </tr><tr class="border-b border-gray-700 hover:bg-gray-700/50 transition">
+      <td class="p-3 font-bold">#10</td>
+      <td class="p-3">V2:UltraWide</td>
+      <td class="p-3 text-right text-red-400 font-bold">-0.00%</td>
+      <td class="p-3 text-right text-yellow-400">-0.01</td>
+      <td class="p-3 text-right">1</td>
+      <td class="p-3 text-right text-red-400">1</td>
+    </tr><tr class="border-b border-gray-700 hover:bg-gray-700/50 transition">
+      <td class="p-3 font-bold">#11</td>
+      <td class="p-3">Grid:Wide</td>
+      <td class="p-3 text-right text-red-400 font-bold">-0.00%</td>
+      <td class="p-3 text-right text-yellow-400">-0.03</td>
+      <td class="p-3 text-right">1</td>
+      <td class="p-3 text-right text-red-400">1</td>
+    </tr><tr class="border-b border-gray-700 hover:bg-gray-700/50 transition">
+      <td class="p-3 font-bold">#12</td>
+      <td class="p-3">V2:UltraWide</td>
+      <td class="p-3 text-right text-red-400 font-bold">-0.01%</td>
+      <td class="p-3 text-right text-yellow-400">-0.02</td>
+      <td class="p-3 text-right">2</td>
+      <td class="p-3 text-right text-red-400">2</td>
+    </tr><tr class="border-b border-gray-700 hover:bg-gray-700/50 transition">
+      <td class="p-3 font-bold">#13</td>
+      <td class="p-3">Grid:Standard</td>
+      <td class="p-3 text-right text-red-400 font-bold">-0.01%</td>
+      <td class="p-3 text-right text-yellow-400">-0.05</td>
+      <td class="p-3 text-right">2</td>
+      <td class="p-3 text-right text-red-400">2</td>
+    </tr><tr class="border-b border-gray-700 hover:bg-gray-700/50 transition">
+      <td class="p-3 font-bold">#14</td>
+      <td class="p-3">Grid:Tight</td>
+      <td class="p-3 text-right text-red-400 font-bold">-0.01%</td>
+      <td class="p-3 text-right text-yellow-400">-0.08</td>
+      <td class="p-3 text-right">3</td>
+      <td class="p-3 text-right text-red-400">3</td>
+    </tr><tr class="border-b border-gray-700 hover:bg-gray-700/50 transition">
+      <td class="p-3 font-bold">#15</td>
+      <td class="p-3">V2:Conservative</td>
+      <td class="p-3 text-right text-red-400 font-bold">-0.02%</td>
+      <td class="p-3 text-right text-yellow-400">-0.04</td>
+      <td class="p-3 text-right">3</td>
+      <td class="p-3 text-right text-red-400">3</td>
+    </tr><tr class="border-b border-gray-700 hover:bg-gray-700/50 transition">
+      <td class="p-3 font-bold">#16</td>
+      <td class="p-3">V2:Balanced</td>
+      <td class="p-3 text-right text-red-400 font-bold">-0.03%</td>
+      <td class="p-3 text-right text-yellow-400">-0.07</td>
+      <td class="p-3 text-right">5</td>
+      <td class="p-3 text-right text-red-400">5</td>
+    </tr><tr class="border-b border-gray-700 hover:bg-gray-700/50 transition">
+      <td class="p-3 font-bold">#17</td>
+      <td class="p-3">V2:Conservative</td>
+      <td class="p-3 text-right text-red-400 font-bold">-0.04%</td>
+      <td class="p-3 text-right text-yellow-400">-0.07</td>
+      <td class="p-3 text-right">5</td>
+      <td class="p-3 text-right text-red-400">5</td>
+    </tr><tr class="border-b border-gray-700 hover:bg-gray-700/50 transition">
+      <td class="p-3 font-bold">#18</td>
+      <td class="p-3">V2:MaxLevels</td>
+      <td class="p-3 text-right text-red-400 font-bold">-0.04%</td>
+      <td class="p-3 text-right text-yellow-400">-0.09</td>
+      <td class="p-3 text-right">7</td>
+      <td class="p-3 text-right text-red-400">7</td>
+    </tr><tr class="border-b border-gray-700 hover:bg-gray-700/50 transition">
+      <td class="p-3 font-bold">#19</td>
+      <td class="p-3">V2:Aggressive</td>
+      <td class="p-3 text-right text-red-400 font-bold">-0.04%</td>
+      <td class="p-3 text-right text-yellow-400">-0.09</td>
+      <td class="p-3 text-right">7</td>
+      <td class="p-3 text-right text-red-400">7</td>
+    </tr><tr class="border-b border-gray-700 hover:bg-gray-700/50 transition">
+      <td class="p-3 font-bold">#20</td>
+      <td class="p-3">V2:Balanced</td>
+      <td class="p-3 text-right text-red-400 font-bold">-0.06%</td>
+      <td class="p-3 text-right text-yellow-400">-0.11</td>
+      <td class="p-3 text-right">7</td>
+      <td class="p-3 text-right text-red-400">7</td>
+    </tr></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+// ROI Distribution Chart
+const roiCtx = document.getElementById('roiChart').getContext('2d');
+new Chart(roiCtx, {
+  type: 'bar',
+  data: {
+    labels: ["V2.5:MicroGrid", "V2.5:MaxLevels", "V2.5:Aggressive", "V2.5:Balanced", "V2.5:Conservati", "V2.5:UltraWide", "V2.5:Standard", "V2.5:Tight", "V2.5:Wide", "V2:UltraWide"],
+    datasets: [{
+      label: 'ROI (%)',
+      data: [0.07592530203803137, 0.03159110662956529, 0.03159110662956529, 0.019149965201278905, 0.015612686642033842, 0.004577399313754184, 0.003635292727841, 0.0008227655780573735, -0.00141433771436205, -0.0034487779755776253],
+      backgroundColor: ["rgba(34, 197, 94, 0.7)", "rgba(34, 197, 94, 0.7)", "rgba(34, 197, 94, 0.7)", "rgba(34, 197, 94, 0.7)", "rgba(34, 197, 94, 0.7)", "rgba(34, 197, 94, 0.7)", "rgba(34, 197, 94, 0.7)", "rgba(34, 197, 94, 0.7)", "rgba(239, 68, 68, 0.7)", "rgba(239, 68, 68, 0.7)"]
+    }]
+  },
+  options: {
+    responsive: true,
+    plugins: { legend: { display: false } },
+    scales: { y: { beginAtZero: true } }
+  }
+});
+
+// Performance Comparison Chart
+const perfCtx = document.getElementById('perfChart').getContext('2d');
+new Chart(perfCtx, {
+  type: 'scatter',
+  data: {
+    datasets: [{
+      label: 'Tests',
+      data: [{"x": 0.14114830279808305, "y": 0.07592530203803137}, {"x": 0.06573823236612937, "y": 0.03159110662956529}, {"x": 0.06573823236612937, "y": 0.03159110662956529}, {"x": 0.04021616487333584, "y": 0.019149965201278905}, {"x": 0.034019267610296035, "y": 0.015612686642033842}, {"x": 0.01013249072741378, "y": 0.004577399313754184}, {"x": 0.045588512078413884, "y": 0.003635292727841}, {"x": 0.010228115858636115, "y": 0.0008227655780573735}, {"x": -0.018057900293717795, "y": -0.00141433771436205}, {"x": -0.00923328282200919, "y": -0.0034487779755776253}, {"x": -0.027243546291379248, "y": -0.0048121760771346256}, {"x": -0.01734806306004821, "y": -0.007911663052479099}, {"x": -0.05292822991042509, "y": -0.009624352154282322}, {"x": -0.07718412551563544, "y": -0.014436528231430022}, {"x": -0.04251823660407207, "y": -0.016937763229068134}, {"x": -0.06705041095990434, "y": -0.028229605381810352}, {"x": -0.07292858542791598, "y": -0.03584054170453732}, {"x": -0.09059174202178333, "y": -0.03952144753451383}, {"x": -0.09059174202178333, "y": -0.03952144753451383}, {"x": -0.11499281997152885, "y": -0.06017050847645432}],
+      backgroundColor: 'rgba(102, 126, 234, 0.7)',
+      pointRadius: 6
+    }]
+  },
+  options: {
+    responsive: true,
+    plugins: {
+      legend: { display: false },
+      tooltip: {
+        callbacks: {
+          label: function(context) {
+            return 'ROI: ' + context.parsed.y.toFixed(2) + '%, Sharpe: ' + context.parsed.x.toFixed(2);
+          }
+        }
+      }
+    },
+    scales: {
+      x: { title: { display: true, text: 'Sharpe Ratio' } },
+      y: { title: { display: true, text: 'ROI (%)' } }
+    }
+  }
+});
+
+// Auto-refresh every 30 seconds
+setTimeout(() => location.reload(), 30000);
+</script>
+
+</body></html>

@@ -1,0 +1,170 @@
+# ═══════════════════════════════════════════════════════════════
+#  🏆 MASTER V3.1 - BULLETPROOF MODULAR CONFIGURATION
+#  Production-grade: Flexible, Validated, Environment-aware
+# ═══════════════════════════════════════════════════════════════
+
+test_name = "Master V3.1 - Production Grade Modular"
+
+# ═══════════════════════════════════════════════════════════════
+#  🤖 BOT CORE
+# ═══════════════════════════════════════════════════════════════
+[bot]
+name = "GridBot-Master-v3.1"
+version = "3.1.0"
+environment = "testing"              # testing | development | production
+
+# ═══════════════════════════════════════════════════════════════
+#  🌐 NETWORK
+# ═══════════════════════════════════════════════════════════════
+[network]
+cluster = "devnet"
+rpc_url = "https://api.devnet.solana.com"
+commitment = "confirmed"
+
+# ═══════════════════════════════════════════════════════════════
+#  💰 PAPER TRADING (Multiple duration options!)
+# ═══════════════════════════════════════════════════════════════
+[paper_trading]
+initial_usdc = 5000.0
+initial_sol = 10.0
+
+# Choose ONE duration method:
+# Method 1: Hours (integer only)
+test_duration_hours = 1
+
+# Method 2: Minutes (more flexible) - Uncomment to use
+# test_duration_minutes = 5
+
+# Method 3: Seconds (precise control) - Uncomment to use
+# test_duration_seconds = 300
+
+# Method 4: Exact cycles (expert mode) - Uncomment to use
+# test_cycles = 3000
+
+# ═══════════════════════════════════════════════════════════════
+#  📊 TRADING CONFIG (🏆 Your Giga Winners!)
+# ═══════════════════════════════════════════════════════════════
+[trading]
+# Core grid settings
+grid_levels = 35                     # 🏆 Your champion!
+grid_spacing_percent = 0.15          # 🏆 Giga winner!
+min_order_size = 0.1
+max_position_size = 100.0
+
+# Reserves
+min_usdc_reserve = 300.0
+min_sol_reserve = 2.0
+
+# Grid behavior
+enable_auto_rebalance = true
+enable_smart_rebalance = true
+enable_dynamic_grid = true
+reposition_threshold = 0.5
+volatility_window = 100
+
+# Order lifecycle
+enable_order_lifecycle = true
+order_max_age_minutes = 10
+order_refresh_interval_minutes = 5
+min_orders_to_maintain = 8
+
+# 🔥 REGIME GATE - PROPERLY CONFIGURED!
+# Set enable_regime_gate = false for testing/demos
+# Set to true for production with min_volatility_to_trade = 0.3
+enable_regime_gate = false           # 🔥 DISABLED for demos
+min_volatility_to_trade = 0.0        # 🔥 Allow any vol when disabled
+pause_in_very_low_vol = false        # 🔥 Never pause for testing
+
+# Advanced features
+enable_adaptive_spacing = false
+enable_smart_position_sizing = false
+min_profit_threshold_pct = 0.1
+max_slippage_pct = 1.0
+enable_price_bounds = false
+lower_price_bound = 100.0
+upper_price_bound = 200.0
+
+# ═══════════════════════════════════════════════════════════════
+#  🎯 STRATEGIES
+# ═══════════════════════════════════════════════════════════════
+[strategies]
+active = ["grid"]
+consensus_mode = "single"
+
+[strategies.grid]
+enabled = true
+weight = 1.0
+min_confidence = 0.5
+
+[strategies.momentum]
+enabled = false
+weight = 0.8
+min_confidence = 0.6
+lookback_period = 20
+threshold = 0.02
+
+[strategies.mean_reversion]
+enabled = false
+weight = 0.7
+min_confidence = 0.6
+sma_period = 20
+std_dev_multiplier = 2.0
+
+[strategies.rsi]
+enabled = false
+weight = 0.9
+min_confidence = 0.7
+period = 14
+oversold_threshold = 30.0
+overbought_threshold = 70.0
+
+# ═══════════════════════════════════════════════════════════════
+#  🚨 RISK MANAGEMENT
+# ═══════════════════════════════════════════════════════════════
+[risk]
+max_position_size_pct = 30.0
+max_drawdown_pct = 10.0
+stop_loss_pct = 5.0
+take_profit_pct = 10.0
+enable_circuit_breaker = true
+circuit_breaker_threshold_pct = 8.0
+circuit_breaker_cooldown_secs = 300
+
+# ═══════════════════════════════════════════════════════════════
+#  📡 PYTH PRICE FEED
+# ═══════════════════════════════════════════════════════════════
+[pyth]
+http_endpoint = "https://hermes.pyth.network"
+feed_ids = ["0xef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d"]
+update_interval_ms = 500
+
+# ═══════════════════════════════════════════════════════════════
+#  ⚙️ PERFORMANCE
+# ═══════════════════════════════════════════════════════════════
+[performance]
+cycle_interval_ms = 100
+startup_delay_ms = 1000
+
+# ═══════════════════════════════════════════════════════════════
+#  📊 LOGGING
+# ═══════════════════════════════════════════════════════════════
+[logging]
+level = "info"
+file_path = "logs/master_v3.1.log"
+enable_file_logging = true
+
+# ═══════════════════════════════════════════════════════════════
+#  📈 METRICS
+# ═══════════════════════════════════════════════════════════════
+[metrics]
+enable_metrics = true
+stats_interval = 50
+
+# ═══════════════════════════════════════════════════════════════
+#  🔌 OPTIONAL FEATURES
+# ═══════════════════════════════════════════════════════════════
+[database]
+enabled = false
+
+[alerts]
+enabled = false

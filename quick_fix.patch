@@ -1,0 +1,12 @@
+--- a/src/main.rs
++++ b/src/main.rs
+@@ -17,8 +17,9 @@
+     info!("🔧 Initializing core systems...");
+     init().map_err(|e| format!("❌ Core init failed: {}", e))?;
+-    let config = Config::load()
+-        .map_err(|e| format!("❌ Config load failed: {}", e))?;
++    let config = Config::default();
++    warn!("⚠️  Using default configuration (bypassing TOML file)");
++    
+     info!("✅ Core initialized & config loaded");
+     config.display_summary();
