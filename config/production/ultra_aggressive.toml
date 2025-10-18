@@ -1,0 +1,58 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# 🚀 PROJECT FLASH V3.5 - ULTRA AGGRESSIVE PRODUCTION CONFIG
+# Winner of overnight test: 80 trades @ 8.6/hour
+# ═══════════════════════════════════════════════════════════════════════════
+
+[bot]
+name = "Ultra-Aggressive-Prod"
+version = "3.5.0"
+environment = "development"  # Change to "production" after 24h validation
+
+[trading]
+grid_spacing_percent = 0.03   # 0.03% - Ultra tight spacing
+grid_levels = 100             # Maximum grid density
+min_order_size = 0.01         # Minimum SOL per order
+max_order_size = 0.1          # Maximum SOL per order
+
+# Rebalancing
+rebalance_cooldown_secs = 180       # 3 minutes
+reposition_threshold = 0.5          # Reposition on 0.5% move
+
+# Capital Management
+min_usdc_reserve = 100.0
+min_sol_reserve = 1.0
+max_position_size_pct = 10.0        # Max 10% per order
+
+# Risk Management
+enable_regime_gate = false          # Ultra aggressive - always trade!
+enable_fee_optimization = true      # CRITICAL for tight spacing
+enable_dynamic_grid = false         # Fixed spacing for consistency
+enable_order_lifecycle = true       # Refresh stale orders
+order_max_age_minutes = 30          # Refresh after 30min
+order_refresh_interval_minutes = 15
+
+# Volatility
+volatility_window = 300             # 5 minutes
+min_volatility_to_trade = 0.0       # Always trade
+pause_in_very_low_vol = false
+
+[paper_trading]
+test_duration_hours = 24            # 24-hour validation
+initial_usdc = 5000.0               # $5000 USDC
+initial_sol = 37.0                  # ~$7000 worth
+
+[performance]
+cycle_interval_ms = 100             # 10Hz
+startup_delay_ms = 2000
+enable_price_cache = true
+cache_ttl_ms = 50
+
+[metrics]
+enable_metrics = true
+stats_interval = 100                # Every 100 cycles
+log_trades = true
+log_repositions = true
+
+[strategies.grid]
+enabled = true
+weight = 1.0

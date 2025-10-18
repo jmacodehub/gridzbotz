@@ -1,0 +1,51 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# ⚖️ PROJECT FLASH V3.5 - BALANCED PRODUCTION CONFIG
+# Sweet spot: 14 trades @ 1.5/hour with low fees
+# ═══════════════════════════════════════════════════════════════════════════
+
+[bot]
+name = "Balanced-Prod"
+version = "3.5.0"
+environment = "development"
+
+[trading]
+grid_spacing_percent = 0.15   # 0.15% - Proven optimal
+grid_levels = 35              # Balanced grid density
+min_order_size = 0.01
+max_order_size = 0.2
+
+# Rebalancing
+rebalance_cooldown_secs = 300       # 5 minutes
+reposition_threshold = 1.0          # Reposition on 1% move
+
+# Capital Management
+min_usdc_reserve = 200.0
+min_sol_reserve = 2.0
+max_position_size_pct = 15.0
+
+# Risk Management (More conservative)
+enable_regime_gate = true           # ✅ Safety gate enabled
+enable_fee_optimization = true
+enable_dynamic_grid = true          # Adapt to market
+min_volatility_to_trade = 0.1       # Trade in normal volatility
+pause_in_very_low_vol = true        # Pause when too quiet
+
+# Volatility
+volatility_window = 600             # 10 minutes
+
+[paper_trading]
+test_duration_hours = 24
+initial_usdc = 5000.0
+initial_sol = 37.0
+
+[performance]
+cycle_interval_ms = 100
+startup_delay_ms = 2000
+
+[metrics]
+enable_metrics = true
+stats_interval = 100
+
+[strategies.grid]
+enabled = true
+weight = 1.0

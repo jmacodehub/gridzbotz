@@ -1,0 +1,50 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# 🛡️ PROJECT FLASH V3.5 - CONSERVATIVE PRODUCTION CONFIG
+# Capital preservation: 7 trades @ 0.8/hour, minimal risk
+# ═══════════════════════════════════════════════════════════════════════════
+
+[bot]
+name = "Conservative-Prod"
+version = "3.5.0"
+environment = "development"
+
+[trading]
+grid_spacing_percent = 0.30   # 0.30% - Wide, safe spacing
+grid_levels = 20              # Minimal grid density
+min_order_size = 0.02
+max_order_size = 0.3
+
+# Rebalancing
+rebalance_cooldown_secs = 600       # 10 minutes
+reposition_threshold = 2.0          # Only on 2%+ moves
+
+# Capital Management
+min_usdc_reserve = 500.0            # Higher reserves
+min_sol_reserve = 5.0
+max_position_size_pct = 20.0
+
+# Risk Management (Maximum safety)
+enable_regime_gate = true
+enable_fee_optimization = true
+enable_dynamic_grid = true
+min_volatility_to_trade = 0.2       # Only trade clear movements
+pause_in_very_low_vol = true
+
+# Volatility
+volatility_window = 900             # 15 minutes
+
+[paper_trading]
+test_duration_hours = 24
+initial_usdc = 5000.0
+initial_sol = 37.0
+
+[performance]
+cycle_interval_ms = 100
+
+[metrics]
+enable_metrics = true
+stats_interval = 100
+
+[strategies.grid]
+enabled = true
+weight = 1.0
