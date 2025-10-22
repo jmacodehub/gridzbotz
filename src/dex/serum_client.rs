@@ -622,6 +622,47 @@ pub struct MarketInfo {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// TRADER TRAIT IMPLEMENTATION
+// ═══════════════════════════════════════════════════════════════════════════
+
+use super::Trader;
+use async_trait::async_trait;
+
+#[async_trait]
+impl Trader for SerumClient {
+    async fn place_order(&mut self, order: Order) -> Result<PlacedOrder> {
+        // Route based on order type
+        match order.order_type {
+            OrderType::Limit | OrderType::PostOnly => {
+                self.place_limit_order(order.side, order.price, order.size).await
+            }
+            OrderType::ImmediateOrCancel => {
+                self.place_market_order(order.side, order.size).await
+            }
+        }
+    }
+    
+    async fn cancel_order(&mut self, order_id: u128) -> Result<()> {
+        self.cancel_order(order_id).await?;
+        Ok(())
+    }
+    
+    async fn get_balance(&self) -> Result<(f64, f64)> {
+        self.get_balances().await
+    }
+    
+    async fn get_position(&self) -> Result<Position> {
+        self.get_position().await
+    }
+    
+    fn trader_type(&self) -> &'static str {
+        "Serum DEX"
+    }
+}
+
+
+
+// ═══════════════════════════════════════════════════════════════════════════
 // TESTS
 // ═══════════════════════════════════════════════════════════════════════════
 
