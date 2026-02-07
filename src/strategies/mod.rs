@@ -11,6 +11,7 @@
 //   ✅ Unified `Signal` standard for all decision agents.
 //   ✅ Derived lightweight stats for diagnostic analytics.
 //   ✅ Monitor-friendly volatility access for live dashboards.
+//   ✅ V4.0 Grid State Machine compatible (added missing methods)
 // ═══════════════════════════════════════════════════════════════════════════
 
 use anyhow::Result;
@@ -85,7 +86,8 @@ pub enum Signal {
 }
 
 impl Signal {
-    pub fn to_order_side(&self) -> Optionrate::trading::OrderSide> {
+    /// 🔥 FIXED: Typo correction (Optionrate → Option<crate)
+    pub fn to_order_side(&self) -> Option<crate::trading::OrderSide> {
         match self {
             Signal::StrongBuy { .. } | Signal::Buy { .. } => Some(crate::trading::OrderSide::Buy),
             Signal::StrongSell { .. } | Signal::Sell { .. } => {
@@ -181,11 +183,26 @@ impl fmt::Display for Signal {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct StrategyStats {
     pub signals_generated: u64,
+    pub buy_signals: u64,      // 🔥 ADDED: For grid_rebalancer compatibility
+    pub sell_signals: u64,     // 🔥 ADDED: For grid_rebalancer compatibility
+    pub hold_signals: u64,     // 🔥 ADDED: For arbitrage compatibility
     pub active_trades: u64,
     pub total_pnl: f64,
     pub win_rate: f64,
     pub sharpe: f64,
     pub rebalances_executed: u64,
+}
+
+impl StrategyStats {
+    /// 🔥 ADDED: Helper to record signals
+    pub fn record_signal(&mut self, signal: &Signal) {
+        self.signals_generated += 1;
+        match signal {
+            Signal::Buy { .. } | Signal::StrongBuy { .. } => self.buy_signals += 1,
+            Signal::Sell { .. } | Signal::StrongSell { .. } => self.sell_signals += 1,
+            Signal::Hold { .. } => self.hold_signals += 1,
+        }
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -258,6 +275,25 @@ impl StrategyManager {
     pub fn get_current_volatility(&self) -> Option<f64> {
         self.context.get_current_volatility()
     }
+
+    /// 🔥 ADDED: Display stats for all strategies (GridBot compatibility)
+    pub fn display_stats(&self) {
+        println!("\n📊 Strategy Performance (V5.3):");
+        for (i, strategy) in self.strategies.iter().enumerate() {
+            let stats = strategy.stats();
+            println!("  Strategy {} ({}): {} signals generated",
+                     i + 1, strategy.name(), stats.signals_generated);
+            println!("    Buy: {}, Sell: {}, Hold: {}",
+                     stats.buy_signals, stats.sell_signals, stats.hold_signals);
+            if stats.rebalances_executed > 0 {
+                println!("    Rebalances: {}", stats.rebalances_executed);
+            }
+            if stats.total_pnl != 0.0 {
+                println!("    P&L: ${:.2} | Win Rate: {:.1}% | Sharpe: {:.2}",
+                         stats.total_pnl, stats.win_rate, stats.sharpe);
+            }
+        }
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -281,5 +317,26 @@ mod tests {
             sig,
             Signal::Buy { .. } | Signal::Hold { .. } | Signal::Sell { .. }
         ));
+    }
+
+    #[test]
+    fn test_signal_strength_v53() {
+        let strong_buy = Signal::StrongBuy {
+            price: 100.0,
+            size: 1.0,
+            reason: "test".into(),
+            confidence: 0.9
+        };
+        let buy = Signal::Buy {
+            price: 100.0,
+            size: 1.0,
+            reason: "test".into(),
+            confidence: 0.7
+        };
+        let hold = Signal::Hold { reason: Some("test".into()) };
+
+        assert!(strong_buy.strength() > buy.strength());
+        assert!(buy.strength() > hold.strength());
+        assert_eq!(hold.strength(), 0.0);
     }
 }

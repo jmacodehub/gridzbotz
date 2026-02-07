@@ -8,8 +8,12 @@
 //! ▸ IMMEDIATE fresh sync on startup (no stale prices!)
 //! ▸ ZERO tolerance for stale prices (kills signals if all fail)
 //! ▸ Production-ready for mainnet deployment
-//! ▸ WebSocket disabled — using optimized feed trinity instead
+//! ▸ WebSocket conditionally compiled (feature-gated for lean builds)
 //!
+//! V5.3 ENHANCEMENTS:
+//! ✅ Conditional compilation for websockets (optional dependency)
+//! ✅ Graceful degradation when websockets disabled (HTTP-only mode)
+//! ✅ Preserves all V5.3 consensus logic and staleness detection
 //! ═══════════════════════════════════════════════════════════════════════════
 
 use anyhow::Result;
@@ -25,9 +29,13 @@ use std::{
 };
 use tokio::sync::RwLock;
 
-use crate::trading::{
-    binance_ws::BinanceWSFeed, pyth_lazer::PythLazerClient, PythHttpFeed,
-};
+use crate::trading::PythHttpFeed;
+
+// 🔥 CONDITIONAL IMPORTS: Only compile websocket feeds when feature enabled
+#[cfg(feature = "websockets")]
+use crate::trading::binance_ws::BinanceWSFeed;
+#[cfg(feature = "websockets")]
+use crate::trading::pyth_lazer::PythLazerClient;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // CONSTANTS - Production tuning
@@ -55,8 +63,10 @@ const SYNTH_DEFAULT_INTERVAL: u64 = 10;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum FeedSource {
+    #[cfg(feature = "websockets")]
     PythLazer,
     PythHermes,
+    #[cfg(feature = "websockets")]
     BinanceWS,
     Mock,
 }
@@ -92,8 +102,10 @@ pub struct FeedHealth {
 
 pub struct RedundantPriceFeed {
     current: Arc<RwLock<ConsensusPrice>>,
+    #[cfg(feature = "websockets")]
     pyth_lazer: Arc<RwLock<Option<PythLazerClient>>>,
     pyth_hermes: Arc<RwLock<Option<PythHttpFeed>>>,
+    #[cfg(feature = "websockets")]
     binance_ws: Arc<RwLock<Option<BinanceWSFeed>>>,
     total_updates: Arc<AtomicU64>,
     consensus_failures: Arc<AtomicU64>,
@@ -114,8 +126,10 @@ impl RedundantPriceFeed {
         };
         Self {
             current: Arc::new(RwLock::new(init)),
+            #[cfg(feature = "websockets")]
             pyth_lazer: Arc::new(RwLock::new(None)),
             pyth_hermes: Arc::new(RwLock::new(None)),
+            #[cfg(feature = "websockets")]
             binance_ws: Arc::new(RwLock::new(None)),
             total_updates: Arc::new(AtomicU64::new(0)),
             consensus_failures: Arc::new(AtomicU64::new(0)),
@@ -127,33 +141,50 @@ impl RedundantPriceFeed {
 
     /// Initialize all feeds and start consensus loop
     pub async fn start(&self) -> Result<()> {
-        info!("🔧 Starting Redundant Price Feed V5.3 (Pyth Lazer PRIMARY + Binance FALLBACK)");
+        #[cfg(feature = "websockets")]
+        {
+            info!("🔧 Starting Redundant Price Feed V5.3 (Pyth Lazer PRIMARY + Binance FALLBACK)");
 
-        // Initialize feeds in parallel
-        let (lz, hm, bn) = tokio::join!(
-            self.init_lazer(),
-            self.init_hermes(),
-            self.init_binance()
-        );
+            // Initialize feeds in parallel
+            let (lz, hm, bn) = tokio::join!(
+                self.init_lazer(),
+                self.init_hermes(),
+                self.init_binance()
+            );
 
-        // Check which feeds are active
-        let active_count = [lz.is_ok(), hm.is_ok(), bn.is_ok()]
-            .iter()
-            .filter(|&&x| x)
-            .count();
+            // Check which feeds are active
+            let active_count = [lz.is_ok(), hm.is_ok(), bn.is_ok()]
+                .iter()
+                .filter(|&&x| x)
+                .count();
 
-        if active_count == 0 {
-            warn!("⚠️ No active sources — running mock consensus (DANGEROUS!)");
-        } else {
-            info!("✅ {} feed(s) connected — consensus loop active", active_count);
-            if lz.is_ok() {
-                info!("  → Pyth Lazer: PRIMARY (1-5ms cached latency + fresh sync)");
+            if active_count == 0 {
+                warn!("⚠️ No active sources — running mock consensus (DANGEROUS!)");
+            } else {
+                info!("✅ {} feed(s) connected — consensus loop active", active_count);
+                if lz.is_ok() {
+                    info!("  → Pyth Lazer: PRIMARY (1-5ms cached latency + fresh sync)");
+                }
+                if hm.is_ok() {
+                    info!("  → Pyth HTTP: SECONDARY (1-2s polling)");
+                }
+                if bn.is_ok() {
+                    info!("  → Binance WS: FALLBACK (50-100ms latency)");
+                }
             }
+        }
+
+        #[cfg(not(feature = "websockets"))]
+        {
+            info!("🔧 Starting Redundant Price Feed V5.3 (HTTP-ONLY MODE)");
+            info!("  → Enable 'websockets' feature for Pyth Lazer + Binance WS");
+
+            // HTTP-only mode
+            let hm = self.init_hermes().await;
             if hm.is_ok() {
-                info!("  → Pyth HTTP: SECONDARY (1-2s polling)");
-            }
-            if bn.is_ok() {
-                info!("  → Binance WS: FALLBACK (50-100ms latency)");
+                info!("✅ Pyth HTTP feed active (primary in HTTP-only mode)");
+            } else {
+                warn!("⚠️ Pyth HTTP failed to initialize!");
             }
         }
 
@@ -161,6 +192,7 @@ impl RedundantPriceFeed {
         Ok(())
     }
 
+    #[cfg(feature = "websockets")]
     async fn init_lazer(&self) -> Result<()> {
         let c = PythLazerClient::new(&self.feed_id).await?;
 
@@ -190,6 +222,7 @@ impl RedundantPriceFeed {
         Ok(())
     }
 
+    #[cfg(feature = "websockets")]
     async fn init_binance(&self) -> Result<()> {
         let b = BinanceWSFeed::new("SOLUSDT").await?;
         *self.binance_ws.write().await = Some(b);
@@ -203,8 +236,10 @@ impl RedundantPriceFeed {
         let price_history = Arc::clone(&self.price_history);
         let total_updates = Arc::clone(&self.total_updates);
         let consensus_failures = Arc::clone(&self.consensus_failures);
+        #[cfg(feature = "websockets")]
         let lazer = Arc::clone(&self.pyth_lazer);
         let hermes = Arc::clone(&self.pyth_hermes);
+        #[cfg(feature = "websockets")]
         let binance = Arc::clone(&self.binance_ws);
         let window = self.window_size;
         let feed_id = self.feed_id.clone();
@@ -216,24 +251,37 @@ impl RedundantPriceFeed {
             let _enable = std::env::var("SIMULATE_VOL").is_ok() || SYNTH_DEFAULT_ENABLE;
             let mut _counter = 0u64;
 
+            #[cfg(feature = "websockets")]
             info!("🔄 Consensus loop started → Pyth Lazer PRIMARY + Binance FALLBACK");
+            #[cfg(not(feature = "websockets"))]
+            info!("🔄 Consensus loop started → HTTP-ONLY MODE");
+
             println!("⏳ Waiting 10 seconds for consensus...");
 
             loop {
                 iv.tick().await;
                 _counter += 1;
 
-                // ✅ FIXED: Correct function call signatures
+                // 🔥 CONDITIONAL: Fetch based on available features
+                #[cfg(feature = "websockets")]
                 let (lz_price, hm_price, bn_price) = tokio::join!(
                     Self::fetch_lazer(&lazer, &feed_id),
                     Self::fetch_hermes(&hermes, &feed_id),
                     Self::fetch_binance(&binance)
                 );
 
+                #[cfg(not(feature = "websockets"))]
+                let (lz_price, hm_price, bn_price) = (
+                    None::<PriceSource>,
+                    Self::fetch_hermes(&hermes, &feed_id).await,
+                    None::<PriceSource>,
+                );
+
                 // Calculate consensus based on available sources
                 // PRIORITY: Lazer (fastest) > HTTP (accurate) > Binance (reliable)
                 let consensus = match (lz_price, hm_price, bn_price) {
                     // CASE 1: Lazer available + fresh (best case)
+                    #[cfg(feature = "websockets")]
                     (Some(lz), _, Some(bn)) if lz.age_secs < MAX_STALENESS_SECS => {
                         let diff = (lz.price - bn.price).abs() / lz.price;
 
@@ -259,6 +307,7 @@ impl RedundantPriceFeed {
                     }
 
                     // CASE 2: Lazer only (fresh)
+                    #[cfg(feature = "websockets")]
                     (Some(lz), _, _) if lz.age_secs < MAX_STALENESS_SECS => {
                         debug!(
                             "🔗 Pyth Lazer only (fresh, age: {}s): ${:.4}",
@@ -273,7 +322,8 @@ impl RedundantPriceFeed {
                         }
                     }
 
-                    // CASE 3: Lazer stale, fallback to Hermes
+                    // CASE 3: HTTP + Binance (WebSocket mode)
+                    #[cfg(feature = "websockets")]
                     (Some(_lz), Some(hm), Some(bn)) if hm.age_secs < MAX_STALENESS_SECS => {
                         let diff = (hm.price - bn.price).abs() / hm.price;
 
@@ -298,7 +348,21 @@ impl RedundantPriceFeed {
                         }
                     }
 
-                    // CASE 4: Both Pyth feeds down, use Binance
+                    // CASE 4: HTTP-only mode (no websockets feature)
+                    #[cfg(not(feature = "websockets"))]
+                    (None, Some(hm), None) if hm.age_secs < MAX_STALENESS_SECS => {
+                        debug!("📊 HTTP-only mode: Pyth HTTP ${:.4} (age: {}s)", hm.price, hm.age_secs);
+                        ConsensusPrice {
+                            price: hm.price,
+                            sources: vec![FeedSource::PythHermes],
+                            timestamp: Utc::now(),
+                            confidence: 0.9, // High confidence in HTTP-only mode
+                            latency_ms: hm.latency_us as f64 / 1000.0,
+                        }
+                    }
+
+                    // CASE 5: Binance fallback (Pyth down, websockets enabled)
+                    #[cfg(feature = "websockets")]
                     (None, None, Some(bn)) => {
                         warn!("⚠️ Using Binance (Pyth down): ${:.4}", bn.price);
                         ConsensusPrice {
@@ -310,7 +374,7 @@ impl RedundantPriceFeed {
                         }
                     }
 
-                    // CASE 5: All sources down → CRITICAL FAILURE
+                    // CASE 6: All sources down → CRITICAL FAILURE
                     (None, None, None) => {
                         consensus_failures.fetch_add(1, Ordering::Relaxed);
                         error!("❌ CRITICAL: All price feeds down! TRADING HALTED!");
@@ -323,7 +387,8 @@ impl RedundantPriceFeed {
                         }
                     }
 
-                    // CASE 6: Mixed fallbacks
+                    // CASE 7: Mixed fallbacks (websockets enabled)
+                    #[cfg(feature = "websockets")]
                     (Some(lz), _, _) => {
                         warn!("⚠️ Lazer stale ({}s), others down → using Lazer", lz.age_secs);
                         ConsensusPrice {
@@ -336,7 +401,7 @@ impl RedundantPriceFeed {
                     }
 
                     (None, Some(hm), _) => {
-                        warn!("⚠️ Using Pyth HTTP (Lazer down): ${:.4}", hm.price);
+                        warn!("⚠️ Using Pyth HTTP (fallback): ${:.4}", hm.price);
                         ConsensusPrice {
                             price: hm.price,
                             sources: vec![FeedSource::PythHermes],
@@ -366,9 +431,10 @@ impl RedundantPriceFeed {
     }
 
     /// ✅ FIXED: Fetch price from Pyth Lazer (fastest - cached)
+    #[cfg(feature = "websockets")]
     async fn fetch_lazer(
         lazer: &Arc<RwLock<Option<PythLazerClient>>>,
-        _feed_id: &str,  // ✅ Fixed: underscore prefix to mark as intentionally unused
+        _feed_id: &str,
     ) -> Option<PriceSource> {
         let fetch_start = Instant::now();
         let g = lazer.read().await;
@@ -393,7 +459,7 @@ impl RedundantPriceFeed {
     /// ✅ FIXED: Fetch price from Pyth HTTP
     async fn fetch_hermes(
         hermes: &Arc<RwLock<Option<PythHttpFeed>>>,
-        feed_id: &str,  // ✅ Used for HTTP feed lookup
+        feed_id: &str,
     ) -> Option<PriceSource> {
         let fetch_start = Instant::now();
         let g = hermes.read().await;
@@ -425,6 +491,7 @@ impl RedundantPriceFeed {
     }
 
     /// Fetch price from Binance WebSocket
+    #[cfg(feature = "websockets")]
     async fn fetch_binance(b: &Arc<RwLock<Option<BinanceWSFeed>>>) -> Option<PriceSource> {
         let fetch_start = Instant::now();
         let g = b.read().await;

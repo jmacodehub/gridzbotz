@@ -14,11 +14,11 @@ use tokio::sync::RwLock;
 // 📦 MODULAR IMPORTS
 // ─────────────────────────────────────────────────────────────────────────────
 use crate::security::keystore::{SecureKeystore, KeystoreConfig};
-use crate::risk::circuit_breaker::{CircuitBreaker, TripReason};  // ✅ Updated
-use crate::Config;  // ✅ Add Config import
+use crate::risk::circuit_breaker::{CircuitBreaker, TripReason};
+use crate::Config;
 use super::executor::{TransactionExecutor, ExecutorConfig};
 use super::trade::Trade;
-use super::paper_trader::{Order, OrderSide};  // ✅ Removed unused imports
+use super::paper_trader::{Order, OrderSide};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ⚙️ CONFIGURATION
@@ -73,7 +73,7 @@ impl RealTradingConfig {
 struct BalanceTracker {
     expected_usdc: Arc<RwLock<f64>>,
     expected_sol: Arc<RwLock<f64>>,
-    initial_balance: f64,  // ✅ Add initial balance
+    initial_balance: f64,
 }
 
 impl BalanceTracker {
@@ -90,6 +90,7 @@ impl BalanceTracker {
         let sol = *self.expected_sol.read().await;
         (usdc, sol)
     }
+
     #[allow(dead_code)]
     async fn update(&self, usdc: f64, sol: f64) {
         *self.expected_usdc.write().await = usdc;
@@ -125,7 +126,7 @@ pub struct PerformanceStats {
 pub struct RealTradingEngine {
     keystore: Arc<SecureKeystore>,
     executor: Arc<RwLock<TransactionExecutor>>,
-    circuit_breaker: Arc<RwLock<CircuitBreaker>>,  // ✅ Wrap in RwLock
+    circuit_breaker: Arc<RwLock<CircuitBreaker>>,
     balance_tracker: Arc<BalanceTracker>,
     config: RealTradingConfig,
     trades: Arc<RwLock<Vec<Trade>>>,
@@ -140,7 +141,7 @@ pub struct RealTradingEngine {
 impl RealTradingEngine {
     pub async fn new(
         config: RealTradingConfig,
-        global_config: &Config,  // ✅ Add Config parameter
+        global_config: &Config,
         initial_balance_usdc: f64,
         initial_balance_sol: f64,
     ) -> Result<Self> {
@@ -151,7 +152,7 @@ impl RealTradingEngine {
         let keystore = Arc::new(SecureKeystore::from_file(config.keystore.clone())?);
         let executor = Arc::new(RwLock::new(TransactionExecutor::new(config.executor.clone())?));
 
-        // ✅ Use Config for CircuitBreaker
+        // Use Config for CircuitBreaker
         let circuit_breaker = Arc::new(RwLock::new(
             CircuitBreaker::with_balance(global_config, initial_balance_usdc)
         ));
@@ -190,12 +191,10 @@ impl RealTradingEngine {
             bail!("🚨 EMERGENCY SHUTDOWN ACTIVE");
         }
 
-        // ✅ Use is_trading_allowed() instead of is_triggered()
-        let mut breaker = self.circuit_breaker.write().await;
-        if !breaker.is_trading_allowed() {
+        // 🔥 FIXED: Correct CircuitBreaker API
+        if !self.circuit_breaker.write().await.is_trading_allowed() {
             bail!("🚨 CIRCUIT BREAKER ACTIVE");
         }
-        drop(breaker);  // Release lock
 
         let amount_usdc = price * size;
         self.keystore.validate_transaction(amount_usdc).await?;
@@ -219,7 +218,6 @@ impl RealTradingEngine {
             Ok(sig) => {
                 self.successful_executions.fetch_add(1, Ordering::SeqCst);
 
-                // ✅ Create trade using YOUR Trade module
                 let trade = Trade::new(
                     order_id.clone(),
                     side,
@@ -254,9 +252,11 @@ impl RealTradingEngine {
         let (usdc, sol) = self.balance_tracker.get_balances().await;
         let total_value = usdc + (sol * current_price);
 
-        // ✅ Use record_trade() instead of update_balance()
+        // 🔥 FIXED: Use initial_balance() instead of non-existent current_balance()
+        let initial = self.balance_tracker.initial_balance();
+        let pnl = total_value - initial;
+
         let mut breaker = self.circuit_breaker.write().await;
-        let pnl = total_value - breaker.current_balance();
         breaker.record_trade(pnl, total_value);
 
         Ok(())
@@ -292,11 +292,10 @@ impl RealTradingEngine {
             ..Default::default()
         };
 
-        // ✅ Use net_pnl instead of pnl
         for trade in trades.iter() {
             stats.total_fees += trade.fees_paid;
 
-            let pnl = trade.net_pnl;  // ✅ Changed from trade.pnl
+            let pnl = trade.net_pnl;
             stats.total_pnl += pnl;
 
             if pnl > 0.0 {
@@ -369,13 +368,24 @@ impl RealTradingEngine {
         println!("   Success Rate: {:.1}%", executor_stats.success_rate);
         println!("   Total Executions: {}", executor_stats.total_executions);
         println!();
+
+        // 🔥 FIXED: Use status() method
         println!("🚦 Circuit Breaker:");
         let breaker = self.circuit_breaker.read().await;
-        if breaker.is_tripped() {  // ✅ Changed from is_triggered()
+        let status = breaker.status();
+
+        if status.is_tripped {
             println!("   Status:  🚨 TRIPPED");
+            if let Some(reason) = status.trip_reason {
+                println!("   Reason:  {:?}", reason);
+            }
+            if let Some(cooldown) = status.cooldown_remaining {
+                println!("   Cooldown: {}s", cooldown.as_secs());
+            }
         } else {
             println!("   Status:  ✅ OK");
         }
+
         println!();
         println!("💻 Current SOL Price: ${:.4}", current_price);
         println!("═══════════════════════════════════════════════════════");
@@ -386,7 +396,6 @@ impl RealTradingEngine {
         error!("🚨 EMERGENCY SHUTDOWN: {}", reason);
         self.emergency_shutdown.store(true, Ordering::SeqCst);
 
-        // ✅ Force trip the circuit breaker
         let mut breaker = self.circuit_breaker.write().await;
         breaker.force_trip(TripReason::MaxDrawdown);
 

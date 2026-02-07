@@ -44,7 +44,6 @@ futures = "0.3"
 ratatui = "0.29"
 crossterm = "0.28"
 
-
 # ───────────────────────────────────────────────────────────────────────────
 # Solana Blockchain (v3.0 - Production Ready!)
 # ───────────────────────────────────────────────────────────────────────────
@@ -99,6 +98,7 @@ arc-swap = "1.7"         # Lock-free atomic Arc swaps
 fastrand = "2.3"
 lazy_static = "1.5"
 glob = "0.3"             # For result file pattern matching
+rand = "0.9.2"
 
 # ───────────────────────────────────────────────────────────────────────────
 # Optional Dependencies (Feature-Gated for Lean Builds)
@@ -120,7 +120,6 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = tr
 
 # Redis caching for high-frequency data
 redis = { version = "0.26", features = ["tokio-comp", "connection-manager"], optional = true }
-rand = "0.9.2"
 
 # ═══════════════════════════════════════════════════════════════════════════
 # DEVELOPMENT DEPENDENCIES - Testing & Benchmarking
@@ -134,7 +133,7 @@ proptest = "1.5"
 pretty_assertions = "1.4"
 
 # ═══════════════════════════════════════════════════════════════════════════
-# FEATURE FLAGS - V2.5 Modular Architecture
+# FEATURE FLAGS - V4.0 Modular Architecture + Grid State Machine
 # ═══════════════════════════════════════════════════════════════════════════
 
 [features]
@@ -147,10 +146,14 @@ smart-fees = []           # 💰 Dynamic fee filtering per regime
 order-lifecycle = []      # 🔄 Auto-refresh & staleness detection
 dynamic-spacing = []      # 📊 Volatility-based grid spacing
 
+# ── V4.0 Features ──────────────────────────────────────────────────────────
+grid-state-machine = []   # 🎯 Grid level tracking with buy/sell pairing (always enabled in v4.0)
+
 # ── Trading Modes (mutually exclusive) ─────────────────────────────────────
-simulation = []           # ✅ Safe simulation mode (no real orders)
+simulation = []           # ✅ Safe simulation mode (no real orders) - DEFAULT
 paper-trading = []        # 📝 Paper trading (tracks but doesn't execute)
-live-trading = []         # ⚠️  LIVE MODE - Real money! USE WITH CAUTION!
+live-trading = []         # ⚠️  LIVE MODE - Real money! Requires security module
+security = []             # 🔐 Security module with keystore & signing (required for live-trading)
 
 # ── Optional Integrations ──────────────────────────────────────────────────
 websockets = ["tokio-tungstenite", "futures-util"]
@@ -161,7 +164,7 @@ caching = ["redis"]
 
 # ── Feature Bundles ────────────────────────────────────────────────────────
 full = ["v25-enhancements", "websockets", "database", "metrics", "tracing-full", "caching"]
-production = ["live-trading", "v25-enhancements", "database", "metrics", "tracing-full"]
+production = ["live-trading", "security", "v25-enhancements", "database", "metrics", "tracing-full"]
 development = ["simulation", "v25-enhancements", "tracing-full"]
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -250,7 +253,6 @@ required-features = ["websockets"]
 [[example]]
 name = "live_dashboard"
 path = "examples/live_dashboard.rs"
-
 
 # ═══════════════════════════════════════════════════════════════════════════
 # BENCHMARKS - Performance Testing
