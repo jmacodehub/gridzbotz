@@ -1,261 +1,171 @@
-//! ═══════════════════════════════════════════════════════════════════════════
-//! 🎯 MULTI-STRATEGY TRADING ENGINE - PRODUCTION READY
-//! Project Flash - Bulletproof Foundation
-//! October 14, 2025
-//! ═══════════════════════════════════════════════════════════════════════════
-//! 
-//! ## Architecture:
-//! - Strategy Trait: Core interface all strategies implement
-//! - Signal System: Type-safe trading signals with confidence
-//! - Strategy Manager: Orchestrates multiple strategies with consensus
-//! - Performance Tracking: Real-time statistics and metrics
-//! 
-//! ## Strategies Included:
-//! 1. ✅ Grid Trading - Range-bound markets (via grid_rebalancer)
-//! 2. ✅ Momentum - Trend following
-//! 3. 🔄 Mean Reversion - Counter-trend (stub ready)
-//! 4. 🔄 RSI - Timing confirmation (stub ready)
-//! 5. 🔄 Arbitrage - Cross-DEX opportunities (stub ready)
-//! 
-//! ## Usage Example:
-//! ```
-//! use solana_grid_bot::strategies::*;
-//! 
-//! # async fn example() -> anyhow::Result<()> {
-//! let mut manager = StrategyManager::new();
-//! 
-//! // Add strategies
-//! manager.add_strategy(Box::new(MomentumStrategy::new()));
-//! 
-//! // Set consensus mode
-//! manager.set_consensus_mode(ConsensusMode::WeightedAverage);
-//! 
-//! // Get trading signal
-//! let signal = manager.get_consensus(193.65, 1234567890).await?;
-//! println!("{}", signal.display());
-//! # Ok(())
-//! # }
-//! ```
+// 🎯 PROJECT FLASH V5.3 - STRATEGY ENGINE (Monitor-Enhanced Edition)
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Purpose:
+//   Asynchronous multi-strategy manager for modular trading orchestration.
+//   Ready for Phase 4 fusion layer & signal consensus integration.
+//
+// Highlights:
+//   ✅ Clean async execution for all strategy modules.
+//   ✅ ConsensusEngine-ready architecture for signal weighting.
+//   ✅ Unified `Signal` standard for all decision agents.
+//   ✅ Derived lightweight stats for diagnostic analytics.
+//   ✅ Monitor-friendly volatility access for live dashboards.
+// ═══════════════════════════════════════════════════════════════════════════
 
-use async_trait::async_trait;
-use crate::trading::OrderSide;
 use anyhow::Result;
-use serde::{Serialize, Deserialize};
+use async_trait::async_trait;
+use log::info;
+use serde::{Deserialize, Serialize};
 use std::fmt;
 
-// ═══════════════════════════════════════════════════════════════════════════
-// STRATEGY TRAIT - Core Interface
-// ═══════════════════════════════════════════════════════════════════════════
+pub mod arbitrage;
+pub mod consensus;
+pub mod grid_rebalancer;
+pub mod shared;
 
-/// Core strategy trait that all trading strategies must implement
-/// 
-/// # Thread Safety
-/// Implementations must be `Send + Sync` for async execution
+pub use arbitrage::*;
+pub use consensus::*;
+pub use grid_rebalancer::*;
+pub use shared::*;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// STRATEGY TRAIT - ASYNC AND CONTEXT-AWARE
+// ═══════════════════════════════════════════════════════════════════════════
 #[async_trait]
-pub trait Strategy: Send + Sync {
-    /// Get strategy name for identification
+pub trait Strategy: Send + Sync + 'static {
     fn name(&self) -> &str;
-    
-    /// Analyze market conditions and generate trading signal
-    /// 
-    /// # Arguments
-    /// * `price` - Current market price
-    /// * `timestamp` - Unix timestamp in seconds
-    /// 
-    /// # Returns
-    /// Trading signal (Buy, Sell, or Hold) with confidence
     async fn analyze(&mut self, price: f64, timestamp: i64) -> Result<Signal>;
-    
-    /// Get strategy performance statistics
     fn stats(&self) -> StrategyStats;
-    
-    /// Reset strategy state (clear history, indicators, etc.)
     fn reset(&mut self);
-    
-    /// Check if strategy is enabled
+    fn attach_analytics(&mut self, _ctx: AnalyticsContext) {}
     fn is_enabled(&self) -> bool {
         true
     }
-    
-    /// Get strategy configuration
-    fn config(&self) -> StrategyConfig {
-        StrategyConfig::default()
-    }
-    
-    /// Update strategy configuration
-    fn set_config(&mut self, _config: StrategyConfig) {
-        // Default implementation - override if needed
-    }
-    
-    /// Get last signal generated
     fn last_signal(&self) -> Option<Signal> {
         None
+    }
+    async fn initialize_at_price(&mut self, _price: f64) -> Result<()> {
+        Ok(())
     }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// TRADING SIGNALS - Type-Safe Signal System
+// SIGNAL STRUCTURE - UNIFIED CROSS-MODULE STANDARD
 // ═══════════════════════════════════════════════════════════════════════════
-
-/// Trading signal generated by strategy analysis
-/// 
-/// Signals include confidence levels for risk management
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Signal {
-    /// Strong buy signal (confidence > 0.7)
-    StrongBuy { 
-        price: f64, 
-        size: f64, 
-        reason: String,
-        confidence: f64, // 0.0 - 1.0
-    },
-    
-    /// Moderate buy signal (confidence 0.5 - 0.7)
-    Buy { 
-        price: f64, 
-        size: f64, 
+    StrongBuy {
+        price: f64,
+        size: f64,
         reason: String,
         confidence: f64,
     },
-    
-    /// Hold current position (no action)
-    Hold { reason: Option<String> },
-    
-    /// Moderate sell signal (confidence 0.5 - 0.7)
-    Sell { 
-        price: f64, 
-        size: f64, 
+    Buy {
+        price: f64,
+        size: f64,
         reason: String,
         confidence: f64,
     },
-    
-    /// Strong sell signal (confidence > 0.7)
-    StrongSell { 
-        price: f64, 
-        size: f64, 
+    Hold {
+        reason: Option<String>,
+    },
+    Sell {
+        price: f64,
+        size: f64,
+        reason: String,
+        confidence: f64,
+    },
+    StrongSell {
+        price: f64,
+        size: f64,
         reason: String,
         confidence: f64,
     },
 }
 
 impl Signal {
-    /// Convert signal to order side for DEX execution
-    pub fn to_order_side(&self) -> Option<OrderSide> {
+    pub fn to_order_side(&self) -> Optionrate::trading::OrderSide> {
         match self {
-            Signal::StrongBuy { .. } | Signal::Buy { .. } => Some(OrderSide::Buy),
-            Signal::StrongSell { .. } | Signal::Sell { .. } => Some(OrderSide::Sell),
+            Signal::StrongBuy { .. } | Signal::Buy { .. } => Some(crate::trading::OrderSide::Buy),
+            Signal::StrongSell { .. } | Signal::Sell { .. } => {
+                Some(crate::trading::OrderSide::Sell)
+            }
             Signal::Hold { .. } => None,
         }
     }
-    
-    /// Get signal strength (0.0 - 1.0)
-    /// 
-    /// Strong signals: 0.5 - 1.0
-    /// Moderate signals: 0.25 - 0.5
-    /// Hold: 0.0
-    pub fn strength(&self) -> f64 {
-        match self {
-            Signal::StrongBuy { confidence, .. } | Signal::StrongSell { confidence, .. } => {
-                0.5 + (*confidence * 0.5) // Maps 0.0-1.0 to 0.5-1.0
-            }
-            Signal::Buy { confidence, .. } | Signal::Sell { confidence, .. } => {
-                0.25 + (*confidence * 0.25) // Maps 0.0-1.0 to 0.25-0.5
-            }
-            Signal::Hold { .. } => 0.0,
-        }
-    }
-    
-    /// Get confidence level (0.0 - 1.0)
-    pub fn confidence(&self) -> f64 {
-        match self {
-            Signal::StrongBuy { confidence, .. } |
-            Signal::Buy { confidence, .. } |
-            Signal::Sell { confidence, .. } |
-            Signal::StrongSell { confidence, .. } => *confidence,
-            Signal::Hold { .. } => 0.0,
-        }
-    }
-    
-    /// Check if signal is bullish (buy recommendation)
+
     pub fn is_bullish(&self) -> bool {
         matches!(self, Signal::Buy { .. } | Signal::StrongBuy { .. })
     }
-    
-    /// Check if signal is bearish (sell recommendation)
+
     pub fn is_bearish(&self) -> bool {
         matches!(self, Signal::Sell { .. } | Signal::StrongSell { .. })
     }
-    
-    /// Check if signal is neutral (hold)
-    pub fn is_neutral(&self) -> bool {
-        matches!(self, Signal::Hold { .. })
-    }
-    
-    /// Get signal reason/description
-    pub fn reason(&self) -> String {
+
+    pub fn strength(&self) -> f64 {
         match self {
-            Signal::StrongBuy { reason, .. } |
-            Signal::Buy { reason, .. } |
-            Signal::Sell { reason, .. } |
-            Signal::StrongSell { reason, .. } => reason.clone(),
-            Signal::Hold { reason } => reason.clone().unwrap_or_else(|| "No action".to_string()),
+            Signal::StrongBuy { confidence, .. } | Signal::StrongSell { confidence, .. } => {
+                0.5 + confidence * 0.5
+            }
+            Signal::Buy { confidence, .. } | Signal::Sell { confidence, .. } => {
+                0.25 + confidence * 0.25
+            }
+            Signal::Hold { .. } => 0.0,
         }
     }
-    
-    /// Get price target (if applicable)
-    pub fn price(&self) -> Option<f64> {
-        match self {
-            Signal::StrongBuy { price, .. } |
-            Signal::Buy { price, .. } |
-            Signal::Sell { price, .. } |
-            Signal::StrongSell { price, .. } => Some(*price),
-            Signal::Hold { .. } => None,
-        }
-    }
-    
-    /// Get order size recommendation
-    pub fn size(&self) -> Option<f64> {
-        match self {
-            Signal::StrongBuy { size, .. } |
-            Signal::Buy { size, .. } |
-            Signal::Sell { size, .. } |
-            Signal::StrongSell { size, .. } => Some(*size),
-            Signal::Hold { .. } => None,
-        }
-    }
-    
-    /// Display signal with emoji formatting
+
     pub fn display(&self) -> String {
         match self {
-            Signal::StrongBuy { price, reason, confidence, .. } => {
-                format!("🟢 STRONG BUY @ ${:.4} | {} | Confidence: {:.0}%", 
-                       price, reason, confidence * 100.0)
-            }
-            Signal::Buy { price, reason, confidence, .. } => {
-                format!("🟩 BUY @ ${:.4} | {} | Confidence: {:.0}%", 
-                       price, reason, confidence * 100.0)
-            }
-            Signal::Hold { reason } => {
-                if let Some(r) = reason {
-                    format!("⏸️  HOLD | {}", r)
-                } else {
-                    "⏸️  HOLD".to_string()
-                }
-            }
-            Signal::Sell { price, reason, confidence, .. } => {
-                format!("🟥 SELL @ ${:.4} | {} | Confidence: {:.0}%", 
-                       price, reason, confidence * 100.0)
-            }
-            Signal::StrongSell { price, reason, confidence, .. } => {
-                format!("🔴 STRONG SELL @ ${:.4} | {} | Confidence: {:.0}%", 
-                       price, reason, confidence * 100.0)
-            }
+            Signal::StrongBuy {
+                price,
+                reason,
+                confidence,
+                ..
+            } => format!(
+                "🟢 STRONG BUY @ ${:.4} | {} | {:.0}% conf",
+                price,
+                reason,
+                confidence * 100.0
+            ),
+            Signal::Buy {
+                price,
+                reason,
+                confidence,
+                ..
+            } => format!(
+                "🟩 BUY @ ${:.4} | {} | {:.0}%",
+                price,
+                reason,
+                confidence * 100.0
+            ),
+            Signal::Hold { reason } => format!(
+                "⏸️ HOLD | {}",
+                reason.clone().unwrap_or_else(|| "Neutral".into())
+            ),
+            Signal::Sell {
+                price,
+                reason,
+                confidence,
+                ..
+            } => format!(
+                "🟥 SELL @ ${:.4} | {} | {:.0}%",
+                price,
+                reason,
+                confidence * 100.0
+            ),
+            Signal::StrongSell {
+                price,
+                reason,
+                confidence,
+                ..
+            } => format!(
+                "🔴 STRONG SELL @ ${:.4} | {} | {:.0}%",
+                price,
+                reason,
+                confidence * 100.0
+            ),
         }
-    }
-    
-    /// Create a hold signal with optional reason
-    pub fn hold(reason: Option<String>) -> Self {
-        Signal::Hold { reason }
     }
 }
 
@@ -266,701 +176,110 @@ impl fmt::Display for Signal {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// STRATEGY CONFIGURATION
+// STRATEGY STATS - LIGHTWEIGHT PERFORMANCE METRICS
 // ═══════════════════════════════════════════════════════════════════════════
-
-/// Strategy configuration parameters
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StrategyConfig {
-    /// Strategy weight in consensus (0.0 - 1.0)
-    pub weight: f64,
-    
-    /// Minimum confidence threshold to generate signal
-    pub min_confidence: f64,
-    
-    /// Enable/disable strategy
-    pub enabled: bool,
-    
-    /// Maximum position size as percentage of capital
-    pub max_position_pct: f64,
-    
-    /// Stop loss percentage
-    pub stop_loss_pct: Option<f64>,
-    
-    /// Take profit percentage
-    pub take_profit_pct: Option<f64>,
-}
-
-impl Default for StrategyConfig {
-    fn default() -> Self {
-        Self {
-            weight: 1.0,
-            min_confidence: 0.5,
-            enabled: true,
-            max_position_pct: 0.5, // Use max 50% of capital
-            stop_loss_pct: Some(0.05), // 5% stop loss
-            take_profit_pct: Some(0.10), // 10% take profit
-        }
-    }
-}
-
-impl StrategyConfig {
-    /// Create conservative config (lower risk)
-    pub fn conservative() -> Self {
-        Self {
-            weight: 0.5,
-            min_confidence: 0.7,
-            enabled: true,
-            max_position_pct: 0.3,
-            stop_loss_pct: Some(0.03),
-            take_profit_pct: Some(0.05),
-        }
-    }
-    
-    /// Create aggressive config (higher risk/reward)
-    pub fn aggressive() -> Self {
-        Self {
-            weight: 1.5,
-            min_confidence: 0.4,
-            enabled: true,
-            max_position_pct: 0.8,
-            stop_loss_pct: Some(0.10),
-            take_profit_pct: Some(0.20),
-        }
-    }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// STRATEGY STATISTICS - Performance Tracking
-// ═══════════════════════════════════════════════════════════════════════════
-
-/// Strategy performance statistics
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct StrategyStats {
-    /// Total signals generated
     pub signals_generated: u64,
-    
-    /// Buy signals
-    pub buy_signals: u64,
-    
-    /// Sell signals
-    pub sell_signals: u64,
-    
-    /// Hold signals
-    pub hold_signals: u64,
-    
-    /// Win rate (%)
-    pub win_rate: f64,
-    
-    /// Total profit/loss
+    pub active_trades: u64,
     pub total_pnl: f64,
-    
-    /// Number of completed trades
-    pub trades: u64,
-    
-    /// Winning trades
-    pub winning_trades: u64,
-    
-    /// Losing trades
-    pub losing_trades: u64,
-    
-    /// Average win
-    pub avg_win: f64,
-    
-    /// Average loss
-    pub avg_loss: f64,
-    
-    /// Largest win
-    pub largest_win: f64,
-    
-    /// Largest loss
-    pub largest_loss: f64,
-    
-    /// Sharpe ratio (risk-adjusted returns)
-    pub sharpe_ratio: f64,
-    
-    /// Profit factor (total wins / total losses)
-    pub profit_factor: f64,
-    
-    /// Maximum drawdown (%)
-    pub max_drawdown: f64,
-}
-
-impl StrategyStats {
-    /// Record a new signal
-    pub fn record_signal(&mut self, signal: &Signal) {
-        self.signals_generated += 1;
-        
-        match signal {
-            Signal::StrongBuy { .. } | Signal::Buy { .. } => self.buy_signals += 1,
-            Signal::Sell { .. } | Signal::StrongSell { .. } => self.sell_signals += 1,
-            Signal::Hold { .. } => self.hold_signals += 1,
-        }
-    }
-    
-    /// Update statistics with a trade result
-    pub fn record_trade(&mut self, profit: f64) {
-        self.trades += 1;
-        self.total_pnl += profit;
-        
-        if profit > 0.0 {
-            self.winning_trades += 1;
-            self.avg_win = (self.avg_win * (self.winning_trades - 1) as f64 + profit) 
-                          / self.winning_trades as f64;
-            if profit > self.largest_win {
-                self.largest_win = profit;
-            }
-        } else {
-            self.losing_trades += 1;
-            let loss = profit.abs();
-            self.avg_loss = (self.avg_loss * (self.losing_trades - 1) as f64 + loss) 
-                           / self.losing_trades as f64;
-            if loss > self.largest_loss {
-                self.largest_loss = loss;
-            }
-        }
-        
-        // Update win rate
-        if self.trades > 0 {
-            self.win_rate = (self.winning_trades as f64 / self.trades as f64) * 100.0;
-        }
-        
-        // Update profit factor
-        let total_wins: f64 = self.avg_win * self.winning_trades as f64;
-        let total_losses: f64 = self.avg_loss * self.losing_trades as f64;
-        
-        if total_losses > 0.0 {
-            self.profit_factor = total_wins / total_losses;
-        }
-    }
-    
-    /// Calculate and update Sharpe ratio
-    pub fn update_sharpe_ratio(&mut self, returns: &[f64], risk_free_rate: f64) {
-        if returns.is_empty() {
-            return;
-        }
-        
-        let mean_return = returns.iter().sum::<f64>() / returns.len() as f64;
-        let variance = returns.iter()
-            .map(|r| (r - mean_return).powi(2))
-            .sum::<f64>() / returns.len() as f64;
-        let std_dev = variance.sqrt();
-        
-        if std_dev > 0.0 {
-            self.sharpe_ratio = (mean_return - risk_free_rate) / std_dev;
-        }
-    }
+    pub win_rate: f64,
+    pub sharpe: f64,
+    pub rebalances_executed: u64,
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// STRATEGY MANAGER - Orchestrates Multiple Strategies
+// STRATEGY MANAGER - ASYNC CONSENSUS ORCHESTRATOR
 // ═══════════════════════════════════════════════════════════════════════════
-
-/// Manages multiple trading strategies and generates consensus signals
 pub struct StrategyManager {
-    strategies: Vec<Box<dyn Strategy>>,
-    active_strategy: Option<usize>,
-    consensus_mode: ConsensusMode,
-    last_consensus: Option<Signal>,
+    pub strategies: Vec<Box<dyn Strategy>>,
+    pub engine: ConsensusEngine,
+    pub context: AnalyticsContext,
 }
 
-/// Consensus calculation mode
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ConsensusMode {
-    /// Use only the active strategy
-    SingleStrategy,
-    
-    /// Weighted average of all strategies
-    WeightedAverage,
-    
-    /// Majority vote (most strategies agree)
-    MajorityVote,
-    
-    /// Unanimous agreement required
-    Unanimous,
-}
-
-impl fmt::Display for ConsensusMode {
+impl std::fmt::Debug for StrategyManager {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            ConsensusMode::SingleStrategy => write!(f, "Single Strategy"),
-            ConsensusMode::WeightedAverage => write!(f, "Weighted Average"),
-            ConsensusMode::MajorityVote => write!(f, "Majority Vote"),
-            ConsensusMode::Unanimous => write!(f, "Unanimous"),
-        }
+        write!(
+            f,
+            "StrategyManager with {} strategies",
+            self.strategies.len()
+        )
     }
 }
 
 impl StrategyManager {
-    /// Create new strategy manager
-    pub fn new() -> Self {
-        log::info!("🎯 Initializing Multi-Strategy Manager");
+    pub fn new(ctx: AnalyticsContext) -> Self {
+        info!("🧠 Strategy Manager V5.3 initialized");
         Self {
             strategies: Vec::new(),
-            active_strategy: None,
-            consensus_mode: ConsensusMode::WeightedAverage,
-            last_consensus: None,
+            engine: ConsensusEngine::new(ConsensusMode::default()),
+            context: ctx,
         }
     }
-    
-    /// Add a trading strategy
-    pub fn add_strategy(&mut self, strategy: Box<dyn Strategy>) {
-        log::info!("📈 Adding strategy: {}", strategy.name());
-        self.strategies.push(strategy);
-        
-        if self.active_strategy.is_none() {
-            self.active_strategy = Some(0);
-        }
+
+    pub fn add_strategy<S: Strategy + 'static>(&mut self, strategy: S) {
+        let mut boxed = Box::new(strategy);
+        boxed.attach_analytics(self.context.clone());
+        info!("📈 Attached {}", boxed.name());
+        self.strategies.push(boxed);
     }
-    
-    /// Remove a strategy by name
-    pub fn remove_strategy(&mut self, name: &str) -> bool {
-        if let Some(pos) = self.strategies.iter().position(|s| s.name() == name) {
-            self.strategies.remove(pos);
-            log::info!("❌ Removed strategy: {}", name);
-            
-            // Adjust active strategy if needed
-            if let Some(active) = self.active_strategy {
-                if active >= self.strategies.len() {
-                    self.active_strategy = if self.strategies.is_empty() {
-                        None
-                    } else {
-                        Some(self.strategies.len() - 1)
-                    };
-                }
-            }
-            true
-        } else {
-            false
-        }
-    }
-    
-    /// Set active strategy by index
-    pub fn set_active_strategy(&mut self, index: usize) -> bool {
-        if index < self.strategies.len() {
-            self.active_strategy = Some(index);
-            log::info!("✅ Set active strategy: {}", self.strategies[index].name());
-            true
-        } else {
-            false
-        }
-    }
-    
-    /// Set active strategy by name
-    pub fn set_active_strategy_by_name(&mut self, name: &str) -> bool {
-        if let Some(index) = self.strategies.iter().position(|s| s.name() == name) {
-            self.set_active_strategy(index)
-        } else {
-            false
-        }
-    }
-    
-    /// Set consensus mode
-    pub fn set_consensus_mode(&mut self, mode: ConsensusMode) {
-        self.consensus_mode = mode;
-        log::info!("📊 Consensus mode set to: {}", mode);
-    }
-    
-    /// Get number of strategies
-    pub fn strategy_count(&self) -> usize {
-        self.strategies.len()
-    }
-    
-    /// Get number of enabled strategies
-    pub fn enabled_strategy_count(&self) -> usize {
-        self.strategies.iter().filter(|s| s.is_enabled()).count()
-    }
-    
-    /// Get last consensus signal
-    pub fn last_consensus(&self) -> Option<&Signal> {
-        self.last_consensus.as_ref()
-    }
-    
-    /// Analyze with all enabled strategies
-    pub async fn analyze_all(&mut self, price: f64, timestamp: i64) 
-        -> Result<Vec<(String, Signal)>> 
-    {
-        let mut signals = Vec::new();
-        
-        for strategy in &mut self.strategies {
-            if strategy.is_enabled() {
-                let signal = strategy.analyze(price, timestamp).await?;
-                signals.push((strategy.name().to_string(), signal));
-            }
-        }
-        
-        Ok(signals)
-    }
-    
-    /// Get consensus signal from all strategies
-    pub async fn get_consensus(&mut self, price: f64, timestamp: i64) 
-        -> Result<Signal> 
-    {
-        let signal = match self.consensus_mode {
-            ConsensusMode::SingleStrategy => {
-                self.single_strategy_consensus(price, timestamp).await?
-            }
-            ConsensusMode::WeightedAverage => {
-                self.weighted_consensus(price, timestamp).await?
-            }
-            ConsensusMode::MajorityVote => {
-                self.majority_consensus(price, timestamp).await?
-            }
-            ConsensusMode::Unanimous => {
-                self.unanimous_consensus(price, timestamp).await?
-            }
-        };
-        
-        self.last_consensus = Some(signal.clone());
-        Ok(signal)
-    }
-    
-    /// Single strategy consensus
-    async fn single_strategy_consensus(&mut self, price: f64, timestamp: i64) -> Result<Signal> {
-        if let Some(idx) = self.active_strategy {
-            if idx < self.strategies.len() && self.strategies[idx].is_enabled() {
-                return self.strategies[idx].analyze(price, timestamp).await;
-            }
-        }
-        Ok(Signal::hold(Some("No active strategy".to_string())))
-    }
-    
-    /// Weighted average consensus
-    async fn weighted_consensus(&mut self, price: f64, timestamp: i64) -> Result<Signal> {
-        let signals = self.analyze_all(price, timestamp).await?;
-        
-        if signals.is_empty() {
-            return Ok(Signal::hold(Some("No enabled strategies".to_string())));
-        }
-        
-        let mut buy_strength = 0.0;
-        let mut sell_strength = 0.0;
-        let mut total_weight = 0.0;
-        
-        for (_name, signal) in &signals {
-            let strength = signal.strength();
-            let confidence = signal.confidence();
-            let weight = strength * confidence;
-            
-            if signal.is_bullish() {
-                buy_strength += weight;
-            } else if signal.is_bearish() {
-                sell_strength += weight;
-            }
-            
-            total_weight += 1.0;
-        }
-        
-        if total_weight == 0.0 {
-            return Ok(Signal::hold(Some("No weighted signals".to_string())));
-        }
-        
-        let buy_consensus = buy_strength / total_weight;
-        let sell_consensus = sell_strength / total_weight;
-        
-        if buy_consensus > 0.6 {
-            Ok(Signal::StrongBuy {
-                price,
-                size: 1.0,
-                confidence: buy_consensus,
-                reason: format!("Consensus: {:.0}% bullish across {} strategies", 
-                              buy_consensus * 100.0, signals.len()),
-            })
-        } else if buy_consensus > 0.4 {
-            Ok(Signal::Buy {
-                price,
-                size: 0.5,
-                confidence: buy_consensus,
-                reason: format!("Weak buy: {:.0}% bullish", buy_consensus * 100.0),
-            })
-        } else if sell_consensus > 0.6 {
-            Ok(Signal::StrongSell {
-                price,
-                size: 1.0,
-                confidence: sell_consensus,
-                reason: format!("Consensus: {:.0}% bearish across {} strategies", 
-                              sell_consensus * 100.0, signals.len()),
-            })
-        } else if sell_consensus > 0.4 {
-            Ok(Signal::Sell {
-                price,
-                size: 0.5,
-                confidence: sell_consensus,
-                reason: format!("Weak sell: {:.0}% bearish", sell_consensus * 100.0),
-            })
-        } else {
-            Ok(Signal::hold(Some(format!("Neutral: {:.0}% buy, {:.0}% sell", 
-                                        buy_consensus * 100.0, sell_consensus * 100.0))))
-        }
-    }
-    
-    /// Majority vote consensus
-    async fn majority_consensus(&mut self, price: f64, timestamp: i64) -> Result<Signal> {
-        let signals = self.analyze_all(price, timestamp).await?;
-        
-        if signals.is_empty() {
-            return Ok(Signal::hold(Some("No strategies".to_string())));
-        }
-        
-        let mut buy_votes = 0;
-        let mut sell_votes = 0;
-        
-        for (_name, signal) in &signals {
-            if signal.is_bullish() {
-                buy_votes += 1;
-            } else if signal.is_bearish() {
-                sell_votes += 1;
-            }
-        }
-        
-        let total = signals.len();
-        let majority = total / 2;
-        
-        if buy_votes > majority {
-            Ok(Signal::StrongBuy {
-                price,
-                size: 1.0,
-                confidence: buy_votes as f64 / total as f64,
-                reason: format!("Majority: {}/{} strategies bullish", buy_votes, total),
-            })
-        } else if sell_votes > majority {
-            Ok(Signal::StrongSell {
-                price,
-                size: 1.0,
-                confidence: sell_votes as f64 / total as f64,
-                reason: format!("Majority: {}/{} strategies bearish", sell_votes, total),
-            })
-        } else {
-            Ok(Signal::hold(Some(format!("No majority: {} buy, {} sell", buy_votes, sell_votes))))
-        }
-    }
-    
-    /// Unanimous consensus
-    async fn unanimous_consensus(&mut self, price: f64, timestamp: i64) -> Result<Signal> {
-        let signals = self.analyze_all(price, timestamp).await?;
-        
-        if signals.is_empty() {
-            return Ok(Signal::hold(Some("No strategies".to_string())));
-        }
-        
-        let all_bullish = signals.iter().all(|(_, s)| s.is_bullish());
-        let all_bearish = signals.iter().all(|(_, s)| s.is_bearish());
-        
-        if all_bullish {
-            Ok(Signal::StrongBuy {
-                price,
-                size: 1.0,
-                confidence: 1.0,
-                reason: format!("Unanimous bullish ({} strategies)", signals.len()),
-            })
-        } else if all_bearish {
-            Ok(Signal::StrongSell {
-                price,
-                size: 1.0,
-                confidence: 1.0,
-                reason: format!("Unanimous bearish ({} strategies)", signals.len()),
-            })
-        } else {
-            Ok(Signal::hold(Some("No consensus".to_string())))
-        }
-    }
-    
-    /// Display strategy statistics
-    pub fn display_stats(&self) {
-        println!("\n╔═══════════════════════════════════════════════════════════════╗");
-        println!("║        📊 MULTI-STRATEGY PERFORMANCE REPORT                  ║");
-        println!("╚═══════════════════════════════════════════════════════════════╝\n");
-        
-        println!("🎯 Consensus Mode: {}", self.consensus_mode);
-        println!("📈 Total Strategies: {} ({} enabled)\n", 
-                self.strategy_count(), self.enabled_strategy_count());
-        
+
+    pub async fn analyze_all(&mut self, price: f64, ts: i64) -> Result<Signal> {
+        use futures::stream::{FuturesUnordered, StreamExt};
+
         if self.strategies.is_empty() {
-            println!("   No strategies loaded yet.");
-            return;
+            return Ok(Signal::Hold {
+                reason: Some("no strategies loaded".into()),
+            });
         }
-        
-        for (idx, strategy) in self.strategies.iter().enumerate() {
-            let stats = strategy.stats();
-            let active = self.active_strategy == Some(idx);
-            let enabled = strategy.is_enabled();
-            
-            println!("🎯 {} {}{}", 
-                    strategy.name(), 
-                    if active { "⭐ (ACTIVE)" } else { "" },
-                    if !enabled { "💤 (DISABLED)" } else { "" });
-            
-            println!("   ├─ Signals:  {} (Buy: {}, Sell: {}, Hold: {})",
-                    stats.signals_generated, stats.buy_signals, 
-                    stats.sell_signals, stats.hold_signals);
-            
-            if stats.trades > 0 {
-                println!("   ├─ Trades:   {} (Win: {}, Loss: {})",
-                        stats.trades, stats.winning_trades, stats.losing_trades);
-                println!("   ├─ Win Rate: {:.1}%", stats.win_rate);
-                println!("   ├─ P&L:      ${:.2}", stats.total_pnl);
-                println!("   ├─ Avg Win:  ${:.2}", stats.avg_win);
-                println!("   ├─ Avg Loss: ${:.2}", stats.avg_loss);
-                println!("   ├─ Profit Factor: {:.2}", stats.profit_factor);
-                println!("   └─ Sharpe:   {:.2}", stats.sharpe_ratio);
-            } else {
-                println!("   └─ No trades executed yet");
+
+        let mut results = Vec::new();
+        let mut futs = FuturesUnordered::new();
+        for s in &mut self.strategies {
+            futs.push(s.analyze(price, ts));
+        }
+
+        while let Some(res) = futs.next().await {
+            if let Ok(sig) = res {
+                results.push(sig);
             }
-            
-            println!();
         }
-        
-        if let Some(signal) = &self.last_consensus {
-            println!("🎯 Last Consensus Signal:");
-            println!("   {}\n", signal.display());
-        }
-    }
-}
 
-impl Default for StrategyManager {
-    fn default() -> Self {
-        Self::new()
+        Ok(self.engine.resolve(&results))
+    }
+
+    pub async fn initialize_all_at_price(&mut self, price: f64) -> Result<()> {
+        for strategy in &mut self.strategies {
+            strategy.initialize_at_price(price).await?;
+        }
+        Ok(())
+    }
+
+    pub fn get_current_volatility(&self) -> Option<f64> {
+        self.context.get_current_volatility()
     }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// SUB-MODULES - Individual Strategy Implementations
+// TEST SUITE - CONSENSUS AND SIGNAL PIPELINE
 // ═══════════════════════════════════════════════════════════════════════════
-
-pub mod grid_rebalancer;
-
-// Strategy stubs - implement as needed
-pub mod momentum {
+#[cfg(test)]
+mod tests {
     use super::*;
-    
-    pub struct MomentumStrategy;
-    
-    impl MomentumStrategy {
-        pub fn new() -> Self {
-            Self
-        }
-    }
-    
-    #[async_trait]
-    impl Strategy for MomentumStrategy {
-        fn name(&self) -> &str {
-            "Momentum Strategy"
-        }
-        
-        async fn analyze(&mut self, price: f64, _timestamp: i64) -> Result<Signal> {
-            // TODO: Implement momentum logic
-            Ok(Signal::hold(Some(format!("Momentum analysis at ${:.2}", price))))
-        }
-        
-        fn stats(&self) -> StrategyStats {
-            StrategyStats::default()
-        }
-        
-        fn reset(&mut self) {}
+    use crate::strategies::grid_rebalancer::{GridRebalancer, GridRebalancerConfig};
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_manager_consensus_integration() {
+        let ctx = AnalyticsContext::default();
+        let mut mgr = StrategyManager::new(ctx);
+        mgr.engine.mode = ConsensusMode::MajorityVote;
+        let regime_cfg = crate::config::RegimeGateConfig::default();
+        mgr.add_strategy(GridRebalancer::new(GridRebalancerConfig::default(), &regime_cfg).unwrap());
+
+        let sig = mgr.analyze_all(100.0, 1).await.unwrap();
+        assert!(matches!(
+            sig,
+            Signal::Buy { .. } | Signal::Hold { .. } | Signal::Sell { .. }
+        ));
     }
 }
-
-pub mod mean_reversion {
-    use super::*;
-    
-    pub struct MeanReversionStrategy;
-    
-    impl MeanReversionStrategy {
-        pub fn new() -> Self {
-            Self
-        }
-    }
-    
-    #[async_trait]
-    impl Strategy for MeanReversionStrategy {
-        fn name(&self) -> &str {
-            "Mean Reversion Strategy"
-        }
-        
-        async fn analyze(&mut self, price: f64, _timestamp: i64) -> Result<Signal> {
-            // TODO: Implement mean reversion logic
-            Ok(Signal::hold(Some(format!("Mean reversion at ${:.2}", price))))
-        }
-        
-        fn stats(&self) -> StrategyStats {
-            StrategyStats::default()
-        }
-        
-        fn reset(&mut self) {}
-    }
-}
-
-pub mod rsi {
-    use super::*;
-    
-    pub struct RSIStrategy;
-    
-    impl RSIStrategy {
-        pub fn new() -> Self {
-            Self
-        }
-    }
-    
-    #[async_trait]
-    impl Strategy for RSIStrategy {
-        fn name(&self) -> &str {
-            "RSI Strategy"
-        }
-        
-        async fn analyze(&mut self, price: f64, _timestamp: i64) -> Result<Signal> {
-            // TODO: Implement RSI logic
-            Ok(Signal::hold(Some(format!("RSI analysis at ${:.2}", price))))
-        }
-        
-        fn stats(&self) -> StrategyStats {
-            StrategyStats::default()
-        }
-        
-        fn reset(&mut self) {}
-    }
-}
-
-pub mod arbitrage {
-    use super::*;
-    
-    pub struct ArbitrageStrategy;
-    
-    impl ArbitrageStrategy {
-        pub fn new() -> Self {
-            Self
-        }
-    }
-    
-    #[async_trait]
-    impl Strategy for ArbitrageStrategy {
-        fn name(&self) -> &str {
-            "Arbitrage Strategy"
-        }
-        
-        async fn analyze(&mut self, price: f64, _timestamp: i64) -> Result<Signal> {
-            // TODO: Implement arbitrage logic
-            Ok(Signal::hold(Some(format!("Arbitrage scan at ${:.2}", price))))
-        }
-        
-        fn stats(&self) -> StrategyStats {
-            StrategyStats::default()
-        }
-        
-        fn reset(&mut self) {}
-    }
-}
-
-// Re-exports for convenience
-
-pub use grid_rebalancer::{GridRebalancer, GridRebalancerConfig, GridStats};
-pub use momentum::MomentumStrategy;
-pub use mean_reversion::MeanReversionStrategy;
-pub use rsi::RSIStrategy;
-pub use arbitrage::ArbitrageStrategy;
-
-pub mod fee_filter;
-pub use fee_filter::{FeeFilter, FeeFilterConfig};
-
-pub mod volatility_calc;
-pub use volatility_calc::VolatilityCalculator;
-

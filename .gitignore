@@ -1,1 +1,73 @@
-/target
+# Rust build artifacts
+target/
+Cargo.lock
+
+# Logs
+logs/
+*.log
+build.log
+last_crash.log
+
+# Archives and backups
+archive/
+examples/archive/
+config/archive/
+
+# Environment files (secrets!)
+.env
+.env.local
+.env.production
+*.pem
+*.key
+keystore*.json
+
+# IDE
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Test data
+errors.txt
+error_analysis_*.txt
+prices.txt
+mainnet-address.txt
+
+# Analysis files
+analysis/
+typescript/
+*.sh
+*.csv
+
+# Development configs (don't commit test configs)
+config/testing/
+config/test_*.toml
+config/*_test.toml
+
+# Environment files (RPC endpoints!)
+.env.rpc
+
+# Test results and monitoring
+results/
+monitoring/
+backups/
+temp/
+
+# TypeScript experiments
+typescript/
+
+# Process IDs
+*.pid
+grinder.pid
+
+# Specific config folders (keep main config, ignore test variants)
+config/devnet/
+config/mainnet/
+config/paper/
+config/production/v5.0_development/
+config/production/v6.0_dev/
+
+# Binary builds
+src/bin/
