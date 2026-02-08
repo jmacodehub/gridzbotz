@@ -6,6 +6,7 @@
 //! - Paper Trading: Risk-free backtesting and simulation
 //! - Grid State Machine: Order lifecycle tracking with buy/sell pairing
 //! - Real Trading: Live execution with circuit breakers (when security module ready)
+//! - Jupiter Integration: Cross-DEX swaps via Jupiter aggregator (NEW! 🪐)
 //! - Price Feeds: Multiple sources with redundancy and consensus
 //! - Transaction Executor: Solana transaction building and signing
 //!
@@ -15,8 +16,9 @@
 //! ✅ Circuit breaker integration
 //! ✅ Extensible for future order types (stop-loss, take-profit, etc.)
 //! ✅ Batch order operations for efficiency
+//! ✅ Jupiter Swap integration for live trading (🆕)
 //!
-//! February 7, 2026 - V4.1 with Unified Trading Engine
+//! February 8, 2026 - V4.1 with Jupiter Integration
 //! ═══════════════════════════════════════════════════════════════════════════
 
 pub use crate::config::Config;
@@ -37,6 +39,7 @@ pub mod executor;            // Transaction executor
 pub mod trade;               // Trade data structures
 pub mod feed_consensus;      // Feed consensus logic
 pub mod redundant_feed;      // Redundant price feeds
+pub mod jupiter_swap;        // 🆕 Jupiter DEX aggregator (V4.1)
 
 // Real trading engine (conditionally compiled when security module exists)
 // #[cfg(all(feature = "live-trading", feature = "security"))]
@@ -73,6 +76,20 @@ pub use grid_level::{
     GridLevel,
     GridLevelStatus,
     GridStateTracker,
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Jupiter Swap Exports (V4.1) 🪐
+// ═══════════════════════════════════════════════════════════════════════════
+
+pub use jupiter_swap::{
+    JupiterSwapClient,
+    JupiterQuote,
+    JupiterSwapRequest,
+    JupiterSwapResponse,
+    WSOL_MINT,
+    USDC_MINT,
+    USDT_MINT,
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -407,6 +424,10 @@ pub mod prelude {
         // Price Feeds
         PriceFeed,
         FeedMode,
+
+        // Jupiter (🆕 V4.1)
+        JupiterSwapClient,
+        JupiterQuote,
 
         // Results
         TradingResult,
