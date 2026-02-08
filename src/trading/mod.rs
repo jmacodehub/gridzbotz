@@ -82,12 +82,11 @@ pub use grid_level::{
 
 pub use jupiter_swap::{
     JupiterSwapClient,
-    JupiterQuote,
-    JupiterSwapRequest,
-    JupiterSwapResponse,
+    QuoteResponse,        // ✅ FIXED: Was JupiterQuote
+    SwapRequest,          // ✅ FIXED: Was JupiterSwapRequest
+    SwapResponse,         // ✅ FIXED: Was JupiterSwapResponse
     WSOL_MINT,
     USDC_MINT,
-    USDT_MINT,
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -425,7 +424,7 @@ pub mod prelude {
 
         // Jupiter (🆕 V4.1)
         JupiterSwapClient,
-        JupiterQuote,
+        QuoteResponse,        // ✅ FIXED: Was JupiterQuote
 
         // Results
         TradingResult,

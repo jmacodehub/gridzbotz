@@ -10,8 +10,10 @@
 //! November 2025 | Project Flash V6.0 - Jupiter Integration
 //! ═══════════════════════════════════════════════════════════════════════════
 
-use anyhow::{anyhow, bail, Context, Result};
-use log::{debug, info, warn};
+use anyhow::{bail, Context, Result};
+use base64::engine::general_purpose::STANDARD as BASE64;
+use base64::Engine;
+use log::{debug, info};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use solana_sdk::{
@@ -85,12 +87,12 @@ pub struct SwapRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PriorityFee {
-    pub priority_level_with_max_lamports: PriorityLevelWithMax,
+    pub priority_level_with_max_lamports: PriorityLevelWithMaxLamports,  // ✅ FIXED: Was priority_level_with_max
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct PriorityLevelWithMax {
+pub struct PriorityLevelWithMaxLamports {
     pub max_lamports: u64,
     pub priority_level: String,
 }
@@ -209,7 +211,7 @@ impl JupiterSwapClient {
             user_public_key: user_pubkey.to_string(),
             quote_response: quote.clone(),
             priority_fee: self.priority_fee.map(|fee| PriorityFee {
-                priority_level_with_max: PriorityLevelWithMax {
+                priority_level_with_max_lamports: PriorityLevelWithMaxLamports {  // ✅ FIXED
                     max_lamports: fee,
                     priority_level: "high".to_string(),
                 },
@@ -236,8 +238,8 @@ impl JupiterSwapClient {
             .await
             .context("Failed to parse Jupiter swap response")?;
 
-        // Decode base64 transaction
-        let tx_bytes = base64::decode(&swap_response.swap_transaction)
+        // ✅ FIXED: Use new base64 API
+        let tx_bytes = BASE64.decode(&swap_response.swap_transaction)
             .context("Failed to decode swap transaction")?;
 
         let versioned_tx: VersionedTransaction = bincode::deserialize(&tx_bytes)
