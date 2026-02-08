@@ -55,6 +55,9 @@ pub mod strategies;
 /// Risk management (circuit breakers, position sizing, stop loss)
 pub mod risk;
 
+/// Security layer (keystore, transaction signing, wallet management)
+pub mod security;
+
 /// Performance metrics and analytics
 pub mod metrics;
 
