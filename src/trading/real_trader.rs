@@ -2,12 +2,13 @@
 //! 🔥 REAL TRADER ENGINE V2.0 - MODULAR & BULLETPROOF
 //! ═══════════════════════════════════════════════════════════════════════════
 
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use log::{debug, error, info};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::str::FromStr;
 use tokio::sync::RwLock;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -19,6 +20,8 @@ use crate::Config;
 use super::executor::{TransactionExecutor, ExecutorConfig};
 use super::trade::Trade;
 use super::paper_trader::{Order, OrderSide};
+use super::jupiter_swap::{JupiterSwapClient, WSOL_MINT, USDC_MINT}; // 🆕 Jupiter!
+use solana_sdk::{instruction::Instruction, pubkey::Pubkey}; // 🆕 Solana types
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ⚙️ CONFIGURATION
@@ -191,7 +194,6 @@ impl RealTradingEngine {
             bail!("🚨 EMERGENCY SHUTDOWN ACTIVE");
         }
 
-        // 🔥 FIXED: Correct CircuitBreaker API
         if !self.circuit_breaker.write().await.is_trading_allowed() {
             bail!("🚨 CIRCUIT BREAKER ACTIVE");
         }
@@ -204,13 +206,13 @@ impl RealTradingEngine {
 
         self.total_executions.fetch_add(1, Ordering::SeqCst);
 
-        // TODO: Build actual swap instructions
-        let instructions = vec![];
+        // 🔥 BUILD ACTUAL JUPITER SWAP!
+        let swap_instructions = self.build_jupiter_swap(side, price, size).await?;
 
         let executor = self.executor.write().await;
         let signature = executor.execute(
             self.keystore.pubkey(),
-            instructions,
+            swap_instructions,
             |tx| self.keystore.sign_transaction(tx),
         ).await;
 
@@ -246,13 +248,114 @@ impl RealTradingEngine {
         }
     }
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // 🪐 JUPITER SWAP INTEGRATION - THE MONEY MAKER!
+    // ─────────────────────────────────────────────────────────────────────────
+    /// Build Jupiter swap transaction
+    async fn build_jupiter_swap(
+        &self,
+        side: OrderSide,
+        price: f64,
+        size: f64,
+    ) -> Result<Vec<Instruction>> {
+        info!("🪐 Building Jupiter swap transaction...");
+
+        // Initialize Jupiter client (consider caching as struct field later)
+        let jupiter = JupiterSwapClient::new(
+            self.config.executor.slippage_bps.unwrap_or(50)
+        )?
+        .with_priority_fee(5000); // 5000 micro-lamports
+
+        let wsol = Pubkey::from_str(WSOL_MINT)?;
+        let usdc = Pubkey::from_str(USDC_MINT)?;
+
+        // Determine swap direction and amounts
+        let (input_mint, output_mint, amount_lamports) = match side {
+            OrderSide::Buy => {
+                // Buy SOL with USDC
+                let usdc_amount = (price * size * 1_000_000.0) as u64; // USDC has 6 decimals
+                (usdc, wsol, usdc_amount)
+            }
+            OrderSide::Sell => {
+                // Sell SOL for USDC  
+                let sol_lamports = (size * 1_000_000_000.0) as u64; // SOL has 9 decimals
+                (wsol, usdc, sol_lamports)
+            }
+        };
+
+        debug!("   Input:  {} ({})", input_mint, amount_lamports);
+        debug!("   Output: {}", output_mint);
+
+        // Get quote from Jupiter
+        let quote = jupiter
+            .get_quote(input_mint, output_mint, amount_lamports)
+            .await
+            .context("Failed to get Jupiter quote")?;
+
+        info!("   Quote received: {} → {} lamports", amount_lamports, quote.out_amount);
+        info!("   Price impact: {:.3}%", quote.price_impact_pct);
+
+        // Get swap transaction
+        let (versioned_tx, _last_valid_height) = jupiter
+            .get_swap_transaction(&quote, self.keystore.pubkey())
+            .await
+            .context("Failed to get swap transaction")?;
+
+        // Extract instructions from versioned transaction
+        let message = versioned_tx.message;
+        let instructions: Vec<Instruction> = match message {
+            solana_sdk::message::VersionedMessage::Legacy(msg) => {
+                msg.instructions
+                    .into_iter()
+                    .map(|ix| Instruction {
+                        program_id: msg.account_keys[ix.program_id_index as usize],
+                        accounts: ix
+                            .accounts
+                            .into_iter()
+                            .map(|idx| solana_sdk::instruction::AccountMeta {
+                                pubkey: msg.account_keys[idx as usize],
+                                is_signer: false,
+                                is_writable: false,
+                            })
+                            .collect(),
+                        data: ix.data,
+                    })
+                    .collect()
+            }
+            solana_sdk::message::VersionedMessage::V0(msg) => {
+                msg.instructions
+                    .into_iter()
+                    .map(|ix| {
+                        let account_keys = msg.account_keys.clone();
+                        Instruction {
+                            program_id: account_keys[ix.program_id_index as usize],
+                            accounts: ix
+                                .accounts
+                                .into_iter()
+                                .map(|idx| solana_sdk::instruction::AccountMeta {
+                                    pubkey: account_keys[idx as usize],
+                                    is_signer: false,
+                                    is_writable: false,
+                                })
+                                .collect(),
+                            data: ix.data,
+                        }
+                    })
+                    .collect()
+            }
+        };
+
+        info!("✅ Jupiter swap transaction built ({} instructions)", instructions.len());
+
+        Ok(instructions)
+    }
+
     async fn reconcile_balances(&self, current_price: f64) -> Result<()> {
         debug!("🔄 Reconciling balances...");
 
         let (usdc, sol) = self.balance_tracker.get_balances().await;
         let total_value = usdc + (sol * current_price);
 
-        // 🔥 FIXED: Use initial_balance() instead of non-existent current_balance()
         let initial = self.balance_tracker.initial_balance();
         let pnl = total_value - initial;
 
@@ -369,7 +472,6 @@ impl RealTradingEngine {
         println!("   Total Executions: {}", executor_stats.total_executions);
         println!();
 
-        // 🔥 FIXED: Use status() method
         println!("🚦 Circuit Breaker:");
         let breaker = self.circuit_breaker.read().await;
         let status = breaker.status();
