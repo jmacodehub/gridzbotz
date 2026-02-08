@@ -410,6 +410,19 @@ impl RedundantPriceFeed {
                             latency_ms: hm.latency_us as f64 / 1000.0,
                         }
                     }
+
+                    // 🔥 CRITICAL FIX: Catch-all for any remaining unmatched patterns
+                    _ => {
+                        warn!("⚠️ Unexpected price feed state - no reliable data available");
+                        consensus_failures.fetch_add(1, Ordering::Relaxed);
+                        ConsensusPrice {
+                            price: 0.0,
+                            sources: vec![FeedSource::Mock],
+                            timestamp: Utc::now(),
+                            confidence: 0.0,
+                            latency_ms: 0.0,
+                        }
+                    }
                 };
 
                 // Update current consensus

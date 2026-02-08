@@ -17,11 +17,12 @@
 //!
 //! ═══════════════════════════════════════════════════════════════════════════
 
-
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use log::{info, warn};
 
+// 🔥 CRITICAL FIX: Import RegimeGateConfig from config module
+use crate::config::RegimeGateConfig;
 
 // Shared modules (each stand-alone and re-usable)
 pub mod atr_dynamic;
@@ -29,13 +30,11 @@ pub mod fee_filter;
 pub mod regime_detection;
 pub mod volatility_calc;
 
-
 // Re-exports for top-level use in other strategies
 pub use atr_dynamic::{ATRConfig, ATRDynamic};
 pub use fee_filter::{FeeDecision, FeeFilter, FeeFilterConfig};
 pub use regime_detection::{RegimeConfig, RegimeDetector};
 pub use volatility_calc::{VolatilityCalculator, VolatilityConfig, VolatilityStats};
-
 
 // ═══════════════════════════════════════════════════════════════════════════
 // ✅ CONFIG CONVERTERS - Production-Grade BPS → % Transformation
@@ -44,10 +43,6 @@ pub use volatility_calc::{VolatilityCalculator, VolatilityConfig, VolatilityStat
 //   1. TOML config (BPS format: 2, 15, 30)
 //   2. Internal regime detection (% format: 0.02%, 0.15%, 0.30%)
 // ═══════════════════════════════════════════════════════════════════════════
-
-
-use crate::config::RegimeGateConfig;
-
 
 /// Convert Bot's RegimeGateConfig (in BPS) → RegimeConfig (in %)
 ///
@@ -111,7 +106,6 @@ impl From<&RegimeGateConfig> for RegimeConfig {
     }
 }
 
-
 /// Alternative: direct conversion (owned value)
 impl From<RegimeGateConfig> for RegimeConfig {
     fn from(cfg: RegimeGateConfig) -> Self {
@@ -119,11 +113,9 @@ impl From<RegimeGateConfig> for RegimeConfig {
     }
 }
 
-
 // ═══════════════════════════════════════════════════════════════════════════
 // ANALYTICS CONTEXT - Production-Ready Shared State
 // ═══════════════════════════════════════════════════════════════════════════
-
 
 #[derive(Debug, Clone)]
 pub struct AnalyticsContext {
@@ -137,7 +129,6 @@ pub struct AnalyticsContext {
     pub atr: Option<ATRDynamic>,
 }
 
-
 impl Default for AnalyticsContext {
     fn default() -> Self {
         Self::new_with_config(
@@ -148,7 +139,6 @@ impl Default for AnalyticsContext {
         )
     }
 }
-
 
 impl AnalyticsContext {
     /// Build a custom analytics suite for advanced configurations
@@ -269,22 +259,18 @@ impl AnalyticsContext {
     }
 }
 
-
 /// Marker trait for strategies that expose their analytics context
 pub trait SharedAnalytics {
     fn analytics(&self) -> &AnalyticsContext;
 }
 
-
 // ═══════════════════════════════════════════════════════════════════════════
 // COMPREHENSIVE TEST SUITE (V5.4)
 // ═══════════════════════════════════════════════════════════════════════════
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::RegimeGateConfig;
     use tokio::runtime::Runtime;
 
     fn ctx() -> AnalyticsContext {

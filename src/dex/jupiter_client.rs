@@ -35,7 +35,7 @@
 //! # }
 //! ```
 
-use super::{Order, OrderSide, OrderType, PlacedOrder, Position, Trader};
+use super::{Order, OrderSide, PlacedOrder, Position, Trader};
 use anyhow::{Result, bail};
 use async_trait::async_trait;
 use log::{info, warn, debug};

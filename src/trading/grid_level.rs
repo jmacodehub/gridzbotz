@@ -1,5 +1,5 @@
 //! ═══════════════════════════════════════════════════════════════════════════
-//! Grid Level State Machine - V4.0 Production Ready
+//! Grid Level State Machine - V4.1 Production Ready
 //!
 //! Ensures buy/sell pairing survives grid repositioning.
 //! Prevents orphaned positions by tracking order lifecycle per level.
@@ -8,6 +8,11 @@
 //! - GridLevel: Single price level with paired buy/sell orders
 //! - GridLevelStatus: State machine (Pending → Active → Filled)
 //! - GridStateTracker: Thread-safe HashMap of all active levels
+//!
+//! V4.1 ENHANCEMENTS:
+//! ✅ Added get_level() for selective order cancellation
+//! ✅ Added mark_cancelled() for clean state management
+//! ✅ Full support for grid bot reposition logic
 //!
 //! Key Feature: `can_cancel()` prevents cancelling levels with filled buys!
 //! ═══════════════════════════════════════════════════════════════════════════
@@ -183,7 +188,7 @@ pub struct GridStateTracker {
 impl GridStateTracker {
     /// Create new state tracker
     pub fn new() -> Self {
-        info!("🎯 Grid State Tracker V4.0 initialized");
+        info!("🎯 Grid State Tracker V4.1 initialized");
         Self {
             levels: Arc::new(RwLock::new(HashMap::new())),
             next_id: Arc::new(RwLock::new(1)),
@@ -221,10 +226,34 @@ impl GridStateTracker {
         }
     }
 
-    /// Get level by ID
+    // ═══════════════════════════════════════════════════════════════════════
+    // 🔥 V4.1 NEW METHODS - Selective Cancellation Support
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /// Get a specific level by ID (for selective order cancellation)
+    ///
+    /// Used by grid_bot.rs during reposition to access order IDs
+    /// for individual cancellation instead of cancel_all_orders()
     pub async fn get_level(&self, level_id: u64) -> Option<GridLevel> {
-        self.levels.read().await.get(&level_id).cloned()
+        let levels = self.levels.read().await;
+        levels.get(&level_id).cloned()
     }
+
+    /// Mark a level as cancelled and remove it from tracking
+    ///
+    /// Should only be called after successfully cancelling its orders.
+    /// Updates status to Cancelled and removes from active tracking.
+    pub async fn mark_cancelled(&self, level_id: u64) {
+        let mut levels = self.levels.write().await;
+        if let Some(mut level) = levels.remove(&level_id) {
+            level.status = GridLevelStatus::Cancelled;
+            debug!("🗑️  Level {} marked as cancelled and removed", level_id);
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Existing Methods (Unchanged)
+    // ═══════════════════════════════════════════════════════════════════════
 
     /// Get all cancellable level IDs (safe during reposition)
     pub async fn get_cancellable_levels(&self) -> Vec<u64> {
@@ -362,5 +391,33 @@ mod tests {
         let cancellable = tracker.get_cancellable_levels().await;
         assert_eq!(cancellable.len(), 2);
         assert!(!cancellable.contains(&2), "Level 2 should NOT be cancellable!");
+    }
+
+    // 🔥 NEW TESTS for V4.1 methods
+    #[tokio::test]
+    async fn test_get_level() {
+        let tracker = GridStateTracker::new();
+        let created = tracker.create_level(100.0, 102.0, 1.0).await;
+
+        let retrieved = tracker.get_level(created.id).await;
+        assert!(retrieved.is_some());
+        assert_eq!(retrieved.unwrap().id, created.id);
+
+        let missing = tracker.get_level(9999).await;
+        assert!(missing.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_mark_cancelled() {
+        let tracker = GridStateTracker::new();
+        let level = tracker.create_level(100.0, 102.0, 1.0).await;
+        let level_id = level.id;
+
+        assert_eq!(tracker.count().await, 1);
+
+        tracker.mark_cancelled(level_id).await;
+
+        assert_eq!(tracker.count().await, 0);
+        assert!(tracker.get_level(level_id).await.is_none());
     }
 }

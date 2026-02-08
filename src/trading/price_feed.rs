@@ -117,6 +117,7 @@ pub struct PriceFeedMetrics {
 /// Simple HTTP-first design with WebSocket upgrade path
 // ═══════════════════════════════════════════════════════════════════════════
 
+#[derive(Clone)]
 pub struct PriceFeed {
     // Core data
     current:     Arc<RwLock<f64>>,
@@ -375,7 +376,7 @@ impl PriceFeed {
         id: &str,
     ) -> Option<f64> {
         let guard = feed.read().await;
-        guard.as_ref()?.get_price(id).await.ok()
+        guard.as_ref()?.get_price(id).await
     }
     
     async fn fetch_http_price_static(

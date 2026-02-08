@@ -213,7 +213,7 @@ impl PythWebSocketFeed {
                 }
             }
             // Backoff with jitter (randomize delay +/- 30%)
-            let jitter = rand::thread_rng().gen_range(
+            let jitter = rand::rng().random_range(
                 -(backoff_ms as i64 / 3)..(backoff_ms as i64 / 3)
             );
             let wait_ms = (backoff_ms as i64 + jitter).max(0) as u64;

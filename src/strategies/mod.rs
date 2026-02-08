@@ -309,8 +309,9 @@ mod tests {
         let ctx = AnalyticsContext::default();
         let mut mgr = StrategyManager::new(ctx);
         mgr.engine.mode = ConsensusMode::MajorityVote;
-        let regime_cfg = crate::config::RegimeGateConfig::default();
-        mgr.add_strategy(GridRebalancer::new(GridRebalancerConfig::default(), &regime_cfg).unwrap());
+
+        // Create and add GridRebalancer strategy
+        mgr.add_strategy(GridRebalancer::new(GridRebalancerConfig::default()).unwrap());
 
         let sig = mgr.analyze_all(100.0, 1).await.unwrap();
         assert!(matches!(

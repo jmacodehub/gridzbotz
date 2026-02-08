@@ -188,17 +188,55 @@ impl GridBot {
             }
         }
 
-        let cancellable = self.grid_state.get_cancellable_levels().await;
-        info!("📋 Cancelling {} safe levels (out of {} total)",
-              cancellable.len(),
-              self.grid_state.count().await);
+// Get levels that are safe to cancel (no filled buys)
+let cancellable = self.grid_state.get_cancellable_levels().await;
+info!("📋 Identified {} cancellable levels (out of {} total)",
+      cancellable.len(),
+      self.grid_state.count().await);
 
-        let cancelled = self.engine.cancel_all_orders().await
-            .context("Failed to cancel orders during reposition")?;
+// Selectively cancel only the safe orders
+let mut cancelled_count = 0;
 
-        if cancelled > 0 {
-            debug!("✅ Cancelled {} orders", cancelled);
+for level_id in cancellable {
+    // Get the level to find its order IDs
+    if let Some(level) = self.grid_state.get_level(level_id).await {
+        // Cancel buy order if it exists
+        if let Some(buy_id) = &level.buy_order_id {
+            match self.engine.cancel_order(buy_id).await {
+                Ok(_) => {
+                    debug!("  ✅ Cancelled buy order {} from level {}", buy_id, level_id);
+                    cancelled_count += 1;
+                }
+                Err(e) => {
+                    warn!("  ⚠️ Failed to cancel buy {}: {}", buy_id, e);
+                }
+            }
         }
+
+        // Cancel sell order if it exists (only if level is cancellable)
+        if let Some(sell_id) = &level.sell_order_id {
+            match self.engine.cancel_order(sell_id).await {
+                Ok(_) => {
+                    debug!("  ✅ Cancelled sell order {} from level {}", sell_id, level_id);
+                    cancelled_count += 1;
+                }
+                Err(e) => {
+                    warn!("  ⚠️ Failed to cancel sell {}: {}", sell_id, e);
+                }
+            }
+        }
+
+        // Mark level as cancelled in state tracker
+        self.grid_state.mark_cancelled(level_id).await;
+    }
+}
+
+if cancelled_count > 0 {
+    info!("✅ Selectively cancelled {} orders from safe levels", cancelled_count);
+} else {
+    info!("ℹ️  No orders needed cancellation");
+}
+
 
         self.place_grid_orders(current_price).await?;
 
