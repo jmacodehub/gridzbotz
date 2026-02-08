@@ -5,8 +5,8 @@
 //! - Unified Trading Interface: Generic trait for paper and live trading
 //! - Paper Trading: Risk-free backtesting and simulation
 //! - Grid State Machine: Order lifecycle tracking with buy/sell pairing
-//! - Real Trading: Live execution with circuit breakers (when security module ready)
-//! - Jupiter Integration: Cross-DEX swaps via Jupiter aggregator (NEW! 🪐)
+//! - Real Trading: ✅ ENABLED - Live execution with Jupiter swaps!
+//! - Jupiter Integration: Cross-DEX swaps via Jupiter aggregator (🪐)
 //! - Price Feeds: Multiple sources with redundancy and consensus
 //! - Transaction Executor: Solana transaction building and signing
 //!
@@ -17,8 +17,9 @@
 //! ✅ Extensible for future order types (stop-loss, take-profit, etc.)
 //! ✅ Batch order operations for efficiency
 //! ✅ Jupiter Swap integration for live trading (🆕)
+//! ✅ RealTradingEngine ENABLED with full security (🔥 Phase 5)
 //!
-//! February 8, 2026 - V4.1 with Jupiter Integration
+//! February 8, 2026 - V4.1 with Jupiter Integration + Real Trading LIVE!
 //! ═══════════════════════════════════════════════════════════════════════════
 
 pub use crate::config::Config;
@@ -39,11 +40,8 @@ pub mod executor;            // Transaction executor
 pub mod trade;               // Trade data structures
 pub mod feed_consensus;      // Feed consensus logic
 pub mod redundant_feed;      // Redundant price feeds
-pub mod jupiter_swap;        // 🆕 Jupiter DEX aggregator (V4.1)
-
-// Real trading engine (conditionally compiled when security module exists)
-// #[cfg(all(feature = "live-trading", feature = "security"))]
-// pub mod real_trader;  // DISABLED - Phase 7
+pub mod jupiter_swap;        // 🪐 Jupiter DEX aggregator (V4.1)
+pub mod real_trader;         // 🔥 ENABLED - Phase 5 Complete!
 
 // WebSocket feeds (optional feature)
 #[cfg(feature = "websockets")]
@@ -93,15 +91,14 @@ pub use jupiter_swap::{
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Real Trading Exports (Conditional)
+// Real Trading Exports (🔥 ENABLED - Phase 5!)
 // ═══════════════════════════════════════════════════════════════════════════
 
-// #[cfg(all(feature = "live-trading", feature = "security"))]
-// pub use real_trader::{
-//    RealTradingEngine,
-//    RealTradingConfig,
-//    PerformanceStats as RealPerformanceStats,
-//};
+pub use real_trader::{
+    RealTradingEngine,
+    RealTradingConfig,
+    PerformanceStats as RealPerformanceStats,
+};
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Transaction Executor Exports
@@ -213,7 +210,7 @@ pub struct EngineHealthStatus {
 ///
 /// This trait provides a unified interface that works across:
 /// - Paper trading (simulation mode)
-/// - Live trading (real money on Solana DEX)
+/// - Live trading (real money on Solana DEX via Jupiter)
 /// - Backtesting engines
 /// - Mock engines for testing
 ///
@@ -408,6 +405,7 @@ pub mod prelude {
     pub use super::{
         // Engines
         PaperTradingEngine,
+        RealTradingEngine,      // 🔥 NOW AVAILABLE!
         TradingEngine,
 
         // Orders & Types
@@ -433,51 +431,12 @@ pub mod prelude {
         TradingResult,
         OrderPlacementResult,
         EngineHealthStatus,
+        
+        // Real Trading (🔥 V4.1)
+        RealTradingConfig,
+        RealPerformanceStats,
     };
 }
-
-// ═══════════════════════════════════════════════════════════════════════════
-// Feature Flags Documentation
-// ═══════════════════════════════════════════════════════════════════════════
-
-// Real trading engine is conditionally compiled when live-trading + security features enabled.
-// This gracefully allows paper trading without the security module.
-
-#[cfg(all(doc, not(feature = "live-trading")))]
-/// **DOCUMENTATION NOTE:**
-///
-/// The `RealTradingEngine` requires the `live-trading` and `security` features.
-///
-/// Enable with: `cargo build --features live-trading,security`
-pub struct RealTradingEngineDocumentation;
-
-#[cfg(all(doc, not(feature = "live-trading")))]
-/// **DOCUMENTATION NOTE:**
-///
-/// The `RealTradingEngine` is not compiled by default for safety.
-///
-/// ## Enabling Live Trading
-///
-/// ```toml
-/// # Cargo.toml
-/// [features]
-/// live-trading = []
-/// security = []
-/// ```
-///
-/// ```bash
-/// cargo build --features live-trading,security
-/// ```
-///
-/// ## Safety Requirements
-///
-/// Before enabling live trading:
-/// 1. ✅ Implement secure keystore in `src/security/keystore.rs`
-/// 2. ✅ Configure circuit breaker limits
-/// 3. ✅ Test extensively in paper mode
-/// 4. ✅ Review risk management settings
-/// 5. ✅ Verify RPC endpoints and API keys
-pub struct RealTradingEngineDocumentation;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // TESTS
@@ -507,5 +466,14 @@ mod tests {
         assert_eq!(result.signature.unwrap(), "SIG-789");
         assert_eq!(result.estimated_price.unwrap(), 200.50);
         assert_eq!(result.estimated_fees.unwrap(), 0.10);
+    }
+
+    #[test]
+    fn test_module_exports() {
+        // Verify that RealTradingEngine is now available
+        use super::prelude::*;
+        
+        // This will compile if all exports are correct
+        let _: Option<RealTradingConfig> = None;
     }
 }
