@@ -20,8 +20,8 @@ use crate::Config;
 use super::executor::{TransactionExecutor, ExecutorConfig};
 use super::trade::Trade;
 use super::paper_trader::{Order, OrderSide};
-use super::jupiter_swap::{JupiterSwapClient, WSOL_MINT, USDC_MINT}; // 🆕 Jupiter!
-use solana_sdk::{instruction::Instruction, pubkey::Pubkey}; // 🆕 Solana types
+use super::jupiter_swap::{JupiterSwapClient, WSOL_MINT, USDC_MINT};
+use solana_sdk::{instruction::Instruction, pubkey::Pubkey};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ⚙️ CONFIGURATION
@@ -30,6 +30,7 @@ use solana_sdk::{instruction::Instruction, pubkey::Pubkey}; // 🆕 Solana types
 pub struct RealTradingConfig {
     pub keystore: KeystoreConfig,
     pub executor: ExecutorConfig,
+    pub slippage_bps: Option<u16>,
     pub circuit_breaker_loss_pct: Option<f64>,
     pub stop_loss_pct: Option<f64>,
     pub profit_take_threshold: Option<f64>,
@@ -44,6 +45,7 @@ impl Default for RealTradingConfig {
         Self {
             keystore: KeystoreConfig::default(),
             executor: ExecutorConfig::default(),
+            slippage_bps: Some(50),
             circuit_breaker_loss_pct: Some(5.0),
             stop_loss_pct: Some(10.0),
             profit_take_threshold: Some(3.0),
@@ -63,6 +65,12 @@ impl RealTradingConfig {
         if let Some(loss_pct) = self.circuit_breaker_loss_pct {
             if loss_pct <= 0.0 {
                 bail!("circuit_breaker_loss_pct must be positive");
+            }
+        }
+
+        if let Some(slippage) = self.slippage_bps {
+            if slippage > 1000 {
+                bail!("slippage_bps too high: {} (max 1000 = 10%)", slippage);
             }
         }
 
@@ -260,11 +268,10 @@ impl RealTradingEngine {
     ) -> Result<Vec<Instruction>> {
         info!("🪐 Building Jupiter swap transaction...");
 
-        // Initialize Jupiter client (consider caching as struct field later)
-        let jupiter = JupiterSwapClient::new(
-            self.config.executor.slippage_bps.unwrap_or(50)
-        )?
-        .with_priority_fee(5000); // 5000 micro-lamports
+        // Initialize Jupiter client with slippage from config
+        let slippage_bps = self.config.slippage_bps.unwrap_or(50);
+        let jupiter = JupiterSwapClient::new(slippage_bps)?
+            .with_priority_fee(5000);
 
         let wsol = Pubkey::from_str(WSOL_MINT)?;
         let usdc = Pubkey::from_str(USDC_MINT)?;
@@ -514,5 +521,18 @@ mod tests {
     fn test_config_validation() {
         let config = RealTradingConfig::default();
         assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_slippage_validation() {
+        let mut config = RealTradingConfig::default();
+        
+        // Valid slippage
+        config.slippage_bps = Some(50);
+        assert!(config.validate().is_ok());
+        
+        // Invalid slippage (too high)
+        config.slippage_bps = Some(2000);
+        assert!(config.validate().is_err());
     }
 }
