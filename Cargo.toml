@@ -79,6 +79,7 @@ url = "2.5"
 config = { version = "0.14", default-features = false, features = ["toml"] }
 dotenv = "0.15"
 validator = { version = "0.18", features = ["derive"] }
+shellexpand = "3.1"       # Path expansion for keystore files (~/path support)
 
 # ───────────────────────────────────────────────────────────────────────────
 # CLI & User Interface - V2.5 GIGA MODE! 🔥💎🚀

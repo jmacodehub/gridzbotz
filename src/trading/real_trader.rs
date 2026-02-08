@@ -302,9 +302,9 @@ impl RealTradingEngine {
         info!("   Quote received: {} → {} lamports", amount_lamports, quote.out_amount);
         info!("   Price impact: {:.3}%", quote.price_impact_pct);
 
-        // Get swap transaction
+        // Get swap transaction - FIX: Dereference pubkey!
         let (versioned_tx, _last_valid_height) = jupiter
-            .get_swap_transaction(&quote, self.keystore.pubkey())
+            .get_swap_transaction(&quote, *self.keystore.pubkey())
             .await
             .context("Failed to get swap transaction")?;
 

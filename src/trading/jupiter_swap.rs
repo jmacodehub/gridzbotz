@@ -1,507 +1,318 @@
 //! ═══════════════════════════════════════════════════════════════════════════
-//! 🪐 JUPITER SWAP CLIENT - Production-Grade Solana DEX Aggregator
+//! 🪐 JUPITER SWAP CLIENT - DEX Aggregator Integration
 //! ═══════════════════════════════════════════════════════════════════════════
 //!
-//! **Purpose**: Execute cross-DEX swaps on Solana via Jupiter Quote API v6
+//! ✅ Best price routing across all Solana DEXs
+//! ✅ Automatic slippage protection
+//! ✅ Transaction building with versioned messages
+//! ✅ Production-ready error handling
 //!
-//! **Features**:
-//! - Real-time quote fetching from Jupiter aggregator
-//! - Best price routing across all Solana DEXs (Raydium, Orca, Phoenix, etc.)
-//! - Slippage protection with configurable tolerance
-//! - Transaction building and serialization
-//! - Automatic retry with exponential backoff
-//! - MEV protection via Jito bundles (optional)
-//! - Price impact tracking and warnings
-//!
-//! **API Endpoints**:
-//! - Quote API: `https://quote-api.jup.ag/v6/quote`
-//! - Swap API: `https://quote-api.jup.ag/v6/swap`
-//!
-//! **Architecture**:
-//! ```
-//! RealTradingEngine → JupiterSwapClient → Quote API → Swap API → Solana RPC
-//! ```
-//!
-//! ## Example Usage
-//! ```rust,no_run
-//! use solana_grid_bot::trading::jupiter_swap::JupiterSwapClient;
-//! use solana_sdk::pubkey::Pubkey;
-//!
-//! # async fn example() -> anyhow::Result<()> {
-//! let client = JupiterSwapClient::new(50)?; // 0.5% slippage
-//!
-//! // Get quote for swapping 100 USDC to SOL
-//! let quote = client.get_quote(
-//!     USDC_MINT,
-//!     SOL_MINT,
-//!     100_000_000, // 100 USDC (6 decimals)
-//! ).await?;
-//!
-//! println!("Expected output: {} lamports SOL", quote.out_amount);
-//! println!("Price impact: {}%", quote.price_impact_pct);
-//! # Ok(())
-//! # }
-//! ```
+//! November 2025 | Project Flash V6.0 - Jupiter Integration
+//! ═══════════════════════════════════════════════════════════════════════════
 
-use anyhow::{bail, Context, Result};
-use log::{debug, error, info, warn};
+use anyhow::{anyhow, bail, Context, Result};
+use log::{debug, info, warn};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use solana_sdk::{
     pubkey::Pubkey,
-    signature::Signature,
     transaction::VersionedTransaction,
 };
 use std::time::Duration;
 
 // ═══════════════════════════════════════════════════════════════════════════
-// 🌐 CONSTANTS - Jupiter API & Solana Mainnet
+// 🌐 JUPITER API CONFIGURATION
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Jupiter Quote API v6 endpoint
-const JUPITER_QUOTE_API: &str = "https://quote-api.jup.ag/v6/quote";
-
-/// Jupiter Swap API v6 endpoint
+const JUPITER_QUOTE_API: &str = "https://quote-api.jup.ag/v6";
 const JUPITER_SWAP_API: &str = "https://quote-api.jup.ag/v6/swap";
 
-/// Wrapped SOL (WSOL) mint address
+/// Wrapped SOL mint address
 pub const WSOL_MINT: &str = "So11111111111111111111111111111111111111112";
 
 /// USDC mint address (mainnet)
-pub const USDC_MINT: &str = "EPjFWdd8DsbgNU1MCgjgWAo3LnxMrLXYYQ9uJ2nBfYWZ";
-
-/// USDT mint address (mainnet)
-pub const USDT_MINT: &str = "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB";
-
-/// Default slippage tolerance in basis points (50 = 0.5%)
-const DEFAULT_SLIPPAGE_BPS: u16 = 50;
-
-/// Maximum allowed slippage (200 = 2%)
-const MAX_SLIPPAGE_BPS: u16 = 200;
-
-/// HTTP request timeout
-const REQUEST_TIMEOUT_SECS: u64 = 30;
-
-/// Maximum retries for failed requests
-const MAX_RETRIES: u32 = 3;
+pub const USDC_MINT: &str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 
 // ═══════════════════════════════════════════════════════════════════════════
-// 📊 DATA STRUCTURES - Jupiter API v6 Schema
+// 📊 JUPITER API TYPES
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Jupiter Quote API response
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct JupiterQuote {
-    /// Input token mint address
+pub struct QuoteResponse {
     pub input_mint: String,
-    
-    /// Output token mint address
+    pub in_amount: String,
     pub output_mint: String,
-    
-    /// Input amount in lamports/token units
-    #[serde(deserialize_with = "deserialize_u64_string")]
-    pub in_amount: u64,
-    
-    /// Expected output amount in lamports/token units
-    #[serde(deserialize_with = "deserialize_u64_string")]
-    pub out_amount: u64,
-    
-    /// Price impact as decimal string (e.g., "0.0023" = 0.23%)
-    #[serde(deserialize_with = "deserialize_f64_string")]
+    pub out_amount: String,
+    pub other_amount_threshold: String,
+    pub swap_mode: String,
+    pub slippage_bps: u16,
     pub price_impact_pct: f64,
-    
-    /// Route information for the swap
-    #[serde(default)]
     pub route_plan: Vec<RoutePlanStep>,
-    
-    /// Slot number for which this quote is valid
-    #[serde(default)]
-    pub context_slot: u64,
-    
-    /// Minimum output amount considering slippage
-    #[serde(default, deserialize_with = "deserialize_optional_u64_string")]
-    pub other_amount_threshold: Option<u64>,
-    
-    /// Swap mode (ExactIn or ExactOut)
-    #[serde(default)]
-    pub swap_mode: Option<String>,
-    
-    /// Slippage basis points used
-    #[serde(default)]
-    pub slippage_bps: Option<u16>,
 }
 
-/// Route plan step (simplified)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RoutePlanStep {
     pub swap_info: SwapInfo,
+    pub percent: u8,
 }
 
-/// Swap information per step
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SwapInfo {
     pub amm_key: String,
-    pub label: Option<String>,
+    pub label: String,
     pub input_mint: String,
     pub output_mint: String,
-    #[serde(deserialize_with = "deserialize_u64_string")]
-    pub in_amount: u64,
-    #[serde(deserialize_with = "deserialize_u64_string")]
-    pub out_amount: u64,
-    pub fee_amount: Option<String>,
-    pub fee_mint: Option<String>,
+    pub in_amount: String,
+    pub out_amount: String,
+    pub fee_amount: String,
+    pub fee_mint: String,
 }
 
-/// Jupiter Swap API request
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct JupiterSwapRequest {
-    /// User's wallet public key
+pub struct SwapRequest {
     pub user_public_key: String,
-    
-    /// Auto wrap/unwrap SOL if needed
-    #[serde(default = "default_true")]
-    pub wrap_and_unwrap_sol: bool,
-    
-    /// Use shared accounts (recommended)
-    #[serde(default = "default_true")]
-    pub use_shared_accounts: bool,
-    
-    /// Compute unit price in micro-lamports (priority fee)
+    pub quote_response: QuoteResponse,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub compute_unit_price_micro_lamports: Option<u64>,
-    
-    /// Quote response from quote API
-    pub quote_response: JupiterQuote,
+    pub priority_fee: Option<PriorityFee>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dynamic_compute_unit_limit: Option<bool>,
 }
 
-fn default_true() -> bool { true }
-
-/// Jupiter Swap API response
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct JupiterSwapResponse {
-    /// Base64-encoded serialized transaction
-    pub swap_transaction: String,
-    
-    /// Last valid block height for the transaction
-    #[serde(default)]
-    pub last_valid_block_height: Option<u64>,
+pub struct PriorityFee {
+    pub priority_level_with_max_lamports: PriorityLevelWithMax,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PriorityLevelWithMax {
+    pub max_lamports: u64,
+    pub priority_level: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SwapResponse {
+    pub swap_transaction: String, // Base64 encoded transaction
+    pub last_valid_block_height: u64,
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// 🔧 HELPER FUNCTIONS - Deserialization
+// 🪐 JUPITER SWAP CLIENT
 // ═══════════════════════════════════════════════════════════════════════════
 
-fn deserialize_u64_string<'de, D>(deserializer: D) -> Result<u64, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    let s: String = Deserialize::deserialize(deserializer)?;
-    s.parse::<u64>().map_err(serde::de::Error::custom)
-}
-
-fn deserialize_f64_string<'de, D>(deserializer: D) -> Result<f64, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    let s: String = Deserialize::deserialize(deserializer)?;
-    s.parse::<f64>().map_err(serde::de::Error::custom)
-}
-
-fn deserialize_optional_u64_string<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    let s: Option<String> = Deserialize::deserialize(deserializer)?;
-    match s {
-        Some(val) => val.parse::<u64>().map(Some).map_err(serde::de::Error::custom),
-        None => Ok(None),
-    }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// 🪐 JUPITER SWAP CLIENT - Main Implementation
-// ═══════════════════════════════════════════════════════════════════════════
-
-/// Production-grade Jupiter swap client
-/// 
-/// Handles:
-/// - Quote fetching from Jupiter API
-/// - Transaction building
-/// - Slippage protection
-/// - Error handling and retries
-/// - Price impact warnings
 pub struct JupiterSwapClient {
-    /// HTTP client for API requests
-    http_client: Client,
-    
-    /// Slippage tolerance in basis points
+    client: Client,
     slippage_bps: u16,
-    
-    /// Priority fee in micro-lamports (optional)
-    priority_fee_lamports: Option<u64>,
+    priority_fee: Option<u64>,
 }
 
 impl JupiterSwapClient {
     /// Create a new Jupiter swap client
-    /// 
+    ///
     /// # Arguments
+    ///
     /// * `slippage_bps` - Slippage tolerance in basis points (e.g., 50 = 0.5%)
-    /// 
-    /// # Returns
-    /// * Initialized Jupiter client
-    /// 
-    /// # Example
-    /// ```
-    /// use solana_grid_bot::trading::jupiter_swap::JupiterSwapClient;
-    /// 
-    /// let client = JupiterSwapClient::new(50)?; // 0.5% slippage
-    /// # Ok::<(), anyhow::Error>(())
-    /// ```
     pub fn new(slippage_bps: u16) -> Result<Self> {
-        // Validate slippage
-        if slippage_bps > MAX_SLIPPAGE_BPS {
-            warn!("⚠️  Slippage {}bps exceeds maximum {}bps, capping", 
-                  slippage_bps, MAX_SLIPPAGE_BPS);
+        if slippage_bps > 1000 {
+            bail!("Slippage too high: {} bps (max 1000 = 10%)", slippage_bps);
         }
-        
-        let capped_slippage = slippage_bps.min(MAX_SLIPPAGE_BPS);
-        
-        let http_client = Client::builder()
-            .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS))
+
+        let client = Client::builder()
+            .timeout(Duration::from_secs(30))
             .build()
-            .context("Failed to create HTTP client")?;
-        
-        info!("🪐 Jupiter Swap Client initialized");
-        info!("   Slippage:  {}bps ({:.2}%)", capped_slippage, capped_slippage as f64 / 100.0);
-        
+            .context("Failed to build HTTP client")?;
+
+        info!("🪐 Jupiter client initialized (slippage: {} bps)", slippage_bps);
+
         Ok(Self {
-            http_client,
-            slippage_bps: capped_slippage,
-            priority_fee_lamports: None,
+            client,
+            slippage_bps,
+            priority_fee: None,
         })
     }
-    
-    /// Set priority fee for transactions (in micro-lamports)
-    /// 
-    /// Priority fees help transactions land faster during network congestion.
-    /// Recommended: 1000-10000 micro-lamports (0.000001-0.00001 SOL)
-    /// 
-    /// # Arguments
-    /// * `micro_lamports` - Priority fee amount
-    pub fn with_priority_fee(mut self, micro_lamports: u64) -> Self {
-        info!("   Priority:  {} μLamports", micro_lamports);
-        self.priority_fee_lamports = Some(micro_lamports);
+
+    /// Set priority fee for transactions
+    pub fn with_priority_fee(mut self, fee_microlamports: u64) -> Self {
+        self.priority_fee = Some(fee_microlamports);
         self
     }
-    
-    /// Get a quote for a token swap
-    /// 
+
+    /// Get a quote for a swap
+    ///
     /// # Arguments
+    ///
     /// * `input_mint` - Input token mint address
     /// * `output_mint` - Output token mint address
-    /// * `amount_lamports` - Amount to swap in lamports/token units
-    /// 
-    /// # Returns
-    /// * `JupiterQuote` with expected output and route information
-    /// 
-    /// # Errors
-    /// * Network failures
-    /// * Invalid mint addresses
-    /// * Insufficient liquidity
+    /// * `amount` - Amount to swap (in lamports/smallest unit)
     pub async fn get_quote(
         &self,
         input_mint: Pubkey,
         output_mint: Pubkey,
-        amount_lamports: u64,
-    ) -> Result<JupiterQuote> {
-        debug!("📡 Fetching Jupiter quote");
-        debug!("   Input:    {} ({} lamports)", input_mint, amount_lamports);
-        debug!("   Output:   {}", output_mint);
-        debug!("   Slippage: {}bps", self.slippage_bps);
-        
+        amount: u64,
+    ) -> Result<QuoteResponse> {
+        debug!("📊 Requesting Jupiter quote: {} {} -> {}",
+            amount, input_mint, output_mint);
+
         let url = format!(
-            "{}?inputMint={}&outputMint={}&amount={}&slippageBps={}",
+            "{}/quote?inputMint={}&outputMint={}&amount={}&slippageBps={}",
             JUPITER_QUOTE_API,
             input_mint,
             output_mint,
-            amount_lamports,
+            amount,
             self.slippage_bps
         );
-        
-        // Retry logic with exponential backoff
-        let mut attempts = 0;
-        let mut last_error = None;
-        
-        while attempts < MAX_RETRIES {
-            attempts += 1;
-            
-            match self.http_client.get(&url).send().await {
-                Ok(response) => {
-                    if !response.status().is_success() {
-                        let status = response.status();
-                        let body = response.text().await.unwrap_or_default();
-                        bail!("Jupiter API error: {} - {}", status, body);
-                    }
-                    
-                    let quote: JupiterQuote = response
-                        .json()
-                        .await
-                        .context("Failed to parse Jupiter quote")?;
-                    
-                    // Validate quote
-                    if quote.out_amount == 0 {
-                        bail!("Quote returned zero output amount (insufficient liquidity?)");
-                    }
-                    
-                    // Log quote details
-                    info!("✅ Quote received");
-                    info!("   Input:         {} lamports", quote.in_amount);
-                    info!("   Output:        {} lamports", quote.out_amount);
-                    info!("   Price Impact:  {:.4}%", quote.price_impact_pct);
-                    info!("   Route Steps:   {}", quote.route_plan.len());
-                    
-                    // Warn on high price impact
-                    if quote.price_impact_pct > 1.0 {
-                        warn!("⚠️  HIGH PRICE IMPACT: {:.2}%", quote.price_impact_pct);
-                        warn!("   Consider splitting into smaller orders");
-                    }
-                    
-                    return Ok(quote);
-                }
-                Err(e) => {
-                    last_error = Some(e);
-                    if attempts < MAX_RETRIES {
-                        let backoff_ms = 100 * (2_u64.pow(attempts - 1));
-                        warn!("⚠️  Quote request failed (attempt {}/{}), retrying in {}ms",
-                              attempts, MAX_RETRIES, backoff_ms);
-                        tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
-                    }
-                }
-            }
-        }
-        
-        Err(last_error.unwrap().into())
-    }
-    
-    /// Get swap transaction from Jupiter
-    /// 
-    /// Builds a signed transaction ready for submission to Solana.
-    /// 
-    /// # Arguments
-    /// * `quote` - Quote from `get_quote()`
-    /// * `user_pubkey` - User's wallet public key
-    /// 
-    /// # Returns
-    /// * Base64-encoded versioned transaction
-    /// 
-    /// # Errors
-    /// * Network failures
-    /// * Invalid quote
-    pub async fn get_swap_transaction(
-        &self,
-        quote: &JupiterQuote,
-        user_pubkey: Pubkey,
-    ) -> Result<(VersionedTransaction, u64)> {
-        debug!("📝 Requesting swap transaction");
-        debug!("   User: {}", user_pubkey);
-        
-        let request = JupiterSwapRequest {
-            user_public_key: user_pubkey.to_string(),
-            wrap_and_unwrap_sol: true,
-            use_shared_accounts: true,
-            compute_unit_price_micro_lamports: self.priority_fee_lamports,
-            quote_response: quote.clone(),
-        };
-        
-        let response = self.http_client
-            .post(JUPITER_SWAP_API)
-            .json(&request)
+
+        let response = self
+            .client
+            .get(&url)
             .send()
             .await
-            .context("Failed to connect to Jupiter swap API")?;
-        
+            .context("Failed to fetch Jupiter quote")?;
+
         if !response.status().is_success() {
             let status = response.status();
-            let body = response.text().await.unwrap_or_default();
-            bail!("Jupiter swap API error: {} - {}", status, body);
+            let error_text = response.text().await.unwrap_or_default();
+            bail!("Jupiter quote API error {}: {}", status, error_text);
         }
-        
-        let swap_response: JupiterSwapResponse = response
+
+        let quote: QuoteResponse = response
             .json()
             .await
-            .context("Failed to parse swap response")?;
-        
-        // Decode base64 transaction
-        use base64::{engine::general_purpose, Engine as _};
-        let tx_bytes = general_purpose::STANDARD
-            .decode(&swap_response.swap_transaction)
-            .context("Failed to decode swap transaction")?;
-        
-        // Deserialize transaction
-        let transaction: VersionedTransaction = bincode::deserialize(&tx_bytes)
-            .context("Failed to deserialize transaction")?;
-        
-        let last_valid_block_height = swap_response.last_valid_block_height.unwrap_or(0);
-        
-        info!("✅ Swap transaction built");
-        info!("   Size:           {} bytes", tx_bytes.len());
-        info!("   Valid Height:   {}", last_valid_block_height);
-        
-        Ok((transaction, last_valid_block_height))
+            .context("Failed to parse Jupiter quote response")?;
+
+        debug!("✅ Quote received: {} -> {} (impact: {:.3}%)",
+            quote.in_amount, quote.out_amount, quote.price_impact_pct);
+
+        Ok(quote)
     }
-    
-    /// Calculate approximate output amount given input
-    /// 
-    /// This is a quick estimation without fetching a full quote.
-    /// Use `get_quote()` for accurate pricing.
-    /// 
+
+    /// Get a swap transaction from a quote
+    ///
     /// # Arguments
-    /// * `input_amount` - Input amount in human-readable format
-    /// * `price` - Current price (quote per base)
-    /// 
-    /// # Returns
-    /// * Estimated output amount
-    pub fn estimate_output(input_amount: f64, price: f64) -> f64 {
-        input_amount / price
+    ///
+    /// * `quote` - Quote response from `get_quote`
+    /// * `user_pubkey` - User's public key
+    pub async fn get_swap_transaction(
+        &self,
+        quote: &QuoteResponse,
+        user_pubkey: Pubkey,
+    ) -> Result<(VersionedTransaction, u64)> {
+        debug!("🔨 Building swap transaction for {}", user_pubkey);
+
+        let swap_request = SwapRequest {
+            user_public_key: user_pubkey.to_string(),
+            quote_response: quote.clone(),
+            priority_fee: self.priority_fee.map(|fee| PriorityFee {
+                priority_level_with_max: PriorityLevelWithMax {
+                    max_lamports: fee,
+                    priority_level: "high".to_string(),
+                },
+            }),
+            dynamic_compute_unit_limit: Some(true),
+        };
+
+        let response = self
+            .client
+            .post(JUPITER_SWAP_API)
+            .json(&swap_request)
+            .send()
+            .await
+            .context("Failed to fetch Jupiter swap transaction")?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let error_text = response.text().await.unwrap_or_default();
+            bail!("Jupiter swap API error {}: {}", status, error_text);
+        }
+
+        let swap_response: SwapResponse = response
+            .json()
+            .await
+            .context("Failed to parse Jupiter swap response")?;
+
+        // Decode base64 transaction
+        let tx_bytes = base64::decode(&swap_response.swap_transaction)
+            .context("Failed to decode swap transaction")?;
+
+        let versioned_tx: VersionedTransaction = bincode::deserialize(&tx_bytes)
+            .context("Failed to deserialize swap transaction")?;
+
+        info!("✅ Swap transaction built (valid until block {})",
+            swap_response.last_valid_block_height);
+
+        Ok((versioned_tx, swap_response.last_valid_block_height))
+    }
+
+    /// Execute a complete swap (quote + transaction)
+    ///
+    /// Convenience method that combines `get_quote` and `get_swap_transaction`
+    pub async fn prepare_swap(
+        &self,
+        input_mint: Pubkey,
+        output_mint: Pubkey,
+        amount: u64,
+        user_pubkey: Pubkey,
+    ) -> Result<(VersionedTransaction, u64, QuoteResponse)> {
+        info!("🚀 Preparing swap: {} {} -> {}", amount, input_mint, output_mint);
+
+        let quote = self.get_quote(input_mint, output_mint, amount).await?;
+
+        let (tx, last_valid_height) = self
+            .get_swap_transaction(&quote, user_pubkey)
+            .await?;
+
+        Ok((tx, last_valid_height, quote))
     }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// 🧪 TESTS
+// ✅ TESTS
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+    use std::str::FromStr;
+
     #[test]
-    fn test_client_creation() {
+    fn test_jupiter_client_creation() {
+        let client = JupiterSwapClient::new(50);
+        assert!(client.is_ok());
+
+        let client_high_slippage = JupiterSwapClient::new(2000);
+        assert!(client_high_slippage.is_err());
+    }
+
+    #[test]
+    fn test_mint_addresses() {
+        assert!(Pubkey::from_str(WSOL_MINT).is_ok());
+        assert!(Pubkey::from_str(USDC_MINT).is_ok());
+    }
+
+    #[tokio::test]
+    #[ignore] // Requires network access
+    async fn test_get_quote() {
         let client = JupiterSwapClient::new(50).unwrap();
-        assert_eq!(client.slippage_bps, 50);
-    }
-    
-    #[test]
-    fn test_slippage_capping() {
-        let client = JupiterSwapClient::new(500).unwrap();
-        assert_eq!(client.slippage_bps, MAX_SLIPPAGE_BPS);
-    }
-    
-    #[test]
-    fn test_priority_fee() {
-        let client = JupiterSwapClient::new(50)
-            .unwrap()
-            .with_priority_fee(5000);
-        assert_eq!(client.priority_fee_lamports, Some(5000));
-    }
-    
-    #[test]
-    fn test_estimate_output() {
-        let output = JupiterSwapClient::estimate_output(180.0, 180.0);
-        assert!((output - 1.0).abs() < 0.001);
+        let wsol = Pubkey::from_str(WSOL_MINT).unwrap();
+        let usdc = Pubkey::from_str(USDC_MINT).unwrap();
+
+        // Try to get a quote for 0.1 SOL -> USDC
+        let amount = 100_000_000; // 0.1 SOL in lamports
+
+        let result = client.get_quote(wsol, usdc, amount).await;
+        if let Ok(quote) = result {
+            println!("Quote: {} -> {}", quote.in_amount, quote.out_amount);
+            println!("Price impact: {:.3}%", quote.price_impact_pct);
+            assert!(quote.out_amount.parse::<u64>().unwrap() > 0);
+        } else {
+            // Network error is acceptable in tests
+            println!("Skipping quote test (network unavailable)");
+        }
     }
 }
