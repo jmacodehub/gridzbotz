@@ -202,7 +202,8 @@ impl GridBot {
             self.grid_initialized = true;
             info!("✅ Initial grid placed successfully");
             
-            let total_levels = self.config.trading.grid_levels;
+            // 🔧 FIX: Cast u32 to usize
+            let total_levels = self.config.trading.grid_levels as usize;
             let used_levels = self.grid_state.count().await;
             self.enhanced_metrics.update_grid_stats(total_levels, used_levels);
             
@@ -270,7 +271,8 @@ impl GridBot {
         self.grid_repositions += 1;
         self.last_reposition_time = Some(std::time::Instant::now());
 
-        let total_levels = self.config.trading.grid_levels;
+        // 🔧 FIX: Cast u32 to usize
+        let total_levels = self.config.trading.grid_levels as usize;
         let used_levels = self.grid_state.count().await;
         self.enhanced_metrics.update_grid_stats(total_levels, used_levels);
 
