@@ -3,6 +3,7 @@ name = "solana-grid-bot"
 version = "0.2.5"  # 🔥 V2.5 - Regime Gate + Smart Fees + Order Lifecycle!
 edition = "2021"
 rust-version = "1.75"
+default-run = "solana-grid-bot"  # 🎯 NEW: Default binary for cargo run
 authors = ["J-MC <jmc@solana-trading.com>"]
 description = "⚡ Production-grade Solana grid trading bot with V2.5 enhancements: Market Regime Gate, Smart Fee Filtering, Dynamic Order Lifecycle, and AI-powered optimization"
 documentation = "https://docs.rs/solana-grid-bot"
