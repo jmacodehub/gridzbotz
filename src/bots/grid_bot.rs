@@ -1,25 +1,32 @@
 //! ═══════════════════════════════════════════════════════════════════════════
-//! 🤖 GRID BOT V4.0 - Production Trading Orchestrator with GridLevel State Machine
+//! 🤖 GRID BOT V4.1 - Production Trading Orchestrator with Enhanced Analytics
 //!
-//! V4.0 ENHANCEMENTS - Grid Level State Machine:
+//! V4.1 ENHANCEMENTS - Enhanced Metrics Integration:
 //! ✅ GridLevel pairing (buy/sell orders linked)
 //! ✅ Safe reposition (preserves filled buys)
 //! ✅ Order lifecycle tracking per level
 //! ✅ No orphaned positions
 //! ✅ Production-ready state management
+//! ✅ ENHANCED METRICS - Trade-level analytics 📊
+//! ✅ Win/Loss tracking, Grid efficiency, Drawdown monitoring
 //!
-//! February 7, 2026 - V4.0 STATE MACHINE INTEGRATED! 🔥
+//! February 9, 2026 - V4.1 ENHANCED METRICS INTEGRATED! 🔥
 //! ═══════════════════════════════════════════════════════════════════════════
 
 use crate::strategies::{StrategyManager, GridRebalancer, GridRebalancerConfig};
-use crate::strategies::shared::analytics::AnalyticsContext;  // 🔥 NEW IMPORT
-use crate::trading::{PaperTradingEngine, OrderSide, GridStateTracker};
+use crate::strategies::shared::analytics::AnalyticsContext;  // 🔥 Analytics support
+use crate::trading::{
+    PaperTradingEngine,
+    OrderSide,
+    GridStateTracker,
+    EnhancedMetrics,  // 📊 NEW: Enhanced metrics tracking
+};
 use crate::config::Config;
 use anyhow::{Result, Context, bail};
 use log::{info, warn, debug, trace};
 
 // ═══════════════════════════════════════════════════════════════════════════
-// GRID BOT - Main Trading Orchestrator
+// GRID BOT - Main Trading Orchestrator with Enhanced Metrics
 // ═══════════════════════════════════════════════════════════════════════════
 
 pub struct GridBot {
@@ -27,6 +34,7 @@ pub struct GridBot {
     pub engine: PaperTradingEngine,
     pub config: Config,
     pub grid_state: GridStateTracker,
+    pub enhanced_metrics: EnhancedMetrics,  // 📊 NEW: Enhanced analytics
     last_price: Option<f64>,
     total_cycles: u64,
     successful_trades: u64,
@@ -38,10 +46,10 @@ pub struct GridBot {
 impl GridBot {
     pub fn new(config: Config) -> Result<Self> {
         info!("═══════════════════════════════════════════════════════════");
-        info!("🤖 Initializing GridBot V4.0 with State Machine...");
+        info!("🤖 Initializing GridBot V4.1 with Enhanced Metrics...");
         info!("═══════════════════════════════════════════════════════════");
 
-        // 🔥 FIXED: Create AnalyticsContext
+        // 🔥 Create AnalyticsContext
         let analytics_ctx = AnalyticsContext::default();
         let mut manager = StrategyManager::new(analytics_ctx);
 
@@ -72,7 +80,6 @@ impl GridBot {
         let grid_rebalancer = GridRebalancer::new(grid_config)
             .context("Failed to create GridRebalancer")?;
 
-        // 🔥 FIXED: Don't wrap in Box
         manager.add_strategy(grid_rebalancer);
         info!("✅ Grid rebalancer strategy loaded");
 
@@ -107,8 +114,12 @@ impl GridBot {
         let grid_state = GridStateTracker::new();
         info!("✅ Grid state tracker initialized");
 
+        // 📊 NEW: Initialize enhanced metrics
+        let enhanced_metrics = EnhancedMetrics::new();
+        info!("✅ Enhanced metrics tracker initialized");
+
         info!("═══════════════════════════════════════════════════════════");
-        info!("✅ GridBot V4.0 initialization complete!");
+        info!("✅ GridBot V4.1 initialization complete!");
         info!("═══════════════════════════════════════════════════════════\n");
 
         Ok(Self {
@@ -116,6 +127,7 @@ impl GridBot {
             engine,
             config,
             grid_state,
+            enhanced_metrics,  // 📊 NEW FIELD
             last_price: None,
             total_cycles: 0,
             successful_trades: 0,
@@ -172,6 +184,12 @@ impl GridBot {
             self.place_grid_orders(current_price).await?;
             self.grid_initialized = true;
             info!("✅ Initial grid placed successfully");
+            
+            // 📊 Update grid efficiency after initial placement
+            let total_levels = self.config.trading.grid_levels;
+            let used_levels = self.grid_state.count().await;
+            self.enhanced_metrics.update_grid_stats(total_levels, used_levels);
+            
             return Ok(());
         }
 
@@ -188,60 +206,64 @@ impl GridBot {
             }
         }
 
-// Get levels that are safe to cancel (no filled buys)
-let cancellable = self.grid_state.get_cancellable_levels().await;
-info!("📋 Identified {} cancellable levels (out of {} total)",
-      cancellable.len(),
-      self.grid_state.count().await);
+        // Get levels that are safe to cancel (no filled buys)
+        let cancellable = self.grid_state.get_cancellable_levels().await;
+        info!("📋 Identified {} cancellable levels (out of {} total)",
+              cancellable.len(),
+              self.grid_state.count().await);
 
-// Selectively cancel only the safe orders
-let mut cancelled_count = 0;
+        // Selectively cancel only the safe orders
+        let mut cancelled_count = 0;
 
-for level_id in cancellable {
-    // Get the level to find its order IDs
-    if let Some(level) = self.grid_state.get_level(level_id).await {
-        // Cancel buy order if it exists
-        if let Some(buy_id) = &level.buy_order_id {
-            match self.engine.cancel_order(buy_id).await {
-                Ok(_) => {
-                    debug!("  ✅ Cancelled buy order {} from level {}", buy_id, level_id);
-                    cancelled_count += 1;
+        for level_id in cancellable {
+            // Get the level to find its order IDs
+            if let Some(level) = self.grid_state.get_level(level_id).await {
+                // Cancel buy order if it exists
+                if let Some(buy_id) = &level.buy_order_id {
+                    match self.engine.cancel_order(buy_id).await {
+                        Ok(_) => {
+                            debug!("  ✅ Cancelled buy order {} from level {}", buy_id, level_id);
+                            cancelled_count += 1;
+                        }
+                        Err(e) => {
+                            warn!("  ⚠️ Failed to cancel buy {}: {}", buy_id, e);
+                        }
+                    }
                 }
-                Err(e) => {
-                    warn!("  ⚠️ Failed to cancel buy {}: {}", buy_id, e);
+
+                // Cancel sell order if it exists (only if level is cancellable)
+                if let Some(sell_id) = &level.sell_order_id {
+                    match self.engine.cancel_order(sell_id).await {
+                        Ok(_) => {
+                            debug!("  ✅ Cancelled sell order {} from level {}", sell_id, level_id);
+                            cancelled_count += 1;
+                        }
+                        Err(e) => {
+                            warn!("  ⚠️ Failed to cancel sell {}: {}", sell_id, e);
+                        }
+                    }
                 }
+
+                // Mark level as cancelled in state tracker
+                self.grid_state.mark_cancelled(level_id).await;
             }
         }
 
-        // Cancel sell order if it exists (only if level is cancellable)
-        if let Some(sell_id) = &level.sell_order_id {
-            match self.engine.cancel_order(sell_id).await {
-                Ok(_) => {
-                    debug!("  ✅ Cancelled sell order {} from level {}", sell_id, level_id);
-                    cancelled_count += 1;
-                }
-                Err(e) => {
-                    warn!("  ⚠️ Failed to cancel sell {}: {}", sell_id, e);
-                }
-            }
+        if cancelled_count > 0 {
+            info!("✅ Selectively cancelled {} orders from safe levels", cancelled_count);
+        } else {
+            info!("ℹ️  No orders needed cancellation");
         }
-
-        // Mark level as cancelled in state tracker
-        self.grid_state.mark_cancelled(level_id).await;
-    }
-}
-
-if cancelled_count > 0 {
-    info!("✅ Selectively cancelled {} orders from safe levels", cancelled_count);
-} else {
-    info!("ℹ️  No orders needed cancellation");
-}
-
 
         self.place_grid_orders(current_price).await?;
 
         self.grid_repositions += 1;
         self.last_reposition_time = Some(std::time::Instant::now());
+
+        // 📊 Update grid efficiency after reposition
+        let total_levels = self.config.trading.grid_levels;
+        let used_levels = self.grid_state.count().await;
+        self.enhanced_metrics.update_grid_stats(total_levels, used_levels);
 
         let reposition_time = reposition_start.elapsed().as_millis();
         info!("✅ Grid repositioned in {}ms", reposition_time);
@@ -311,11 +333,16 @@ if cancelled_count > 0 {
         self.total_cycles += 1;
         self.last_price = Some(price);
 
+        // 📊 Update price range tracking
+        self.enhanced_metrics.update_price_range(price);
+
         trace!("Processing price update: ${:.4} (cycle {})", price, self.total_cycles);
 
-        // 🔥 FIXED: Use analyze_all instead of get_consensus
         let signal = self.manager.analyze_all(price, timestamp).await
             .context("Failed to get strategy consensus")?;
+
+        // 📊 Record signal execution
+        self.enhanced_metrics.record_signal(true);
 
         trace!("Strategy signal: {}", signal.display());
 
@@ -328,8 +355,22 @@ if cancelled_count > 0 {
 
             for order_id in &filled_orders {
                 debug!("   ✅ Order {} filled", order_id);
+                
+                // 📊 Record trade in enhanced metrics
+                // Determine if buy or sell based on order ID pattern
+                let is_buy = order_id.to_lowercase().contains("buy");
+                
+                // Calculate P&L from grid state if available
+                let pnl = self.grid_state.total_realized_pnl().await;
+                
+                self.enhanced_metrics.record_trade(is_buy, pnl, timestamp);
             }
         }
+
+        // 📊 Update portfolio value tracking
+        let wallet = self.engine.get_wallet().await;
+        let total_value = wallet.total_value_usdc(price);
+        self.enhanced_metrics.update_portfolio_value(total_value);
 
         Ok(())
     }
@@ -351,6 +392,12 @@ if cancelled_count > 0 {
             win_rate: perf_stats.win_rate,
             total_fees: perf_stats.total_fees,
             trading_paused: false,
+            // 📊 NEW: Enhanced metrics fields
+            profitable_trades: self.enhanced_metrics.profitable_trades,
+            unprofitable_trades: self.enhanced_metrics.unprofitable_trades,
+            max_drawdown: self.enhanced_metrics.max_drawdown,
+            signal_execution_ratio: self.enhanced_metrics.signal_execution_ratio,
+            grid_efficiency: self.enhanced_metrics.grid_efficiency,
         }
     }
 
@@ -360,7 +407,7 @@ if cancelled_count > 0 {
         let border = "═".repeat(60);
 
         println!("\n{}", border);
-        println!("   🤖 GRID BOT V4.0 - STATUS REPORT");
+        println!("   🤖 GRID BOT V4.1 - STATUS REPORT");
         println!("{}", border);
 
         println!("\n📊 Bot Performance:");
@@ -386,6 +433,10 @@ if cancelled_count > 0 {
         println!("\n📈 Trading Stats:");
         println!("  Win Rate:          {:.2}%", stats.win_rate);
         println!("  Total Fees:        ${:.2}", stats.total_fees);
+
+        // 📊 NEW: Display enhanced metrics
+        println!("\n🔍 Enhanced Metrics:");
+        self.enhanced_metrics.display();
 
         println!("\n💵 Current Price:    ${:.4}", current_price);
 
@@ -413,25 +464,39 @@ pub struct BotStats {
     pub win_rate: f64,
     pub total_fees: f64,
     pub trading_paused: bool,
+    // 📊 NEW: Enhanced metrics fields
+    pub profitable_trades: usize,
+    pub unprofitable_trades: usize,
+    pub max_drawdown: f64,
+    pub signal_execution_ratio: f64,
+    pub grid_efficiency: f64,
 }
 
 impl BotStats {
     pub fn display_summary(&self) {
         println!("\n📊 BOT STATISTICS SUMMARY");
-        println!("   Cycles:       {}", self.total_cycles);
-        println!("   Trades:       {}", self.successful_trades);
-        println!("   Repositions:  {}", self.grid_repositions);
-        println!("   Open Orders:  {}", self.open_orders);
-        println!("   Total Value:  ${:.2}", self.total_value_usdc);
-        println!("   P&L:          ${:.2}", self.pnl_usdc);
-        println!("   ROI:          {:.2}%", self.roi_percent);
-        println!("   Win Rate:     {:.2}%", self.win_rate);
-        println!("   Fees:         ${:.2}", self.total_fees);
+        println!("   Cycles:            {}", self.total_cycles);
+        println!("   Trades:            {}", self.successful_trades);
+        println!("   Repositions:       {}", self.grid_repositions);
+        println!("   Open Orders:       {}", self.open_orders);
+        println!("   Total Value:       ${:.2}", self.total_value_usdc);
+        println!("   P&L:               ${:.2}", self.pnl_usdc);
+        println!("   ROI:               {:.2}%", self.roi_percent);
+        println!("   Win Rate:          {:.2}%", self.win_rate);
+        println!("   Fees:              ${:.2}", self.total_fees);
+        
+        // 📊 NEW: Enhanced metrics in summary
+        println!("\n🔍 Enhanced Analytics:");
+        println!("   Profitable Trades: {}", self.profitable_trades);
+        println!("   Losing Trades:     {}", self.unprofitable_trades);
+        println!("   Max Drawdown:      {:.2}%", self.max_drawdown);
+        println!("   Signal Exec Rate:  {:.2}%", self.signal_execution_ratio * 100.0);
+        println!("   Grid Efficiency:   {:.2}%", self.grid_efficiency * 100.0);
 
         if self.trading_paused {
-            println!("   Status:       🚫 PAUSED");
+            println!("   Status:            🚫 PAUSED");
         } else {
-            println!("   Status:       ✅ ACTIVE");
+            println!("   Status:            ✅ ACTIVE");
         }
     }
 }
