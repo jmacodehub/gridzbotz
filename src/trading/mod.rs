@@ -19,7 +19,7 @@
 //! ✅ Jupiter Swap integration for live trading (🆕)
 //! ✅ RealTradingEngine ENABLED with full security (🔥 Phase 5)
 //!
-//! February 8, 2026 - V4.1 with Jupiter Integration + Real Trading LIVE!
+//! February 9, 2026 - V4.2 with Enhanced Metrics Integration!
 //! ═══════════════════════════════════════════════════════════════════════════
 
 pub use crate::config::Config;
@@ -42,6 +42,7 @@ pub mod feed_consensus;      // Feed consensus logic
 pub mod redundant_feed;      // Redundant price feeds
 pub mod jupiter_swap;        // 🪐 Jupiter DEX aggregator (V4.1)
 pub mod real_trader;         // 🔥 ENABLED - Phase 5 Complete!
+pub mod enhanced_metrics;    // 📊 V4.2: Enhanced analytics tracking
 
 // WebSocket feeds (optional feature)
 #[cfg(feature = "websockets")]
@@ -75,6 +76,12 @@ pub use grid_level::{
     GridLevelStatus,
     GridStateTracker,
 };
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Enhanced Metrics Exports (V4.2) 📊
+// ═══════════════════════════════════════════════════════════════════════════
+
+pub use enhanced_metrics::EnhancedMetrics;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Jupiter Swap Exports (V4.1) 🪐
@@ -434,6 +441,9 @@ pub mod prelude {
         // Real Trading (🔥 V4.1)
         RealTradingConfig,
         RealPerformanceStats,
+        
+        // Enhanced Metrics (📊 V4.2)
+        EnhancedMetrics,
     };
 }
 
@@ -474,5 +484,6 @@ mod tests {
         
         // This will compile if all exports are correct
         let _: Option<RealTradingConfig> = None;
+        let _: Option<EnhancedMetrics> = None;  // 📊 V4.2 export test
     }
 }
