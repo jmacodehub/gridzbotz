@@ -1,11 +1,11 @@
-# ═══════════════════════════════════════════════════════════════════════════
-# ⚖️ BALANCED V3.5 - OPTIMAL RISK/REWARD CONFIGURATION
-# Based on master.toml - proven winner!
+# ═════════════════════════════════════════════════════════════════════════
+# ⚡ ULTRA AGGRESSIVE V3.5 - MAXIMUM PROFIT CONFIGURATION
+# Based on battle-tested settings - HIGH RISK / HIGH REWARD!
 # 
-# Strategy: Medium spacing, balanced approach, reliable performance
-# Best for: Most market conditions, general purpose trading
-# Risk Level: ⚖️ BALANCED
-# ═══════════════════════════════════════════════════════════════════════════
+# Strategy: Tight spacing, maximum grid levels, aggressive positioning
+# Best for: High volatility markets, experienced traders, maximum alpha
+# Risk Level: ⚡ ULTRA AGGRESSIVE
+# ═════════════════════════════════════════════════════════════════════════
 
 test_name = "Ultra Aggressive Production v3.5"
 
@@ -15,9 +15,13 @@ version = "3.5.0"
 environment = "development"
 
 [network]
-cluster = "devnet"
-rpc_url = "https://api.devnet.solana.com"
+cluster = "mainnet-beta"
+# 🔥 Chainstack Mainnet RPC - Ultra-Fast Execution
+rpc_url = "https://solana-mainnet.core.chainstack.com/f6f4116da85ff7fb43097f4dd03bc831"
+ws_url = "wss://solana-mainnet.core.chainstack.com/f6f4116da85ff7fb43097f4dd03bc831"
 commitment = "confirmed"
+# Fallback RPC (optional)
+fallback_rpc_url = "https://api.devnet.solana.com"
 
 [paper_trading]
 initial_usdc = 5000.0
@@ -25,40 +29,42 @@ initial_sol = 10.0
 test_duration_hours = 8
 
 [trading]
-# Balanced grid settings
-grid_levels = 100                    # ⚖️ Sweet spot
-grid_spacing_percent = 0.03         # ⚖️ 0.15% proven optimal
-min_order_size = 0.1
-max_position_size = 100.0
-min_usdc_reserve = 300.0
-min_sol_reserve = 2.0
+# ⚡ ULTRA AGGRESSIVE Grid settings
+grid_levels = 100                    # ⚡ MAXIMUM levels (50 buy + 50 sell)
+grid_spacing_percent = 0.03         # ⚡ TIGHT spacing: 0.03% for max fills
+min_order_size = 0.1                # Standard minimum
+max_position_size = 100.0           # High limit - will use most of it!
 
-# Rebalancing
+# Reserves - lower for aggressive capital deployment
+min_usdc_reserve = 300.0            # Keep some reserve
+min_sol_reserve = 2.0               # Keep some reserve
+
+# Rebalancing - aggressive settings
 enable_auto_rebalance = true
 enable_smart_rebalance = true
 rebalance_threshold_pct = 5.0
 rebalance_cooldown_secs = 60
 
-# Dynamic features
+# Dynamic features - AGGRESSIVE
 enable_dynamic_grid = true
-reposition_threshold = 0.5          # ⚖️ Balanced frequency
+reposition_threshold = 0.2          # ⚡ LOW = frequent repositioning
 volatility_window = 100
 
-# Regime gate
-enable_regime_gate = false          # ⚖️ OFF for balanced (trades freely)
+# Regime gate - OFF for maximum trading
+enable_regime_gate = false          # ⚡ OFF - trade in all conditions
 min_volatility_to_trade = 0.0
 pause_in_very_low_vol = false
 
-# Order lifecycle
+# Order lifecycle - aggressive refresh
 enable_order_lifecycle = true
-order_max_age_minutes = 10
-order_refresh_interval_minutes = 5
-min_orders_to_maintain = 8
+order_max_age_minutes = 5           # ⚡ Shorter age for fresh orders
+order_refresh_interval_minutes = 3  # ⚡ Frequent refresh
+min_orders_to_maintain = 20         # ⚡ Maintain high grid density
 
 # Other settings
 enable_fee_optimization = true
 enable_market_orders = false
-min_profit_threshold_pct = 0.1
+min_profit_threshold_pct = 0.05     # ⚡ Lower threshold for more fills
 max_slippage_pct = 1.0
 enable_price_bounds = false
 enable_adaptive_spacing = false
@@ -71,7 +77,7 @@ consensus_mode = "single"
 [strategies.grid]
 enabled = true
 weight = 1.0
-min_confidence = 0.5
+min_confidence = 0.3                # ⚡ Lower = more aggressive
 
 [strategies.momentum]
 enabled = false
@@ -96,31 +102,31 @@ oversold_threshold = 30.0
 overbought_threshold = 70.0
 
 [risk]
-max_position_size_pct = 30.0        # ⚖️ Balanced 30%
-max_drawdown_pct = 10.0
-stop_loss_pct = 5.0
-take_profit_pct = 10.0
-enable_circuit_breaker = true
-circuit_breaker_threshold_pct = 8.0
+max_position_size_pct = 50.0        # ⚡ AGGRESSIVE 50% position sizing
+max_drawdown_pct = 15.0             # ⚡ Higher tolerance for volatility
+stop_loss_pct = 8.0                 # ⚡ Wider stop for breathing room
+take_profit_pct = 12.0              # ⚡ Aim for bigger wins
+enable_circuit_breaker = true       # Safety net still enabled
+circuit_breaker_threshold_pct = 12.0 # ⚡ Higher threshold before halt
 circuit_breaker_cooldown_secs = 300
 
 [pyth]
 http_endpoint = "https://hermes.pyth.network"
 feed_ids = ["0xef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d"]
-update_interval_ms = 500
+update_interval_ms = 200            # ⚡ FAST updates for aggressive trading
 
 [performance]
-cycle_interval_ms = 100
-startup_delay_ms = 1000
+cycle_interval_ms = 50              # ⚡ 20Hz for ultra-fast response
+startup_delay_ms = 500              # ⚡ Quick startup
 
 [logging]
 level = "info"
-file_path = "logs/overnight_balanced.log"
+file_path = "logs/overnight_ultra_aggressive.log"
 enable_file_logging = true
 
 [metrics]
 enable_metrics = true
-stats_interval = 50
+stats_interval = 25                 # ⚡ More frequent stats
 
 [database]
 enabled = false
