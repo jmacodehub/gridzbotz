@@ -1,5 +1,5 @@
 //! ═══════════════════════════════════════════════════════════════════════════
-//! Trading Module V4.1 - Unified Trading Engine Architecture
+//! Trading Module V4.2 - Unified Trading Engine with Adaptive Intelligence
 //!
 //! Architecture:
 //! - Unified Trading Interface: Generic trait for paper and live trading
@@ -9,8 +9,10 @@
 //! - Jupiter Integration: Cross-DEX swaps via Jupiter aggregator (🪐)
 //! - Price Feeds: Multiple sources with redundancy and consensus
 //! - Transaction Executor: Solana transaction building and signing
+//! - Enhanced Metrics: Trade-level analytics and performance tracking
+//! - Adaptive Optimizer: Self-learning grid spacing and position sizing
 //!
-//! V4.1 ENHANCEMENTS:
+//! V4.2 ENHANCEMENTS:
 //! ✅ TradingEngine trait - unified interface for all trading modes
 //! ✅ Grid level ID tracking in orders
 //! ✅ Circuit breaker integration
@@ -18,8 +20,10 @@
 //! ✅ Batch order operations for efficiency
 //! ✅ Jupiter Swap integration for live trading (🆕)
 //! ✅ RealTradingEngine ENABLED with full security (🔥 Phase 5)
+//! ✅ Enhanced Metrics for deep analytics (📊 V4.1)
+//! ✅ Adaptive Optimizer for self-learning (🧠 V4.2)
 //!
-//! February 9, 2026 - V4.2 with Enhanced Metrics Integration!
+//! February 9, 2026 - V4.2 ADAPTIVE INTELLIGENCE INTEGRATED!
 //! ═══════════════════════════════════════════════════════════════════════════
 
 pub use crate::config::Config;
@@ -42,7 +46,8 @@ pub mod feed_consensus;      // Feed consensus logic
 pub mod redundant_feed;      // Redundant price feeds
 pub mod jupiter_swap;        // 🪐 Jupiter DEX aggregator (V4.1)
 pub mod real_trader;         // 🔥 ENABLED - Phase 5 Complete!
-pub mod enhanced_metrics;    // 📊 V4.2: Enhanced analytics tracking
+pub mod enhanced_metrics;    // 📊 V4.1: Enhanced analytics tracking
+pub mod adaptive_optimizer;  // 🧠 V4.2: Self-learning optimizer
 
 // WebSocket feeds (optional feature)
 #[cfg(feature = "websockets")]
@@ -78,10 +83,19 @@ pub use grid_level::{
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Enhanced Metrics Exports (V4.2) 📊
+// Enhanced Metrics Exports (V4.1) 📊
 // ═══════════════════════════════════════════════════════════════════════════
 
 pub use enhanced_metrics::EnhancedMetrics;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Adaptive Optimizer Exports (V4.2) 🧠
+// ═══════════════════════════════════════════════════════════════════════════
+
+pub use adaptive_optimizer::{
+    AdaptiveOptimizer,
+    OptimizationResult,
+};
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Jupiter Swap Exports (V4.1) 🪐
@@ -442,8 +456,12 @@ pub mod prelude {
         RealTradingConfig,
         RealPerformanceStats,
         
-        // Enhanced Metrics (📊 V4.2)
+        // Enhanced Metrics (📊 V4.1)
         EnhancedMetrics,
+        
+        // Adaptive Optimizer (🧠 V4.2)
+        AdaptiveOptimizer,
+        OptimizationResult,
     };
 }
 
@@ -479,11 +497,12 @@ mod tests {
 
     #[test]
     fn test_module_exports() {
-        // Verify that RealTradingEngine is now available
+        // Verify that all new exports are available
         use super::prelude::*;
         
         // This will compile if all exports are correct
         let _: Option<RealTradingConfig> = None;
-        let _: Option<EnhancedMetrics> = None;  // 📊 V4.2 export test
+        let _: Option<EnhancedMetrics> = None;  // 📊 V4.1 export test
+        let _: Option<AdaptiveOptimizer> = None; // 🧠 V4.2 export test
     }
 }
