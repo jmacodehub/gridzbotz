@@ -14,7 +14,7 @@ test_name = "Production Conservative v3.5"
 # ═══════════════════════════════════════════════════════════════════════════
 
 [bot]
-name = "ProdConservative-Bot-v3.5"
+name = "Conservative-Bot-v3.5"
 version = "3.5.0"
 environment = "development"          # 🔥 V3.5: Production-grade conservative
 

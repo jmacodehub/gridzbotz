@@ -1,8 +1,7 @@
 #!/bin/bash
-
 # ═══════════════════════════════════════════════════════════════════════════
-# 🎮 PROJECT FLASH V3.5 - INTERACTIVE LAUNCH CONSOLE
-# Production-grade bot launcher with beautiful TUI
+# 🏆 GRIDZBOTZ - ENHANCED MODULAR LAUNCH CONSOLE V2.1 FIXED
+# 10 Gladiator Battle Royale with Pre-Flight & Modular Durations
 # ═══════════════════════════════════════════════════════════════════════════
 
 # Colors
@@ -13,10 +12,40 @@ BLUE='\033[0;34m'
 PURPLE='\033[0;35m'
 CYAN='\033[0;36m'
 WHITE='\033[1;37m'
+BOLD='\033[1m'
 NC='\033[0m'
 
 # ═══════════════════════════════════════════════════════════════════════════
-# FUNCTIONS
+# CONFIGURATION
+# ═══════════════════════════════════════════════════════════════════════════
+
+# Gladiator configs (Tier 1 + Tier 2)
+declare -A GLADIATORS=(
+    ["1:maxlevels"]="config/production/ultra_aggressive.toml"
+    ["2:aggressive"]="config/overnight_aggressive.toml"
+    ["3:balanced"]="config/overnight_balanced.toml"
+    ["4:master"]="config/master.toml"
+    ["5:conservative"]="config/overnight_conservative.toml"
+    ["6:superagg"]="config/overnight_super_aggressive.toml"
+    ["7:multistrat"]="config/overnight_multi_strategy.toml"
+    ["8:ultraagg"]="config/overnight_ultra_aggressive.toml"
+    ["9:prodbal"]="config/production/balanced.toml"
+    ["10:prodcons"]="config/production/conservative.toml"
+)
+
+# Duration presets: "minutes:hours:label"
+declare -A DURATIONS=(
+    ["1"]="5:0:5min"       # 5 minutes
+    ["2"]="15:0:15min"     # 15 minutes
+    ["3"]="60:1:1h"        # 1 hour (use minutes to avoid decimal)
+    ["4"]="0:8:8h"         # 8 hours
+    ["5"]="0:12:12h"       # 12 hours
+    ["6"]="0:20:20h"       # 20 hours
+    ["7"]="custom:custom:custom"  # Custom duration
+)
+
+# ═══════════════════════════════════════════════════════════════════════════
+# DISPLAY FUNCTIONS
 # ═══════════════════════════════════════════════════════════════════════════
 
 show_banner() {
@@ -25,290 +54,742 @@ show_banner() {
     cat << "EOF"
 ╔════════════════════════════════════════════════════════════════════════╗
 ║                                                                        ║
-║   🚀 PROJECT FLASH V3.5 - INTERACTIVE LAUNCH CONSOLE                   ║
+║   🏆 GRIDZBOTZ - 10 GLADIATOR BATTLE ROYALE V2.1                      ║
 ║                                                                        ║
-║   Master Trading Bot Suite | Production Grade | 10Hz Performance      ║
+║   Enhanced Modular Console | Pre-Flight Check | Fixed Duration Logic ║
 ║                                                                        ║
 ╚════════════════════════════════════════════════════════════════════════╝
 EOF
     echo -e "${NC}"
 }
 
-show_menu() {
+show_main_menu() {
     echo ""
     echo -e "${WHITE}═══════════════════════════════════════════════════════════════════════${NC}"
-    echo -e "${WHITE}  MAIN MENU${NC}"
+    echo -e "${WHITE}              🎯 MAIN MENU${NC}"
     echo -e "${WHITE}═══════════════════════════════════════════════════════════════════════${NC}"
     echo ""
-    echo -e "  ${CYAN}1)${NC} 🚀 Quick Launch - Run All Configs (8 hours)"
-    echo -e "  ${CYAN}2)${NC} 🎯 Select Single Config"
-    echo -e "  ${CYAN}3)${NC} 🎨 Custom Multi-Bot Launch"
-    echo -e "  ${CYAN}4)${NC} ⚡ Quick Test (5 minutes)"
-    echo -e "  ${CYAN}5)${NC} 📊 View Running Bots"
-    echo -e "  ${CYAN}6)${NC} 🛑 Stop All Bots"
-    echo -e "  ${CYAN}7)${NC} 📈 Analyze Results"
-    echo -e "  ${CYAN}8)${NC} ❌ Exit"
+    echo -e "${CYAN}1${NC}  🚀 Launch ALL 10 Gladiators (with duration selection)"
+    echo -e "${CYAN}2${NC}  🎮 Launch Single Config (with duration selection)"
+    echo -e "${CYAN}3${NC}  ⚡ Quick Pre-Test Run (5 min validation)"
+    echo -e "${CYAN}4${NC}  ✅ Pre-Flight Check (verify everything ready)"
+    echo -e "${CYAN}5${NC}  📊 View Running Bots"
+    echo -e "${CYAN}6${NC}  ⏹️  Stop All Bots"
+    echo -e "${CYAN}7${NC}  📈 Quick Status"
+    echo -e "${CYAN}8${NC}  🧹 Cleanup Old Runs"
+    echo -e "${CYAN}9${NC}  ❌ Exit"
     echo ""
-    echo -n -e "${YELLOW}Select option:${NC} "
+    echo -n -e "${YELLOW}Select option (1-9): ${NC}"
 }
 
-list_configs() {
+show_gladiators() {
     echo ""
-    echo -e "${WHITE}Available Configurations:${NC}"
+    echo -e "${PURPLE}═══ TIER 1: PROVEN CHAMPIONS ═══${NC}"
+    echo -e "${CYAN} 1${NC}  MaxLevels      👑  ${GREEN}(ultra_aggressive)${NC}"
+    echo -e "${CYAN} 2${NC}  Aggressive     🔥  ${GREEN}(overnight_aggressive)${NC}"
+    echo -e "${CYAN} 3${NC}  Balanced       ⚖️   ${GREEN}(overnight_balanced)${NC}"
+    echo -e "${CYAN} 4${NC}  Master         🎮  ${GREEN}(master)${NC}"
+    echo -e "${CYAN} 5${NC}  Conservative   🛡️   ${GREEN}(overnight_conservative)${NC}"
     echo ""
-    
-    local i=1
-    for config in config/overnight_*.toml; do
+    echo -e "${PURPLE}═══ TIER 2: EXPERIMENTAL CHALLENGERS ═══${NC}"
+    echo -e "${CYAN} 6${NC}  SuperAgg       ⚡  ${YELLOW}(overnight_super_aggressive)${NC}"
+    echo -e "${CYAN} 7${NC}  MultiStrat     🧠  ${YELLOW}(overnight_multi_strategy)${NC}"
+    echo -e "${CYAN} 8${NC}  UltraAgg       💥  ${YELLOW}(overnight_ultra_aggressive)${NC}"
+    echo -e "${CYAN} 9${NC}  ProdBal        🏭  ${YELLOW}(production/balanced)${NC}"
+    echo -e "${CYAN}10${NC}  ProdCons       🏰  ${YELLOW}(production/conservative)${NC}"
+    echo ""
+}
+
+show_duration_menu() {
+    echo ""
+    echo -e "${WHITE}⏰ SELECT DURATION:${NC}"
+    echo ""
+    echo -e "${CYAN}1${NC}  5 minutes   ${YELLOW}(quick validation)${NC}"
+    echo -e "${CYAN}2${NC}  15 minutes  ${YELLOW}(short test)${NC}"
+    echo -e "${CYAN}3${NC}  1 hour      ${YELLOW}(standard test)${NC}"
+    echo -e "${CYAN}4${NC}  8 hours     ${GREEN}(overnight)${NC}"
+    echo -e "${CYAN}5${NC}  12 hours    ${GREEN}(extended)${NC}"
+    echo -e "${CYAN}6${NC}  20 hours    ${GREEN}(battle royale)${NC}"
+    echo -e "${CYAN}7${NC}  Custom      ${PURPLE}(enter hours/minutes)${NC}"
+    echo ""
+    echo -n -e "${YELLOW}Select duration (1-7): ${NC}"
+}
+
+# ═══════════════════════════════════════════════════════════════════════════
+# UTILITY FUNCTIONS
+# ═══════════════════════════════════════════════════════════════════════════
+
+check_binary() {
+    if [ -f "./target/release/solana-grid-bot" ]; then
+        return 0
+    elif [ -f "./target/debug/solana-grid-bot" ]; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+get_binary_path() {
+    if [ -f "./target/release/solana-grid-bot" ]; then
+        echo "./target/release/solana-grid-bot"
+    elif [ -f "./target/debug/solana-grid-bot" ]; then
+        echo "./target/debug/solana-grid-bot"
+    else
+        echo ""
+    fi
+}
+
+build_binary() {
+    echo -e "${BLUE}📦 Building release binary...${NC}"
+    if cargo build --release 2>&1 | grep -q "error"; then
+        echo -e "${RED}❌ Build failed!${NC}"
+        return 1
+    fi
+    echo -e "${GREEN}✅ Build complete!${NC}"
+    return 0
+}
+
+# NEW: Get duration as "minutes:hours:label"
+get_duration_spec() {
+    local choice=$1
+
+    case $choice in
+        1) echo "5:0:5min" ;;        # 5 minutes
+        2) echo "15:0:15min" ;;      # 15 minutes
+        3) echo "60:1:1h" ;;         # 1 hour (60 mins or 1 hour)
+        4) echo "0:8:8h" ;;          # 8 hours
+        5) echo "0:12:12h" ;;        # 12 hours
+        6) echo "0:20:20h" ;;        # 20 hours
+        7)
+            echo ""
+            read -p "Enter duration as (M)inutes or (H)ours? [M/H]: " unit
+            if [[ "$unit" =~ ^[Hh]$ ]]; then
+                read -p "Enter hours (integer): " hours
+                echo "0:${hours}:${hours}h"
+            else
+                read -p "Enter minutes (integer): " mins
+                local hours_equiv=$(echo "scale=1; $mins / 60" | bc)
+                echo "${mins}:0:${mins}min"
+            fi
+            ;;
+        *) echo "60:1:1h" ;;
+    esac
+}
+
+# ═══════════════════════════════════════════════════════════════════════════
+# PRE-FLIGHT CHECK
+# ═══════════════════════════════════════════════════════════════════════════
+
+run_preflight_check() {
+    show_banner
+    echo ""
+    echo -e "${WHITE}═══════════════════════════════════════════════════════════════════════${NC}"
+    echo -e "${WHITE}              ✅ PRE-FLIGHT CHECK${NC}"
+    echo -e "${WHITE}═══════════════════════════════════════════════════════════════════════${NC}"
+    echo ""
+
+    local checks_passed=0
+    local checks_failed=0
+
+    # Check binary
+    echo -e "${CYAN}Checking binary...${NC}"
+    if check_binary; then
+        echo -e "${GREEN}✅ Binary found: $(get_binary_path)${NC}"
+        ((checks_passed++))
+    else
+        echo -e "${RED}❌ Binary not found - building...${NC}"
+        if build_binary; then
+            ((checks_passed++))
+        else
+            ((checks_failed++))
+        fi
+    fi
+
+    # Check configs
+    echo ""
+    echo -e "${CYAN}Checking configs...${NC}"
+    local found_configs=0
+    local missing_configs=()
+
+    for key in "${!GLADIATORS[@]}"; do
+        local config="${GLADIATORS[$key]}"
         if [ -f "$config" ]; then
-            local name=$(basename "$config" .toml | sed 's/overnight_//')
-            echo -e "  ${CYAN}$i)${NC} $name"
-            ((i++))
+            ((found_configs++))
+        else
+            local name=$(echo "$key" | cut -d: -f2)
+            missing_configs+=("$name")
         fi
     done
-    
-    echo -e "  ${CYAN}0)${NC} Back to main menu"
+
+    if [ ${#missing_configs[@]} -eq 0 ]; then
+        echo -e "${GREEN}✅ All 10 configs found${NC}"
+        ((checks_passed++))
+    else
+        echo -e "${YELLOW}⚠️  Found $found_configs/10 configs${NC}"
+        echo -e "${YELLOW}   Missing: ${missing_configs[*]}${NC}"
+        ((checks_passed++))
+    fi
+
+    # Check directories
     echo ""
+    echo -e "${CYAN}Checking directories...${NC}"
+    for dir in logs config results; do
+        if [ -d "$dir" ]; then
+            echo -e "${GREEN}✅ $dir/ exists${NC}"
+            ((checks_passed++))
+        else
+            echo -e "${YELLOW}⚠️  $dir/ missing - creating...${NC}"
+            mkdir -p "$dir"
+            ((checks_passed++))
+        fi
+    done
+
+    # Check disk space
+    echo ""
+    echo -e "${CYAN}Checking disk space...${NC}"
+    local free_space=$(df -h . | tail -1 | awk '{print $4}')
+    echo -e "${GREEN}✅ Free space: $free_space${NC}"
+    ((checks_passed++))
+
+    # Quick compile check
+    echo ""
+    echo -e "${CYAN}Testing compile...${NC}"
+    if cargo check --quiet 2>/dev/null; then
+        echo -e "${GREEN}✅ Code compiles${NC}"
+        ((checks_passed++))
+    else
+        echo -e "${RED}❌ Compilation issues detected${NC}"
+        ((checks_failed++))
+    fi
+
+    # Summary
+    echo ""
+    echo -e "${WHITE}═══════════════════════════════════════════════════════════════════════${NC}"
+    if [ $checks_failed -eq 0 ]; then
+        echo -e "${GREEN}🎉 ALL CHECKS PASSED! ($checks_passed checks)${NC}"
+        echo ""
+        echo -e "${CYAN}You're ready to launch!${NC}"
+    else
+        echo -e "${YELLOW}⚠️  $checks_failed issues found${NC}"
+        echo -e "${CYAN}Passed: $checks_passed | Failed: $checks_failed${NC}"
+    fi
+    echo -e "${WHITE}═══════════════════════════════════════════════════════════════════════${NC}"
+    echo ""
+
+    read -p "Press Enter to continue..."
+    return $checks_failed
 }
 
-get_config_details() {
-    local config=$1
-    local spacing=$(grep "grid_spacing_percent" "$config" | awk '{print $3}')
-    local levels=$(grep "^grid_levels" "$config" | awk '{print $3}')
-    local regime=$(grep "enable_regime_gate" "$config" | awk '{print $3}')
-    
-    echo "Spacing: ${spacing} | Levels: ${levels} | Regime Gate: ${regime}"
-}
+# ═══════════════════════════════════════════════════════════════════════════
+# LAUNCH FUNCTIONS (FIXED!)
+# ═══════════════════════════════════════════════════════════════════════════
 
 launch_single_bot() {
     local config=$1
-    local duration=$2
-    local name=$(basename "$config" .toml | sed 's/overnight_//')
-    
-    echo ""
-    echo -e "${BLUE}Launching ${name}...${NC}"
-    
-    # Build if needed
-    cargo build --release --quiet 2>/dev/null
-    
-    # Create results dir
-    TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-    RESULTS_DIR="results/test_${TIMESTAMP}"
-    mkdir -p "$RESULTS_DIR"
-    
-    # Launch
-    nohup ./target/release/solana-grid-bot \
-        --config "$config" \
-        --duration-minutes "$duration" \
-        > "$RESULTS_DIR/${name}.txt" 2>&1 &
-    
-    PID=$!
-    echo "$PID" > "$RESULTS_DIR/${name}.pid"
-    
-    echo -e "${GREEN}✅ Bot launched!${NC}"
-    echo -e "   PID: $PID"
-    echo -e "   Duration: ${duration} minutes"
-    echo -e "   Output: $RESULTS_DIR/${name}.txt"
-    echo ""
-    echo -e "${YELLOW}Monitor with:${NC} tail -f $RESULTS_DIR/${name}.txt"
-    echo ""
+    local name=$2
+    local duration_spec=$3  # "minutes:hours:label"
+    local battle_dir=$4
+
+    echo -e "${CYAN}[$name]${NC} Launching..."
+
+    local binary=$(get_binary_path)
+    if [ -z "$binary" ]; then
+        echo -e "${RED}   ✗ Binary not found!${NC}"
+        return 1
+    fi
+
+    if [ ! -f "$config" ]; then
+        echo -e "${RED}   ✗ Config not found: $config${NC}"
+        return 1
+    fi
+
+    # Parse duration spec
+    IFS=':' read -r minutes hours label <<< "$duration_spec"
+
+    # Launch with appropriate flag
+    if [ "$minutes" != "0" ] && [ "$hours" == "0" ]; then
+        # Use --duration-minutes for sub-hour durations
+        RUST_LOG=info nohup "$binary" \
+            --config "$config" \
+            --duration-minutes "$minutes" \
+            > "$battle_dir/${name}.log" 2>&1 &
+    else
+        # Use --duration-hours for hour-based durations
+        RUST_LOG=info nohup "$binary" \
+            --config "$config" \
+            --duration-hours "$hours" \
+            > "$battle_dir/${name}.log" 2>&1 &
+    fi
+
+    local pid=$!
+    echo "$pid" > "$battle_dir/${name}.pid"
+
+    echo -e "${GREEN}   ✓${NC} PID: $pid | Duration: $label | Log: ${name}.log"
+
+    sleep 1
+    return 0
 }
 
-quick_launch_all() {
+launch_all_gladiators() {
     show_banner
     echo ""
     echo -e "${WHITE}═══════════════════════════════════════════════════════════════════════${NC}"
-    echo -e "${WHITE}  🚀 QUICK LAUNCH - ALL CONFIGS${NC}"
+    echo -e "${WHITE}       🚀 LAUNCHING ALL 10 GLADIATORS${NC}"
     echo -e "${WHITE}═══════════════════════════════════════════════════════════════════════${NC}"
     echo ""
-    
-    # Build
-    echo -e "${BLUE}Building release binary...${NC}"
-    cargo build --release
-    
-    if [ $? -ne 0 ]; then
-        echo -e "${RED}❌ Build failed!${NC}"
-        read -p "Press Enter to continue..."
+
+    # Select duration
+    show_duration_menu
+    read dur_choice
+
+    local duration_spec=$(get_duration_spec "$dur_choice")
+    IFS=':' read -r minutes hours label <<< "$duration_spec"
+
+    echo ""
+    echo -e "${CYAN}Selected duration: ${BOLD}$label${NC}"
+    echo ""
+    read -p "Confirm launch all 10 bots for $label? (y/n): " confirm
+
+    if [ "$confirm" != "y" ]; then
+        echo -e "${YELLOW}Launch cancelled${NC}"
+        sleep 1
         return
     fi
-    
-    echo -e "${GREEN}✅ Build complete${NC}"
-    echo ""
-    
-    # Create results dir
-    TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-    RESULTS_DIR="results/overnight_${TIMESTAMP}"
-    mkdir -p "$RESULTS_DIR" logs
-    
-    # Launch each config
-    declare -a PIDS
-    declare -a NAMES
-    
-    for config in config/overnight_*.toml; do
-        if [ -f "$config" ]; then
-            name=$(basename "$config" .toml | sed 's/overnight_//')
-            NAMES+=("$name")
-            
-            echo -e "${CYAN}Launching ${name}...${NC}"
-            
-            nohup ./target/release/solana-grid-bot \
-                --config "$config" \
-                > "$RESULTS_DIR/${name}.txt" 2>&1 &
-            
-            PID=$!
-            PIDS+=("$PID")
-            echo "$PID" > "$RESULTS_DIR/${name}.pid"
-            echo -e "   ✅ PID: $PID"
-            
-            sleep 2
+
+    # Ensure binary exists
+    if ! check_binary; then
+        if ! build_binary; then
+            read -p "Press Enter to continue..."
+            return
         fi
+    fi
+
+    # Create battle directory
+    local timestamp=$(date +%Y%m%d_%H%M)
+    local battle_dir="logs/battle_${timestamp}"
+    mkdir -p "$battle_dir"
+
+    echo ""
+    echo -e "${CYAN}📂 Battle directory: $battle_dir${NC}"
+    echo ""
+    echo -e "${WHITE}═══════════════════════════════════════════════════════════════════════${NC}"
+    echo ""
+
+    local count=0
+    local launched=0
+
+    # Launch each gladiator
+    for key in $(echo "${!GLADIATORS[@]}" | tr ' ' '\n' | sort -n); do
+        local config="${GLADIATORS[$key]}"
+        local name=$(echo "$key" | cut -d: -f2)
+        ((count++))
+
+        echo -e "${PURPLE}[$count/10]${NC}"
+        if launch_single_bot "$config" "$name" "$duration_spec" "$battle_dir"; then
+            ((launched++))
+        fi
+        echo ""
     done
-    
-    echo ""
+
+    # Summary
     echo -e "${WHITE}═══════════════════════════════════════════════════════════════════════${NC}"
-    echo -e "${GREEN}✅ All bots launched!${NC}"
+    echo -e "${GREEN}✅ LAUNCH COMPLETE: $launched/10 bots started${NC}"
     echo -e "${WHITE}═══════════════════════════════════════════════════════════════════════${NC}"
     echo ""
-    echo -e "${YELLOW}Results directory:${NC} $RESULTS_DIR"
+    echo -e "${YELLOW}📊 Battle Details:${NC}"
+    echo -e "   Directory:  $battle_dir"
+    echo -e "   Duration:   $label"
+    echo -e "   Started:    $(date '+%Y-%m-%d %H:%M:%S')"
     echo ""
-    echo -e "${YELLOW}Monitor:${NC} ./scripts/monitor_suite.sh"
-    echo -e "${YELLOW}Stop all:${NC} kill \$(cat $RESULTS_DIR/*.pid)"
+    echo -e "${CYAN}Monitor Commands:${NC}"
+    echo "  Status:      ./scripts/launch_console.sh (Option 5)"
+    echo "  Tail logs:   tail -f $battle_dir/*.log"
+    echo "  Stop all:    ./scripts/launch_console.sh (Option 6)"
     echo ""
-    
+
     read -p "Press Enter to continue..."
 }
 
-select_single_config() {
-    while true; do
-        show_banner
-        list_configs
-        
-        read -p "Select config (0 to go back): " choice
-        
-        if [ "$choice" == "0" ]; then
-            return
-        fi
-        
-        # Get selected config
-        config=$(ls config/overnight_*.toml 2>/dev/null | sed -n "${choice}p")
-        
-        if [ -z "$config" ]; then
-            echo -e "${RED}Invalid choice!${NC}"
-            sleep 2
-            continue
-        fi
-        
-        # Get duration
-        echo ""
-        echo -e "${WHITE}Duration options:${NC}"
-        echo "  1) 5 minutes (quick test)"
-        echo "  2) 15 minutes"
-        echo "  3) 30 minutes"
-        echo "  4) 1 hour"
-        echo "  5) 2 hours"
-        echo "  6) 4 hours"
-        echo "  7) 8 hours (overnight)"
-        echo "  8) Custom"
-        echo ""
-        read -p "Select duration: " dur_choice
-        
-        case $dur_choice in
-            1) duration=5 ;;
-            2) duration=15 ;;
-            3) duration=30 ;;
-            4) duration=60 ;;
-            5) duration=120 ;;
-            6) duration=240 ;;
-            7) duration=480 ;;
-            8) 
-                read -p "Enter duration in minutes: " duration
-                ;;
-            *)
-                echo -e "${RED}Invalid choice!${NC}"
-                sleep 2
-                continue
-                ;;
-        esac
-        
-        launch_single_bot "$config" "$duration"
-        read -p "Press Enter to continue..."
-        return
-    done
-}
-
-quick_test() {
+launch_single_config() {
     show_banner
-    echo ""
-    echo -e "${WHITE}═══════════════════════════════════════════════════════════════════════${NC}"
-    echo -e "${WHITE}  ⚡ QUICK TEST MODE (5 minutes)${NC}"
-    echo -e "${WHITE}═══════════════════════════════════════════════════════════════════════${NC}"
-    echo ""
-    
-    list_configs
-    read -p "Select config for quick test: " choice
-    
-    config=$(ls config/overnight_*.toml 2>/dev/null | sed -n "${choice}p")
-    
-    if [ -z "$config" ]; then
-        echo -e "${RED}Invalid choice!${NC}"
+    show_gladiators
+
+    echo -n -e "${YELLOW}Select config (1-10, 0 to cancel): ${NC}"
+    read config_choice
+
+    if [ "$config_choice" == "0" ]; then
+        return
+    fi
+
+    # Find config
+    local found_key=""
+    for key in "${!GLADIATORS[@]}"; do
+        local num=$(echo "$key" | cut -d: -f1)
+        if [ "$num" == "$config_choice" ]; then
+            found_key="$key"
+            break
+        fi
+    done
+
+    if [ -z "$found_key" ]; then
+        echo -e "${RED}Invalid selection!${NC}"
         sleep 2
         return
     fi
-    
-    launch_single_bot "$config" 5
+
+    local config="${GLADIATORS[$found_key]}"
+    local name=$(echo "$found_key" | cut -d: -f2)
+
+    # Select duration
+    show_duration_menu
+    read dur_choice
+
+    local duration_spec=$(get_duration_spec "$dur_choice")
+    IFS=':' read -r minutes hours label <<< "$duration_spec"
+
+    echo ""
+    echo -e "${CYAN}Launching: ${BOLD}$name${NC} for ${BOLD}$label${NC}"
+    echo ""
+
+    # Ensure binary
+    if ! check_binary; then
+        if ! build_binary; then
+            read -p "Press Enter to continue..."
+            return
+        fi
+    fi
+
+    # Create battle directory
+    local timestamp=$(date +%Y%m%d_%H%M)
+    local battle_dir="logs/single_${name}_${timestamp}"
+    mkdir -p "$battle_dir"
+
+    # Launch
+    if launch_single_bot "$config" "$name" "$duration_spec" "$battle_dir"; then
+        echo ""
+        echo -e "${GREEN}✅ Bot launched successfully!${NC}"
+        echo ""
+        echo -e "${CYAN}Monitor: tail -f $battle_dir/${name}.log${NC}"
+    else
+        echo -e "${RED}❌ Launch failed!${NC}"
+    fi
+
+    echo ""
     read -p "Press Enter to continue..."
 }
 
-view_running() {
+quick_pretest() {
     show_banner
-    
-    if command -v watch &> /dev/null; then
-        watch -n 2 ./scripts/monitor_suite.sh
-    else
-        while true; do
-            ./scripts/monitor_suite.sh
-            echo ""
-            echo "Press Ctrl+C to exit..."
-            sleep 5
-        done
+    echo ""
+    echo -e "${WHITE}═══════════════════════════════════════════════════════════════════════${NC}"
+    echo -e "${WHITE}       ⚡ QUICK PRE-TEST (5 MINUTE VALIDATION)${NC}"
+    echo -e "${WHITE}═══════════════════════════════════════════════════════════════════════${NC}"
+    echo ""
+    echo -e "${CYAN}This will launch 3 configs for 5 minutes to verify everything works.${NC}"
+    echo ""
+    echo -e "${YELLOW}Testing: Balanced, Aggressive, Conservative${NC}"
+    echo ""
+    read -p "Start pre-test? (y/n): " confirm
+
+    if [ "$confirm" != "y" ]; then
+        return
     fi
+
+    # Ensure binary
+    if ! check_binary; then
+        if ! build_binary; then
+            read -p "Press Enter to continue..."
+            return
+        fi
+    fi
+
+    # Create test directory
+    local timestamp=$(date +%Y%m%d_%H%M)
+    local test_dir="logs/pretest_${timestamp}"
+    mkdir -p "$test_dir"
+
+    echo ""
+    echo -e "${CYAN}📂 Test directory: $test_dir${NC}"
+    echo ""
+
+    # Launch 3 test bots - FIXED with proper duration spec
+    local duration_spec="5:0:5min"
+
+    launch_single_bot "${GLADIATORS["3:balanced"]}" "balanced" "$duration_spec" "$test_dir"
+    echo ""
+    launch_single_bot "${GLADIATORS["2:aggressive"]}" "aggressive" "$duration_spec" "$test_dir"
+    echo ""
+    launch_single_bot "${GLADIATORS["5:conservative"]}" "conservative" "$duration_spec" "$test_dir"
+    echo ""
+
+    echo -e "${WHITE}═══════════════════════════════════════════════════════════════════════${NC}"
+    echo -e "${GREEN}✅ Pre-test launched! Running for 5 minutes...${NC}"
+    echo -e "${WHITE}═══════════════════════════════════════════════════════════════════════${NC}"
+    echo ""
+    echo -e "${CYAN}Monitor: tail -f $test_dir/*.log${NC}"
+    echo ""
+
+    read -p "Press Enter to continue..."
 }
 
-stop_all() {
+# ═══════════════════════════════════════════════════════════════════════════
+# MONITOR & CONTROL FUNCTIONS
+# ═══════════════════════════════════════════════════════════════════════════
+
+view_running_bots() {
     show_banner
     echo ""
     echo -e "${WHITE}═══════════════════════════════════════════════════════════════════════${NC}"
-    echo -e "${WHITE}  🛑 STOP ALL BOTS${NC}"
+    echo -e "${WHITE}              📊 RUNNING BOTS STATUS${NC}"
     echo -e "${WHITE}═══════════════════════════════════════════════════════════════════════${NC}"
     echo ""
-    
-    RESULTS_DIR=$(ls -td results/*/2>/dev/null | head -1)
-    
-    if [ -z "$RESULTS_DIR" ]; then
-        echo -e "${YELLOW}No running bots found${NC}"
+
+    local battle_dir=$(ls -td logs/battle_* logs/single_* logs/pretest_* 2>/dev/null | head -1)
+
+    if [ -z "$battle_dir" ]; then
+        echo -e "${YELLOW}No active battles found.${NC}"
+        echo ""
         read -p "Press Enter to continue..."
         return
     fi
-    
-    echo -e "${YELLOW}Found running suite in:${NC} $RESULTS_DIR"
+
+    echo -e "${CYAN}Battle directory:${NC} $battle_dir"
     echo ""
-    read -p "Stop all bots? (y/n): " confirm
-    
-    if [ "$confirm" == "y" ]; then
-        for pid_file in $RESULTS_DIR/*.pid; do
-            if [ -f "$pid_file" ]; then
-                PID=$(cat "$pid_file")
-                if ps -p $PID > /dev/null 2>&1; then
-                    echo -e "${BLUE}Stopping PID $PID...${NC}"
-                    kill $PID
+
+    local running=0
+    local total=0
+    local completed=0
+
+    for pidfile in "$battle_dir"/*.pid; do
+        if [ -f "$pidfile" ]; then
+            local pid=$(cat "$pidfile")
+            local name=$(basename "$pidfile" .pid)
+            local logfile="$battle_dir/${name}.log"
+            ((total++))
+
+            if ps -p $pid > /dev/null 2>&1; then
+                local last_line=$(tail -1 "$logfile" 2>/dev/null | cut -c1-70)
+                local cycles=$(grep -c "Cycle" "$logfile" 2>/dev/null || echo "0")
+
+                echo -e "${GREEN}✓${NC} ${BOLD}$name${NC} (PID: $pid)"
+                echo -e "   Cycles: $cycles"
+                echo -e "   Last: $last_line"
+                ((running++))
+            else
+                if grep -q "SESSION COMPLETE" "$logfile" 2>/dev/null; then
+                    echo -e "${BLUE}✓${NC} ${BOLD}$name${NC} - ${GREEN}COMPLETED${NC}"
+                    ((completed++))
+                else
+                    echo -e "${RED}✗${NC} ${BOLD}$name${NC} - ${RED}STOPPED${NC}"
+                fi
+            fi
+            echo ""
+        fi
+    done
+
+    echo -e "${WHITE}═══════════════════════════════════════════════════════════════════════${NC}"
+    echo -e "${CYAN}Summary:${NC}"
+    echo -e "  Total bots:     $total"
+    echo -e "  Running:        ${GREEN}$running${NC}"
+    echo -e "  Completed:      ${BLUE}$completed${NC}"
+    echo -e "  Stopped/Failed: ${RED}$((total - running - completed))${NC}"
+    echo -e "${WHITE}═══════════════════════════════════════════════════════════════════════${NC}"
+    echo ""
+
+    read -p "Press Enter to continue..."
+}
+
+stop_all_bots() {
+    show_banner
+    echo ""
+    echo -e "${WHITE}═══════════════════════════════════════════════════════════════════════${NC}"
+    echo -e "${WHITE}              ⏹️  STOP ALL BOTS${NC}"
+    echo -e "${WHITE}═══════════════════════════════════════════════════════════════════════${NC}"
+    echo ""
+
+    local battle_dir=$(ls -td logs/battle_* logs/single_* logs/pretest_* 2>/dev/null | head -1)
+
+    if [ -z "$battle_dir" ]; then
+        echo -e "${YELLOW}No active battles found.${NC}"
+        read -p "Press Enter to continue..."
+        return
+    fi
+
+    echo -e "${YELLOW}Found battle: $battle_dir${NC}"
+    echo ""
+
+    local running=0
+    for pidfile in "$battle_dir"/*.pid; do
+        if [ -f "$pidfile" ]; then
+            local pid=$(cat "$pidfile")
+            if ps -p $pid > /dev/null 2>&1; then
+                ((running++))
+            fi
+        fi
+    done
+
+    if [ $running -eq 0 ]; then
+        echo -e "${YELLOW}No bots currently running.${NC}"
+        echo ""
+        read -p "Press Enter to continue..."
+        return
+    fi
+
+    echo -e "${YELLOW}Found $running running bot(s)${NC}"
+    echo ""
+    read -p "Stop all running bots? (y/n): " confirm
+
+    if [ "$confirm" != "y" ]; then
+        echo -e "${YELLOW}Cancelled${NC}"
+        sleep 1
+        return
+    fi
+
+    echo ""
+    for pidfile in "$battle_dir"/*.pid; do
+        if [ -f "$pidfile" ]; then
+            local pid=$(cat "$pidfile")
+            local name=$(basename "$pidfile" .pid)
+
+            if ps -p $pid > /dev/null 2>&1; then
+                echo -e "${BLUE}Stopping $name (PID: $pid)...${NC}"
+                kill $pid
+                sleep 0.5
+            fi
+        fi
+    done
+
+    echo ""
+    echo -e "${GREEN}✅ All bots stopped!${NC}"
+    echo ""
+
+    read -p "Press Enter to continue..."
+}
+
+quick_status() {
+    show_banner
+    echo ""
+    echo -e "${WHITE}═══════════════════════════════════════════════════════════════════════${NC}"
+    echo -e "${WHITE}              ⚡ QUICK STATUS${NC}"
+    echo -e "${WHITE}═══════════════════════════════════════════════════════════════════════${NC}"
+    echo ""
+
+    local battle_dir=$(ls -td logs/battle_* logs/single_* logs/pretest_* 2>/dev/null | head -1)
+
+    if [ -z "$battle_dir" ]; then
+        echo -e "${YELLOW}No battles found${NC}"
+    else
+        echo -e "${CYAN}Latest battle:${NC} $battle_dir"
+
+        local running=0
+        local total=0
+
+        for pidfile in "$battle_dir"/*.pid; do
+            if [ -f "$pidfile" ]; then
+                ((total++))
+                local pid=$(cat "$pidfile")
+                if ps -p $pid > /dev/null 2>&1; then
+                    ((running++))
                 fi
             fi
         done
-        
-        echo ""
-        echo -e "${GREEN}✅ All bots stopped${NC}"
+
+        echo -e "${CYAN}Bots:${NC} $running/$total running"
+
+        if [ $running -gt 0 ]; then
+            echo -e "${CYAN}Status:${NC} ${GREEN}ACTIVE${NC}"
+        elif [ $total -gt 0 ]; then
+            echo -e "${CYAN}Status:${NC} ${BLUE}COMPLETED${NC}"
+        else
+            echo -e "${CYAN}Status:${NC} ${YELLOW}IDLE${NC}"
+        fi
     fi
-    
+
     echo ""
+    read -p "Press Enter to continue..."
+}
+
+cleanup_old_runs() {
+    show_banner
+    echo ""
+    echo -e "${WHITE}═══════════════════════════════════════════════════════════════════════${NC}"
+    echo -e "${WHITE}              🧹 CLEANUP OLD RUNS${NC}"
+    echo -e "${WHITE}═══════════════════════════════════════════════════════════════════════${NC}"
+    echo ""
+
+    echo -e "${CYAN}Scanning for old battles...${NC}"
+    echo ""
+
+    local count=0
+
+    for dir in logs/battle_* logs/single_* logs/pretest_*; do
+        if [ -d "$dir" ]; then
+            local has_running=0
+
+            for pidfile in "$dir"/*.pid; do
+                if [ -f "$pidfile" ]; then
+                    local pid=$(cat "$pidfile")
+                    if ps -p $pid > /dev/null 2>&1; then
+                        has_running=1
+                        break
+                    fi
+                fi
+            done
+
+            if [ $has_running -eq 0 ]; then
+                local dir_size=$(du -sh "$dir" 2>/dev/null | cut -f1)
+                echo -e "${YELLOW}$dir${NC} ($dir_size)"
+                ((count++))
+            fi
+        fi
+    done
+
+    if [ $count -eq 0 ]; then
+        echo -e "${GREEN}No old runs to clean up!${NC}"
+        echo ""
+        read -p "Press Enter to continue..."
+        return
+    fi
+
+    echo ""
+    echo -e "${YELLOW}Found $count old run(s)${NC}"
+    echo ""
+    read -p "Archive these to logs/archive/? (y/n): " confirm
+
+    if [ "$confirm" != "y" ]; then
+        echo -e "${YELLOW}Cancelled${NC}"
+        sleep 1
+        return
+    fi
+
+    mkdir -p logs/archive
+
+    echo ""
+    for dir in logs/battle_* logs/single_* logs/pretest_*; do
+        if [ -d "$dir" ]; then
+            local has_running=0
+
+            for pidfile in "$dir"/*.pid; do
+                if [ -f "$pidfile" ]; then
+                    local pid=$(cat "$pidfile")
+                    if ps -p $pid > /dev/null 2>&1; then
+                        has_running=1
+                        break
+                    fi
+                fi
+            done
+
+            if [ $has_running -eq 0 ]; then
+                echo -e "${BLUE}Archiving $(basename "$dir")...${NC}"
+                mv "$dir" logs/archive/
+            fi
+        fi
+    done
+
+    echo ""
+    echo -e "${GREEN}✅ Cleanup complete!${NC}"
+    echo ""
+
     read -p "Press Enter to continue..."
 }
 
@@ -318,24 +799,25 @@ stop_all() {
 
 while true; do
     show_banner
-    show_menu
+    show_main_menu
     read choice
-    
+
     case $choice in
-        1) quick_launch_all ;;
-        2) select_single_config ;;
-        3) echo "Feature coming soon!"; sleep 2 ;;
-        4) quick_test ;;
-        5) view_running ;;
-        6) stop_all ;;
-        7) ./scripts/analyze_results.sh 2>/dev/null || echo "Analyzer not yet created"; sleep 2 ;;
-        8) 
+        1) launch_all_gladiators ;;
+        2) launch_single_config ;;
+        3) quick_pretest ;;
+        4) run_preflight_check ;;
+        5) view_running_bots ;;
+        6) stop_all_bots ;;
+        7) quick_status ;;
+        8) cleanup_old_runs ;;
+        9)
             echo ""
-            echo -e "${GREEN}Thanks for using Project Flash! LFG! 🚀${NC}"
+            echo -e "${GREEN}Thanks for using GridzBotz! LFG! 🚀${NC}"
             echo ""
             exit 0
             ;;
-        *) 
+        *)
             echo -e "${RED}Invalid option!${NC}"
             sleep 1
             ;;

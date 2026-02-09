@@ -26,7 +26,7 @@ test_duration_hours = 8
 
 [trading]
 # Balanced grid settings
-grid_levels = 100                    # ⚖️ Sweet spot
+grid_levels = 35                    # ⚖️ Sweet spot
 grid_spacing_percent = 0.03         # ⚖️ 0.15% proven optimal
 min_order_size = 0.1
 max_position_size = 100.0
