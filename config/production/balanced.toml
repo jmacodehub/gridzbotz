@@ -1,11 +1,11 @@
-# ═══════════════════════════════════════════════════════════════════════════
+# ═════════════════════════════════════════════════════════════════════════
 # ⚖️ BALANCED V3.5 - OPTIMAL RISK/REWARD CONFIGURATION
 # Based on master.toml - proven winner!
 # 
 # Strategy: Medium spacing, balanced approach, reliable performance
 # Best for: Most market conditions, general purpose trading
 # Risk Level: ⚖️ BALANCED
-# ═══════════════════════════════════════════════════════════════════════════
+# ═════════════════════════════════════════════════════════════════════════
 
 test_name = "Production Balanced v3.5"
 
@@ -15,9 +15,13 @@ version = "3.5.0"
 environment = "development"
 
 [network]
-cluster = "devnet"
-rpc_url = "https://api.devnet.solana.com"
+cluster = "mainnet-beta"
+# 🔥 Chainstack Mainnet RPC - High Performance
+rpc_url = "https://solana-mainnet.core.chainstack.com/f6f4116da85ff7fb43097f4dd03bc831"
+ws_url = "wss://solana-mainnet.core.chainstack.com/f6f4116da85ff7fb43097f4dd03bc831"
 commitment = "confirmed"
+# Fallback RPC (optional)
+fallback_rpc_url = "https://api.devnet.solana.com"
 
 [paper_trading]
 initial_usdc = 5000.0
