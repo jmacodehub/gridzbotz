@@ -1,55 +1,64 @@
-//! ═══════════════════════════════════════════════════════════════════════════
-//! 🤖 GRID BOT V4.1 - Production Trading Orchestrator with Enhanced Analytics
+//! ═════════════════════════════════════════════════════════════════════════
+//! 🤖 GRID BOT V4.2 - ELITE AUTONOMOUS TRADING ORCHESTRATOR
 //!
-//! V4.1 ENHANCEMENTS - Enhanced Metrics Integration:
+//! V4.2 ENHANCEMENTS - Adaptive Intelligence:
 //! ✅ GridLevel pairing (buy/sell orders linked)
 //! ✅ Safe reposition (preserves filled buys)
 //! ✅ Order lifecycle tracking per level
 //! ✅ No orphaned positions
 //! ✅ Production-ready state management
 //! ✅ ENHANCED METRICS - Trade-level analytics 📊
-//! ✅ Win/Loss tracking, Grid efficiency, Drawdown monitoring
+//! ✅ ADAPTIVE OPTIMIZER - Self-learning grid 🧠
+//! ✅ Smart spacing based on drawdown
+//! ✅ Dynamic position sizing based on efficiency
+//! ✅ Win/Loss streak detection
 //!
-//! February 9, 2026 - V4.1 ENHANCED METRICS INTEGRATED! 🔥
-//! ═══════════════════════════════════════════════════════════════════════════
+//! February 9, 2026 - V4.2 ELITE MODE ACTIVATED! 🔥🧠⚡
+//! ═════════════════════════════════════════════════════════════════════════
 
 use crate::strategies::{StrategyManager, GridRebalancer, GridRebalancerConfig};
-use crate::strategies::shared::analytics::AnalyticsContext;  // 🔥 Analytics support
+use crate::strategies::shared::analytics::AnalyticsContext;
 use crate::trading::{
     PaperTradingEngine,
     OrderSide,
     GridStateTracker,
-    EnhancedMetrics,  // 📊 NEW: Enhanced metrics tracking
+    EnhancedMetrics,      // 📊 V4.1: Enhanced metrics
+    AdaptiveOptimizer,    // 🧠 V4.2: Adaptive intelligence
 };
 use crate::config::Config;
 use anyhow::{Result, Context, bail};
 use log::{info, warn, debug, trace};
 
-// ═══════════════════════════════════════════════════════════════════════════
-// GRID BOT - Main Trading Orchestrator with Enhanced Metrics
-// ═══════════════════════════════════════════════════════════════════════════
+// 🧠 Optimization frequency: Run optimizer every N cycles
+const OPTIMIZATION_INTERVAL_CYCLES: u64 = 50;  // Every 50 cycles (~5 mins at 100ms)
+
+// ═════════════════════════════════════════════════════════════════════════
+// GRID BOT - ELITE Autonomous Trading Orchestrator
+// ═════════════════════════════════════════════════════════════════════════
 
 pub struct GridBot {
     pub manager: StrategyManager,
     pub engine: PaperTradingEngine,
     pub config: Config,
     pub grid_state: GridStateTracker,
-    pub enhanced_metrics: EnhancedMetrics,  // 📊 NEW: Enhanced analytics
+    pub enhanced_metrics: EnhancedMetrics,     // 📊 V4.1
+    pub adaptive_optimizer: AdaptiveOptimizer, // 🧠 V4.2 NEW!
     last_price: Option<f64>,
     total_cycles: u64,
     successful_trades: u64,
     grid_repositions: u64,
     last_reposition_time: Option<std::time::Instant>,
+    last_optimization_cycle: u64,  // Track when we last optimized
     grid_initialized: bool,
 }
 
 impl GridBot {
     pub fn new(config: Config) -> Result<Self> {
         info!("═══════════════════════════════════════════════════════════");
-        info!("🤖 Initializing GridBot V4.1 with Enhanced Metrics...");
+        info!("🤖 Initializing GridBot V4.2 ELITE MODE...");
+        info!("🧠 Adaptive Intelligence: ENABLED");
         info!("═══════════════════════════════════════════════════════════");
 
-        // 🔥 Create AnalyticsContext
         let analytics_ctx = AnalyticsContext::default();
         let mut manager = StrategyManager::new(analytics_ctx);
 
@@ -114,12 +123,18 @@ impl GridBot {
         let grid_state = GridStateTracker::new();
         info!("✅ Grid state tracker initialized");
 
-        // 📊 NEW: Initialize enhanced metrics
         let enhanced_metrics = EnhancedMetrics::new();
         info!("✅ Enhanced metrics tracker initialized");
 
+        // 🧠 NEW: Initialize adaptive optimizer with base config values
+        let base_spacing = config.trading.grid_spacing_percent / 100.0;
+        let base_size = config.trading.min_order_size;
+        let adaptive_optimizer = AdaptiveOptimizer::new(base_spacing, base_size);
+        info!("✅ Adaptive optimizer initialized");
+        info!("   Optimization Interval: Every {} cycles", OPTIMIZATION_INTERVAL_CYCLES);
+
         info!("═══════════════════════════════════════════════════════════");
-        info!("✅ GridBot V4.1 initialization complete!");
+        info!("✅ GridBot V4.2 ELITE initialization complete!");
         info!("═══════════════════════════════════════════════════════════\n");
 
         Ok(Self {
@@ -127,12 +142,14 @@ impl GridBot {
             engine,
             config,
             grid_state,
-            enhanced_metrics,  // 📊 NEW FIELD
+            enhanced_metrics,
+            adaptive_optimizer,  // 🧠 NEW FIELD
             last_price: None,
             total_cycles: 0,
             successful_trades: 0,
             grid_repositions: 0,
             last_reposition_time: None,
+            last_optimization_cycle: 0,  // NEW: Track optimization timing
             grid_initialized: false,
         })
     }
@@ -185,7 +202,6 @@ impl GridBot {
             self.grid_initialized = true;
             info!("✅ Initial grid placed successfully");
             
-            // 📊 Update grid efficiency after initial placement
             let total_levels = self.config.trading.grid_levels;
             let used_levels = self.grid_state.count().await;
             self.enhanced_metrics.update_grid_stats(total_levels, used_levels);
@@ -206,19 +222,15 @@ impl GridBot {
             }
         }
 
-        // Get levels that are safe to cancel (no filled buys)
         let cancellable = self.grid_state.get_cancellable_levels().await;
         info!("📋 Identified {} cancellable levels (out of {} total)",
               cancellable.len(),
               self.grid_state.count().await);
 
-        // Selectively cancel only the safe orders
         let mut cancelled_count = 0;
 
         for level_id in cancellable {
-            // Get the level to find its order IDs
             if let Some(level) = self.grid_state.get_level(level_id).await {
-                // Cancel buy order if it exists
                 if let Some(buy_id) = &level.buy_order_id {
                     match self.engine.cancel_order(buy_id).await {
                         Ok(_) => {
@@ -231,7 +243,6 @@ impl GridBot {
                     }
                 }
 
-                // Cancel sell order if it exists (only if level is cancellable)
                 if let Some(sell_id) = &level.sell_order_id {
                     match self.engine.cancel_order(sell_id).await {
                         Ok(_) => {
@@ -244,7 +255,6 @@ impl GridBot {
                     }
                 }
 
-                // Mark level as cancelled in state tracker
                 self.grid_state.mark_cancelled(level_id).await;
             }
         }
@@ -260,7 +270,6 @@ impl GridBot {
         self.grid_repositions += 1;
         self.last_reposition_time = Some(std::time::Instant::now());
 
-        // 📊 Update grid efficiency after reposition
         let total_levels = self.config.trading.grid_levels;
         let used_levels = self.grid_state.count().await;
         self.enhanced_metrics.update_grid_stats(total_levels, used_levels);
@@ -272,11 +281,12 @@ impl GridBot {
     }
 
     async fn place_grid_orders(&mut self, current_price: f64) -> Result<()> {
-        let grid_spacing = self.config.trading.grid_spacing_percent / 100.0;
-        let order_size = self.config.trading.min_order_size;
-        let num_levels = self.config.trading.grid_levels;
+        // 🧠 USE OPTIMIZED VALUES from adaptive optimizer instead of config!
+        let grid_spacing = self.adaptive_optimizer.current_spacing_percent;
+        let order_size = self.adaptive_optimizer.current_position_size;
+        let num_levels = self.config.trading.grid_levels;  // Keep levels from config
 
-        debug!("Grid params: {} levels @ {:.3}% spacing, {} SOL per order",
+        debug!("🧠 ADAPTIVE Grid params: {} levels @ {:.3}% spacing, {:.3} SOL per order",
                num_levels, grid_spacing * 100.0, order_size);
 
         let mut orders_placed = 0;
@@ -333,7 +343,6 @@ impl GridBot {
         self.total_cycles += 1;
         self.last_price = Some(price);
 
-        // 📊 Update price range tracking
         self.enhanced_metrics.update_price_range(price);
 
         trace!("Processing price update: ${:.4} (cycle {})", price, self.total_cycles);
@@ -341,7 +350,6 @@ impl GridBot {
         let signal = self.manager.analyze_all(price, timestamp).await
             .context("Failed to get strategy consensus")?;
 
-        // 📊 Record signal execution
         self.enhanced_metrics.record_signal(true);
 
         trace!("Strategy signal: {}", signal.display());
@@ -356,21 +364,30 @@ impl GridBot {
             for order_id in &filled_orders {
                 debug!("   ✅ Order {} filled", order_id);
                 
-                // 📊 Record trade in enhanced metrics
-                // Determine if buy or sell based on order ID pattern
                 let is_buy = order_id.to_lowercase().contains("buy");
-                
-                // Calculate P&L from grid state if available
                 let pnl = self.grid_state.total_realized_pnl().await;
                 
                 self.enhanced_metrics.record_trade(is_buy, pnl, timestamp);
             }
         }
 
-        // 📊 Update portfolio value tracking
         let wallet = self.engine.get_wallet().await;
         let total_value = wallet.total_value_usdc(price);
         self.enhanced_metrics.update_portfolio_value(total_value);
+
+        // 🧠 NEW: Run adaptive optimization periodically
+        if self.total_cycles - self.last_optimization_cycle >= OPTIMIZATION_INTERVAL_CYCLES {
+            debug!("🧠 Running adaptive optimization cycle...");
+            let result = self.adaptive_optimizer.optimize(&self.enhanced_metrics);
+            
+            if result.any_changes() {
+                info!("🔥 OPTIMIZATION APPLIED: {}", result.reason);
+                info!("   New Spacing: {:.3}%", result.new_spacing * 100.0);
+                info!("   New Size: {:.3} SOL", result.new_position_size);
+            }
+            
+            self.last_optimization_cycle = self.total_cycles;
+        }
 
         Ok(())
     }
@@ -392,12 +409,15 @@ impl GridBot {
             win_rate: perf_stats.win_rate,
             total_fees: perf_stats.total_fees,
             trading_paused: false,
-            // 📊 NEW: Enhanced metrics fields
             profitable_trades: self.enhanced_metrics.profitable_trades,
             unprofitable_trades: self.enhanced_metrics.unprofitable_trades,
             max_drawdown: self.enhanced_metrics.max_drawdown,
             signal_execution_ratio: self.enhanced_metrics.signal_execution_ratio,
             grid_efficiency: self.enhanced_metrics.grid_efficiency,
+            // 🧠 NEW: Optimizer stats
+            current_spacing_percent: self.adaptive_optimizer.current_spacing_percent,
+            current_position_size: self.adaptive_optimizer.current_position_size,
+            optimization_count: self.adaptive_optimizer.adjustment_count,
         }
     }
 
@@ -407,7 +427,7 @@ impl GridBot {
         let border = "═".repeat(60);
 
         println!("\n{}", border);
-        println!("   🤖 GRID BOT V4.1 - STATUS REPORT");
+        println!("   🤖 GRID BOT V4.2 ELITE - STATUS REPORT");
         println!("{}", border);
 
         println!("\n📊 Bot Performance:");
@@ -434,9 +454,11 @@ impl GridBot {
         println!("  Win Rate:          {:.2}%", stats.win_rate);
         println!("  Total Fees:        ${:.2}", stats.total_fees);
 
-        // 📊 NEW: Display enhanced metrics
         println!("\n🔍 Enhanced Metrics:");
         self.enhanced_metrics.display();
+
+        // 🧠 NEW: Display optimizer status
+        self.adaptive_optimizer.display();
 
         println!("\n💵 Current Price:    ${:.4}", current_price);
 
@@ -464,17 +486,20 @@ pub struct BotStats {
     pub win_rate: f64,
     pub total_fees: f64,
     pub trading_paused: bool,
-    // 📊 NEW: Enhanced metrics fields
     pub profitable_trades: usize,
     pub unprofitable_trades: usize,
     pub max_drawdown: f64,
     pub signal_execution_ratio: f64,
     pub grid_efficiency: f64,
+    // 🧠 NEW: Optimizer fields
+    pub current_spacing_percent: f64,
+    pub current_position_size: f64,
+    pub optimization_count: u64,
 }
 
 impl BotStats {
     pub fn display_summary(&self) {
-        println!("\n📊 BOT STATISTICS SUMMARY");
+        println!("\n📊 BOT STATISTICS SUMMARY V4.2 ELITE");
         println!("   Cycles:            {}", self.total_cycles);
         println!("   Trades:            {}", self.successful_trades);
         println!("   Repositions:       {}", self.grid_repositions);
@@ -485,7 +510,6 @@ impl BotStats {
         println!("   Win Rate:          {:.2}%", self.win_rate);
         println!("   Fees:              ${:.2}", self.total_fees);
         
-        // 📊 NEW: Enhanced metrics in summary
         println!("\n🔍 Enhanced Analytics:");
         println!("   Profitable Trades: {}", self.profitable_trades);
         println!("   Losing Trades:     {}", self.unprofitable_trades);
@@ -493,10 +517,16 @@ impl BotStats {
         println!("   Signal Exec Rate:  {:.2}%", self.signal_execution_ratio * 100.0);
         println!("   Grid Efficiency:   {:.2}%", self.grid_efficiency * 100.0);
 
+        // 🧠 NEW: Optimizer summary
+        println!("\n🧠 Adaptive Optimizer:");
+        println!("   Current Spacing:   {:.3}%", self.current_spacing_percent * 100.0);
+        println!("   Current Size:      {:.3} SOL", self.current_position_size);
+        println!("   Optimizations:     {}", self.optimization_count);
+
         if self.trading_paused {
             println!("   Status:            🚫 PAUSED");
         } else {
-            println!("   Status:            ✅ ACTIVE");
+            println!("   Status:            ✅ ELITE MODE ACTIVE");
         }
     }
 }
