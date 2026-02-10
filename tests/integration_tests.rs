@@ -37,9 +37,12 @@ fn test_circuit_breaker() {
     // Should allow trading initially
     assert!(breaker.is_trading_allowed());
 
-    // Record consecutive losses
+    // Record 5 consecutive losses (as percentages, not dollar amounts)
+    // PnL must be passed as percentage to match the unit test convention
+    let mut balance = 10000.0;
     for _ in 0..5 {
-        breaker.record_trade(-2.0, 98.0); // pnl, new_balance
+        balance -= 10.0;
+        breaker.record_trade(-0.1, balance); // -0.1% loss
     }
 
     // Should trip after max consecutive losses
