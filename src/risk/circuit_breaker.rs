@@ -349,31 +349,41 @@ mod tests {
         let mut breaker = CircuitBreaker::with_balance(&config, 10000.0);
         let mut balance = 10000.0;
 
-        // Use TINY losses ($10 each = 0.1% per trade)
-        // This way we test consecutive loss logic WITHOUT triggering drawdown limit
-        // Circuit breaker threshold is 15%, so 4 x 0.1% = 0.4% is well below it
+        // KEY: Pass PnL as PERCENTAGE, not dollar amount!
+        // daily_pnl is compared against max_daily_loss_pct (10.0%)
+        // So we need to pass percentage values
         
-        // Record 4 losses - should NOT trip
+        // Record 4 losses of 0.1% each - should NOT trip
+        // Total daily loss: 0.4% (well below 10% limit)
         for i in 1..=4 {
-            balance -= 10.0;
-            breaker.record_trade(-10.0, balance);
+            balance -= 10.0;  // $10 loss
+            let pnl_pct = -0.1;  // -0.1% loss
+            breaker.record_trade(pnl_pct, balance);
             assert!(
                 !breaker.is_tripped,
-                "Should not trip after {} losses (balance: ${}, drawdown: {:.2}%)",
+                "Should not trip after {} losses (balance: ${}, daily PnL: {:.2}%, drawdown: {:.2}%)",
                 i,
                 balance,
+                breaker.daily_pnl,
                 breaker.current_drawdown_pct
             );
         }
 
+        assert_eq!(breaker.consecutive_losses, 4, "Should have 4 consecutive losses");
+        assert!(
+            breaker.daily_pnl.abs() < 1.0,
+            "Daily PnL should be less than 1%, got {:.2}%",
+            breaker.daily_pnl
+        );
+
         // 5th loss should trip the circuit breaker (consecutive loss limit)
         balance -= 10.0;
-        breaker.record_trade(-10.0, balance);
+        breaker.record_trade(-0.1, balance);
         assert!(breaker.is_tripped, "Should trip after 5 consecutive losses");
         assert_eq!(
             breaker.trip_reason,
             Some(TripReason::ConsecutiveLosses),
-            "Should trip due to consecutive losses, not drawdown"
+            "Should trip due to consecutive losses, not drawdown or daily limit"
         );
     }
 
@@ -383,17 +393,17 @@ mod tests {
         let mut breaker = CircuitBreaker::with_balance(&config, 10000.0);
         let mut balance = 10000.0;
 
-        // 3 losses
+        // 3 losses (as percentages)
         for _ in 0..3 {
             balance -= 50.0;
-            breaker.record_trade(-50.0, balance);
+            breaker.record_trade(-0.5, balance);  // -0.5% loss
         }
 
         assert_eq!(breaker.consecutive_losses, 3);
 
         // 1 profit resets streak
         balance += 100.0;
-        breaker.record_trade(100.0, balance);
+        breaker.record_trade(1.0, balance);  // +1.0% profit
         assert_eq!(breaker.consecutive_losses, 0);
     }
 }
