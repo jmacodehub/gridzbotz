@@ -4,11 +4,11 @@ use solana_grid_bot::{Config, risk::*};
 fn test_position_sizer() {
     let config = Config::load().expect("Config should load");
     let sizer = PositionSizer::new(&config);
-    
+
     let size = sizer.calculate_size(100.0, 0.02, 0.6);
     assert!(size > 0.0);
     assert!(size < 100.0); // Should be reasonable
-    
+
     // Test validation
     assert!(sizer.validate_size(size, 100.0).is_ok());
     assert!(sizer.validate_size(0.0001, 100.0).is_err()); // Too small
@@ -18,13 +18,13 @@ fn test_position_sizer() {
 fn test_stop_loss_trigger() {
     let config = Config::load().expect("Config should load");
     let mut sl_manager = StopLossManager::new(&config);
-    
+
     let entry = 100.0;
     let loss_price = 95.0; // -5% loss
-    
+
     // Should trigger at 5% loss (default)
     assert!(sl_manager.should_stop_loss(entry, loss_price));
-    
+
     // Should not trigger at small loss
     assert!(!sl_manager.should_stop_loss(entry, 99.5));
 }
@@ -33,15 +33,15 @@ fn test_stop_loss_trigger() {
 fn test_circuit_breaker() {
     let config = Config::load().expect("Config should load");
     let mut breaker = CircuitBreaker::new(&config);
-    
+
     // Should allow trading initially
     assert!(breaker.is_trading_allowed());
-    
+
     // Record consecutive losses
     for _ in 0..5 {
-        breaker.record_trade(-2.0);
+        breaker.record_trade(-2.0, 98.0); // pnl, new_balance
     }
-    
+
     // Should trip after max consecutive losses
     assert!(!breaker.is_trading_allowed());
 }
