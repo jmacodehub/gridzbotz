@@ -19,7 +19,7 @@
 //!
 //! ═══════════════════════════════════════════════════════════════════════════
 
-use anyhow::{bail, Context, Result};
+use anyhow::{bail, Result};
 use log::{debug, info, warn};
 use serde::{Deserialize, Serialize};
 use solana_client::nonblocking::rpc_client::RpcClient;
