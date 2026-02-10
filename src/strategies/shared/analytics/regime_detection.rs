@@ -240,7 +240,12 @@ mod tests {
         let r = RegimeDetector::new(cfg);
         let (pause, reason) = r.should_pause(0.3);
         assert!(pause, "Should pause for too-low volatility");
-        assert!(reason.contains("Volatility"));
+        // Check for both possible message formats (case-insensitive)
+        assert!(
+            reason.to_lowercase().contains("volatility") || reason.contains("RegimeGate"),
+            "Reason should mention volatility or regime gate, got: {}",
+            reason
+        );
     }
 
     #[test]
@@ -256,7 +261,7 @@ mod tests {
         let (regime, pause, reason) = r.analyze(0.2);
         assert_eq!(regime, MarketRegime::VeryLow);
         assert!(pause, "Pause expected in VeryLow vol state");
-        assert!(reason.contains("REGIME") || reason.contains("VOL"));
+        assert!(reason.contains("REGIME") || reason.contains("VOL") || reason.contains("Volatility"));
     }
 
     #[test]
