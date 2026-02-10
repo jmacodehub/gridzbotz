@@ -349,17 +349,32 @@ mod tests {
         let mut breaker = CircuitBreaker::with_balance(&config, 10000.0);
         let mut balance = 10000.0;
 
+        // Use TINY losses ($10 each = 0.1% per trade)
+        // This way we test consecutive loss logic WITHOUT triggering drawdown limit
+        // Circuit breaker threshold is 15%, so 4 x 0.1% = 0.4% is well below it
+        
         // Record 4 losses - should NOT trip
-        for _ in 0..4 {
-            balance -= 100.0;
-            breaker.record_trade(-100.0, balance);
-            assert!(!breaker.is_tripped, "Should not trip after {} losses", breaker.consecutive_losses);
+        for i in 1..=4 {
+            balance -= 10.0;
+            breaker.record_trade(-10.0, balance);
+            assert!(
+                !breaker.is_tripped,
+                "Should not trip after {} losses (balance: ${}, drawdown: {:.2}%)",
+                i,
+                balance,
+                breaker.current_drawdown_pct
+            );
         }
 
-        // 5th loss should trip the circuit breaker
-        balance -= 100.0;
-        breaker.record_trade(-100.0, balance);
+        // 5th loss should trip the circuit breaker (consecutive loss limit)
+        balance -= 10.0;
+        breaker.record_trade(-10.0, balance);
         assert!(breaker.is_tripped, "Should trip after 5 consecutive losses");
+        assert_eq!(
+            breaker.trip_reason,
+            Some(TripReason::ConsecutiveLosses),
+            "Should trip due to consecutive losses, not drawdown"
+        );
     }
 
     #[test]
