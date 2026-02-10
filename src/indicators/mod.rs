@@ -6,7 +6,57 @@
 use std::collections::VecDeque;
 
 // ═══════════════════════════════════════════════════════════════════════════
-// MOVING AVERAGES
+// INDICATOR TRAIT (BASE INTERFACE)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Base trait for all technical indicators
+pub trait Indicator {
+    /// Calculate indicator with new price data
+    fn calculate(&mut self, price: f64) -> Option<f64>;
+    
+    /// Reset indicator state
+    fn reset(&mut self);
+    
+    /// Get indicator name
+    fn name(&self) -> &str;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SUBMODULES
+// ═══════════════════════════════════════════════════════════════════════════
+
+pub mod atr;
+pub mod ema;
+pub mod sma;
+pub mod macd;
+
+// Re-export public types
+pub use atr::ATR;
+pub use ema::EMA;
+pub use sma::SMA;
+pub use macd::MACD;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// HELPER FUNCTIONS
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Calculate percentile rank of a value in a distribution
+/// 
+/// Returns: 0.0 (lowest) to 1.0 (highest)
+pub fn calculate_percentile(value: f64, distribution: &VecDeque<f64>) -> f64 {
+    if distribution.is_empty() {
+        return 0.5; // Neutral
+    }
+    
+    let rank = distribution.iter()
+        .filter(|&&v| v < value)
+        .count();
+    
+    rank as f64 / distribution.len() as f64
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// MOVING AVERAGES (LEGACY FUNCTIONS - Keep for backward compatibility)
 // ═══════════════════════════════════════════════════════════════════════════
 
 /// Calculate Simple Moving Average (SMA)
@@ -139,7 +189,7 @@ pub fn calculate_atr_percentile(current_atr: f64, historical_atr: &[f64]) -> f64
 
 /// MACD Indicator values
 #[derive(Debug, Clone, Copy)]
-pub struct MACD {
+pub struct MACDValues {
     /// MACD line (Fast EMA - Slow EMA)
     pub macd_line: f64,
     
@@ -181,7 +231,7 @@ impl MACDState {
     /// Update MACD with new price
     /// 
     /// Returns MACD values if enough data has been accumulated
-    pub fn update(&mut self, price: f64) -> Option<MACD> {
+    pub fn update(&mut self, price: f64) -> Option<MACDValues> {
         // Calculate Fast EMA (12-period)
         self.fast_ema = Some(if let Some(prev) = self.fast_ema {
             let multiplier = 2.0 / (self.fast_period as f64 + 1.0);
@@ -214,7 +264,7 @@ impl MACDState {
         // Histogram = MACD - Signal
         let histogram = macd_line - signal_line;
         
-        Some(MACD {
+        Some(MACDValues {
             macd_line,
             signal_line,
             histogram,
