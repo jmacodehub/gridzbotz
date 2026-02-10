@@ -151,7 +151,36 @@ mod tests {
     #[test]
     fn test_majority_vote_returns_expected() {
         let engine = ConsensusEngine::new(ConsensusMode::MajorityVote);
-        let s = engine.resolve(&sample_signals());
-        assert!(matches!(s, Signal::Buy { .. }) || matches!(s, Signal::Sell { .. }));
+        
+        // Test with clear majority (2 buys vs 1 sell)
+        let signals = vec![
+            Signal::Buy {
+                price: 100.0,
+                size: 1.0,
+                reason: "bullish 1".into(),
+                confidence: 0.9,
+            },
+            Signal::Buy {
+                price: 100.0,
+                size: 1.0,
+                reason: "bullish 2".into(),
+                confidence: 0.8,
+            },
+            Signal::Sell {
+                price: 101.0,
+                size: 1.0,
+                reason: "bearish".into(),
+                confidence: 0.3,
+            },
+        ];
+        
+        let s = engine.resolve(&signals);
+        
+        // With 2 buys vs 1 sell, majority should return Buy
+        assert!(
+            matches!(s, Signal::Buy { .. }),
+            "Expected Buy signal with clear majority, got: {:?}",
+            s
+        );
     }
 }

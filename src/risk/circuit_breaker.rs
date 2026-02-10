@@ -278,10 +278,9 @@ mod tests {
                 cluster: "devnet".to_string(),
                 rpc_url: "http://localhost".to_string(),
                 commitment: "confirmed".to_string(),
-                ws_url: None,  // 🔥 FIX 1: Added missing field
+                ws_url: None,
             },
             trading: TradingConfig {
-                // 🔥 FIX 2: Complete struct instead of ..Default::default()
                 grid_levels: 10,
                 grid_spacing_percent: 0.2,
                 min_order_size: 0.01,
@@ -348,32 +347,38 @@ mod tests {
     fn test_consecutive_losses() {
         let config = test_config();
         let mut breaker = CircuitBreaker::with_balance(&config, 10000.0);
+        let mut balance = 10000.0;
 
-        // Record losses
+        // Record 4 losses - should NOT trip
         for _ in 0..4 {
-            breaker.record_trade(-100.0, 9900.0);
-            assert!(!breaker.is_tripped);
+            balance -= 100.0;
+            breaker.record_trade(-100.0, balance);
+            assert!(!breaker.is_tripped, "Should not trip after {} losses", breaker.consecutive_losses);
         }
 
-        // 5th loss should trip
-        breaker.record_trade(-100.0, 9800.0);
-        assert!(breaker.is_tripped);
+        // 5th loss should trip the circuit breaker
+        balance -= 100.0;
+        breaker.record_trade(-100.0, balance);
+        assert!(breaker.is_tripped, "Should trip after 5 consecutive losses");
     }
 
     #[test]
     fn test_profit_resets_streak() {
         let config = test_config();
         let mut breaker = CircuitBreaker::with_balance(&config, 10000.0);
+        let mut balance = 10000.0;
 
         // 3 losses
         for _ in 0..3 {
-            breaker.record_trade(-50.0, 9900.0);
+            balance -= 50.0;
+            breaker.record_trade(-50.0, balance);
         }
 
         assert_eq!(breaker.consecutive_losses, 3);
 
         // 1 profit resets streak
-        breaker.record_trade(100.0, 10000.0);
+        balance += 100.0;
+        breaker.record_trade(100.0, balance);
         assert_eq!(breaker.consecutive_losses, 0);
     }
 }
