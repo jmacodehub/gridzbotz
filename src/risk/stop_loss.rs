@@ -8,7 +8,7 @@ pub struct StopLossManager {
     stop_loss_pct: f64,
     take_profit_pct: f64,
     trailing_stop: bool,
-    highest_price: f64,
+    highest_price: Option<f64>,
 }
 
 impl StopLossManager {
@@ -28,7 +28,7 @@ impl StopLossManager {
             stop_loss_pct: config.risk.stop_loss_pct,
             take_profit_pct: config.risk.take_profit_pct,
             trailing_stop: config.risk.enable_circuit_breaker,
-            highest_price: 0.0,
+            highest_price: None,  // Will be initialized on first call
         }
     }
     
@@ -38,13 +38,21 @@ impl StopLossManager {
             return false;
         }
         
+        // Initialize highest_price from entry_price on first call
+        if self.highest_price.is_none() {
+            self.highest_price = Some(entry_price);
+        }
+        
         // Update trailing stop
-        if self.trailing_stop && current_price > self.highest_price {
-            self.highest_price = current_price;
+        if self.trailing_stop {
+            let highest = self.highest_price.unwrap();
+            if current_price > highest {
+                self.highest_price = Some(current_price);
+            }
         }
         
         let reference_price = if self.trailing_stop {
-            self.highest_price
+            self.highest_price.unwrap()
         } else {
             entry_price
         };
@@ -77,6 +85,6 @@ impl StopLossManager {
     
     /// Reset for new position
     pub fn reset(&mut self, entry_price: f64) {
-        self.highest_price = entry_price;
+        self.highest_price = Some(entry_price);
     }
 }
