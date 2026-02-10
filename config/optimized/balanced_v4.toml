@@ -1,0 +1,143 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# ⚖️🏆 BALANCED V4.0 - OPTIMIZED WORKHORSE! 🏆⚖️
+# Upgraded from v3.5 → v4.0 (Post Battle Royale #2 Optimization)
+# 
+# Strategy: Perfect middle ground with smart regime filtering
+# Best for: Most market conditions, balanced risk/reward
+# Risk Level: ⚖️ BALANCED
+# 
+# BATTLE ROYALE #2 RESULTS:
+#   v3.5: ROI -0.07% (3rd place 🥉) | 19 trades | 0 errors | 100% win rate
+# 
+# V4.0 OPTIMIZATIONS:
+#   ✅ Grid levels: 35 → 32 (streamlined)
+#   ✅ Spacing: 0.15% → 0.18% (20% wider for efficiency)
+#   ✅ Reposition: 0.5 → 0.7 (more conservative)
+#   ✅ Regime gate: OFF → ON (smart filtering!)
+#   ✅ Min volatility: 0.0 → 0.35 (skip bad conditions)
+# 
+# EXPECTED BR#3 RESULTS:
+#   Target ROI: -0.03% to +0.01%
+#   Target Trades: 15-17 (more selective, better quality)
+# ═══════════════════════════════════════════════════════════════════════════
+
+test_name = "Balanced v4.0 - Optimized Workhorse"
+
+[bot]
+name = "Balanced-Bot-v4.0-Optimized"
+version = "4.0.0"
+environment = "development"
+
+[network]
+cluster = "devnet"
+rpc_url = "https://api.devnet.solana.com"
+commitment = "confirmed"
+
+[paper_trading]
+initial_usdc = 5000.0
+initial_sol = 10.0
+test_duration_hours = 10            # 🔥 BR#3: 10-hour test
+
+[trading]
+# Core Grid Settings (V4.0 OPTIMIZED!)
+grid_levels = 32                    # 🔥 V4.0: 35 → 32
+grid_spacing_percent = 0.18         # 🔥 V4.0: 0.15 → 0.18
+min_order_size = 0.1
+max_position_size = 100.0
+min_usdc_reserve = 300.0
+min_sol_reserve = 2.0
+
+# Dynamic Grid (V4.0 OPTIMIZED!)
+enable_dynamic_grid = true
+reposition_threshold = 0.7          # 🔥 V4.0: 0.5 → 0.7
+volatility_window = 100
+
+# Auto-Rebalancing
+enable_auto_rebalance = true
+enable_smart_rebalance = true
+rebalance_threshold_pct = 5.0
+rebalance_cooldown_secs = 60
+
+# Market Regime Gate (V4.0 NEW!)
+enable_regime_gate = true           # 🔥 V4.0: false → true (NEW!)
+min_volatility_to_trade = 0.35      # 🔥 V4.0: 0.0 → 0.35 (NEW!)
+pause_in_very_low_vol = true        # 🔥 V4.0: NEW smart filtering!
+
+# Order Lifecycle
+enable_order_lifecycle = true
+order_max_age_minutes = 10
+order_refresh_interval_minutes = 5
+min_orders_to_maintain = 8
+
+# Other settings
+enable_fee_optimization = true
+enable_market_orders = false
+min_profit_threshold_pct = 0.1
+max_slippage_pct = 1.0
+enable_price_bounds = false
+enable_adaptive_spacing = false
+enable_smart_position_sizing = false
+
+[strategies]
+active = ["grid"]
+consensus_mode = "single"
+
+[strategies.grid]
+enabled = true
+weight = 1.0
+min_confidence = 0.5
+
+[strategies.momentum]
+enabled = false
+weight = 0.8
+min_confidence = 0.6
+lookback_period = 20
+threshold = 0.02
+
+[strategies.mean_reversion]
+enabled = false
+weight = 0.7
+min_confidence = 0.6
+sma_period = 20
+std_dev_multiplier = 2.0
+
+[strategies.rsi]
+enabled = false
+weight = 0.9
+min_confidence = 0.7
+period = 14
+oversold_threshold = 30.0
+overbought_threshold = 70.0
+
+[risk]
+max_position_size_pct = 30.0        # ⚖️ Kept balanced
+max_drawdown_pct = 10.0
+stop_loss_pct = 5.0
+take_profit_pct = 10.0
+enable_circuit_breaker = true
+circuit_breaker_threshold_pct = 8.0
+circuit_breaker_cooldown_secs = 300
+
+[pyth]
+http_endpoint = "https://hermes.pyth.network"
+feed_ids = ["0xef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d"]
+update_interval_ms = 500
+
+[performance]
+cycle_interval_ms = 100
+startup_delay_ms = 1000
+
+[logging]
+level = "info"
+file_path = "logs/balanced_v4_optimized.log"
+enable_file_logging = true
+
+[metrics]
+enable_metrics = true
+stats_interval = 50
+
+[database]
+enabled = false
+
+[alerts]
+enabled = false
