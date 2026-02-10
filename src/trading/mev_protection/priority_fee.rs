@@ -23,7 +23,6 @@ use anyhow::{bail, Result};
 use log::{debug, info, warn};
 use serde::{Deserialize, Serialize};
 use solana_client::nonblocking::rpc_client::RpcClient;
-use solana_sdk::commitment_config::CommitmentConfig;
 use std::time::Duration;
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -118,10 +117,9 @@ impl PriorityFeeOptimizer {
         config.validate()?;
         
         // Use public RPC for fee sampling (low frequency, not mission-critical)
-        let rpc_client = RpcClient::new_with_timeout_and_commitment(
+        let rpc_client = RpcClient::new_with_timeout(
             "https://api.mainnet-beta.solana.com".to_string(),
             Duration::from_secs(30),
-            CommitmentConfig::confirmed(),
         );
         
         Ok(Self { config, rpc_client })
