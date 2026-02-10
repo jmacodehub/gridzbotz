@@ -1,5 +1,5 @@
 //! ═══════════════════════════════════════════════════════════════════════════
-//! Trading Module V4.2 - Unified Trading Engine with Adaptive Intelligence
+//! Trading Module V5.0 - Unified Trading Engine with MEV Protection
 //!
 //! Architecture:
 //! - Unified Trading Interface: Generic trait for paper and live trading
@@ -11,8 +11,9 @@
 //! - Transaction Executor: Solana transaction building and signing
 //! - Enhanced Metrics: Trade-level analytics and performance tracking
 //! - Adaptive Optimizer: Self-learning grid spacing and position sizing
+//! - MEV Protection: 🛡️ NEW! Priority fees, slippage guard, Jito bundles
 //!
-//! V4.2 ENHANCEMENTS:
+//! V5.0 ENHANCEMENTS:
 //! ✅ TradingEngine trait - unified interface for all trading modes
 //! ✅ Grid level ID tracking in orders
 //! ✅ Circuit breaker integration
@@ -22,8 +23,9 @@
 //! ✅ RealTradingEngine ENABLED with full security (🔥 Phase 5)
 //! ✅ Enhanced Metrics for deep analytics (📊 V4.1)
 //! ✅ Adaptive Optimizer for self-learning (🧠 V4.2)
+//! 🔥 MEV Protection - Priority fees, slippage guard, Jito bundles (🛡️ V5.0)
 //!
-//! February 9, 2026 - V4.2 ADAPTIVE INTELLIGENCE INTEGRATED!
+//! February 11, 2026 - V5.0 MEV PROTECTION INTEGRATED!
 //! ═══════════════════════════════════════════════════════════════════════════
 
 pub use crate::config::Config;
@@ -48,6 +50,7 @@ pub mod jupiter_swap;        // 🪐 Jupiter DEX aggregator (V4.1)
 pub mod real_trader;         // 🔥 ENABLED - Phase 5 Complete!
 pub mod enhanced_metrics;    // 📊 V4.1: Enhanced analytics tracking
 pub mod adaptive_optimizer;  // 🧠 V4.2: Self-learning optimizer
+pub mod mev_protection;      // 🛡️ V5.0: MEV Protection (NEW!)
 
 // WebSocket feeds (optional feature)
 #[cfg(feature = "websockets")]
@@ -95,6 +98,31 @@ pub use enhanced_metrics::EnhancedMetrics;
 pub use adaptive_optimizer::{
     AdaptiveOptimizer,
     OptimizationResult,
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// MEV Protection Exports (V5.0) 🛡️ NEW!
+// ═══════════════════════════════════════════════════════════════════════════
+
+pub use mev_protection::{
+    // Main manager
+    MevProtectionManager,
+    MevProtectionConfig,
+    
+    // Priority fees
+    PriorityFeeOptimizer,
+    PriorityFeeConfig,
+    FeeRecommendation,
+    
+    // Slippage protection
+    SlippageGuardian,
+    SlippageConfig,
+    SlippageValidation,
+    
+    // Jito bundles
+    JitoClient,
+    JitoConfig,
+    JitoBundleStatus,
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -252,9 +280,9 @@ pub struct EngineHealthStatus {
 /// - Multi-DEX routing (V5.0)
 #[async_trait]
 pub trait TradingEngine: Send + Sync {
-    // ═══════════════════════════════════════════════════════════════════════
+    // ═════════════════════════════════════════════════════════════════════════
     // CORE ORDER OPERATIONS (Required)
-    // ═══════════════════════════════════════════════════════════════════════
+    // ═════════════════════════════════════════════════════════════════════════
 
     /// Place limit order with optional grid level tracking
     ///
@@ -315,9 +343,9 @@ pub trait TradingEngine: Send + Sync {
     /// Get count of currently open orders
     async fn open_order_count(&self) -> usize;
 
-    // ═══════════════════════════════════════════════════════════════════════
+    // ═════════════════════════════════════════════════════════════════════════
     // RISK MANAGEMENT (Required)
-    // ═══════════════════════════════════════════════════════════════════════
+    // ═════════════════════════════════════════════════════════════════════════
 
     /// Check if trading is allowed (circuit breaker + emergency shutdown)
     ///
@@ -340,9 +368,9 @@ pub trait TradingEngine: Send + Sync {
         }
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
+    // ═════════════════════════════════════════════════════════════════════════
     // ADVANCED OPERATIONS (Optional - Future Extensions)
-    // ═══════════════════════════════════════════════════════════════════════
+    // ═════════════════════════════════════════════════════════════════════════
 
     /// Place multiple orders in a single batch (optimized for gas/latency)
     ///
@@ -462,6 +490,13 @@ pub mod prelude {
         // Adaptive Optimizer (🧠 V4.2)
         AdaptiveOptimizer,
         OptimizationResult,
+        
+        // MEV Protection (🛡️ V5.0) - NEW!
+        MevProtectionManager,
+        MevProtectionConfig,
+        PriorityFeeOptimizer,
+        SlippageGuardian,
+        JitoClient,
     };
 }
 
@@ -504,5 +539,6 @@ mod tests {
         let _: Option<RealTradingConfig> = None;
         let _: Option<EnhancedMetrics> = None;  // 📊 V4.1 export test
         let _: Option<AdaptiveOptimizer> = None; // 🧠 V4.2 export test
+        let _: Option<MevProtectionManager> = None; // 🛡️ V5.0 export test
     }
 }
