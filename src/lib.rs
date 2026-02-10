@@ -1,12 +1,13 @@
 //! ═══════════════════════════════════════════════════════════════════════════
-//! 🤖 SOLANA GRID TRADING BOT - PROJECT FLASH V3.0
+//! 🤖 SOLANA GRID TRADING BOT - MULTI-STRATEGY V4.0 "CONSERVATIVE AI"
 //! 
 //! High-performance Rust implementation with:
 //! • Dynamic grid repositioning
-//! • Multi-strategy consensus engine
+//! • Multi-strategy consensus engine (MACD, RSI, Mean Reversion)
 //! • Real-time risk management
 //! • Market regime detection
 //! • Automatic order lifecycle management
+//! • Technical indicators library (ATR, MACD, EMA, SMA)
 //! 
 //! Built for production trading on Solana DEX (OpenBook/Serum)
 //! 
@@ -16,20 +17,20 @@
 //! │                      GridBot (Orchestrator)                     │
 //! ├─────────────────────────────────────────────────────────────────┤
 //! │  Config  │  Trading  │  Strategies  │  Risk  │  Metrics  │ DEX │
+//! │          │           │  Indicators  │        │           │     │
 //! └─────────────────────────────────────────────────────────────────┘
 //! ```
 //! 
-//! Version: 3.0.0
+//! Version: 4.0.0
 //! License: MIT
-//! Author: Project Flash Team
-//! Date: October 17, 2025
+//! Date: February 10, 2026
 //! ═══════════════════════════════════════════════════════════════════════════
 
 #![allow(missing_docs)] 
 #![allow(missing_debug_implementations)]
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Standard Library & External Dependencies
+//Standard Library & External Dependencies
 // ═══════════════════════════════════════════════════════════════════════════
 
 #![warn(
@@ -41,7 +42,7 @@
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Module Declarations - Organized by Domain
-// ═══════════════════════════════════════════════════════════════════════════
+//═══════════════════════════════════════════════════════════════════════════
 
 /// Configuration management (TOML-based + programmatic)
 pub mod config;
@@ -51,6 +52,9 @@ pub mod trading;
 
 /// Strategy implementations (grid, momentum, RSI, mean reversion)
 pub mod strategies;
+
+/// Technical indicators (ATR, MACD, EMA, SMA) - NEW in v4.0!
+pub mod indicators;
 
 /// Risk management (circuit breakers, position sizing, stop loss)
 pub mod risk;
@@ -103,6 +107,15 @@ pub use strategies::{
     GridRebalancer,
 };
 
+// Indicators - NEW!
+pub use indicators::{
+    Indicator,
+    ATR,
+    MACD,
+    EMA,
+    SMA,
+};
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Library Metadata
 // ═══════════════════════════════════════════════════════════════════════════
@@ -114,15 +127,15 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const NAME: &str = env!("CARGO_PKG_NAME");
 
 /// Project codename
-pub const CODENAME: &str = "PROJECT FLASH";
+pub const CODENAME: &str = "MULTI-STRATEGY V4.0 - CONSERVATIVE AI";
 
 /// Build information
 pub const BUILD_INFO: BuildInfo = BuildInfo {
     version: VERSION,
     name: NAME,
     codename: CODENAME,
-    git_hash: "dev",           
-    build_date: "2025-10-17",  
+    git_hash: "phase3a",           
+    build_date: "2026-02-10",  
     rust_version: "1.70",      
 };
 
@@ -206,12 +219,13 @@ fn print_startup_banner() {
     let border = "═".repeat(70);
     
     println!("\n{}", border);
-    println!("  🤖 {} V{} - {}", NAME.to_uppercase(), VERSION, CODENAME);
+    println!("  🤖 {} V{}", NAME.to_uppercase(), VERSION);
+    println!("  🧠 {}", CODENAME);
     println!("{}", border);
     println!();
     println!("  💪 Built with Rust for MAXIMUM PERFORMANCE!");
     println!("  🎯 Production-ready for Solana DEX trading");
-    println!("  🔥 Dynamic Grid • Multi-Strategy • Real-time Risk Management");
+    println!("  🔥 MACD • RSI • Mean Reversion • Grid • Consensus AI");
     println!();
     println!("  📦 Version:     {}", VERSION);
     println!("  🏗️  Build:       {} ({})", BUILD_INFO.build_date, BUILD_INFO.git_hash);
@@ -279,6 +293,14 @@ pub mod prelude {
         // StrategySignal,
     };
     
+    pub use crate::indicators::{
+        Indicator,
+        ATR,
+        MACD,
+        EMA,
+        SMA,
+    };
+    
     pub use anyhow::{Result, Context};
 }
 
@@ -326,7 +348,7 @@ mod tests {
     fn test_version_string() {
         let ver_str = version_string();
         assert!(ver_str.contains(VERSION));
-        assert!(ver_str.contains(CODENAME));
+        assert!(ver_str.contains("CONSERVATIVE AI"));
         println!("✅ Version string: {}", ver_str);
     }
     
