@@ -213,55 +213,33 @@ required-features = []
 # EXAMPLES - V2.5 Testing & Analysis Suite
 # ═══════════════════════════════════════════════════════════════════════════
 
-# ── V2.5 Core Examples ───────────────────────────────────────────────────────────
+# TODO: Fix examples to use updated APIs
+# The following examples need to be updated:
+# - giga_test.rs: Uses old PaperTradingEngine API
+# - paper_trading_demo.rs: Uses old feed_ids import path
+# - Files missing: auto_optimizer.rs, profile_test.rs, extended_test.rs, live_dashboard.rs
 
-# TODO: Fix giga_test.rs to use updated API
+# ── Working Examples ─────────────────────────────────────────────────────────────
 # [[example]]
-# name = "giga_test"
-# path = "examples/giga_test.rs"
-# required-features = ["v25-enhancements"]
-
-[[example]]
-name = "auto_optimizer"
-path = "examples/auto_optimizer.rs"
-required-features = []
-
-[[example]]
-name = "profile_test"
-path = "examples/profile_test.rs"
-required-features = []
-
-# ── Production Examples ──────────────────────────────────────────────────────────
-[[example]]
-name = "paper_trading_demo"
-path = "examples/paper_trading_demo.rs"
-required-features = []
-
-[[example]]
-name = "extended_test"
-path = "examples/extended_test.rs"
-required-features = []
+# name = "master_giga"
+# path = "examples/master_giga.rs"
+# required-features = []
 
 # ── WebSocket Examples (Optional) ────────────────────────────────────────────────────
-[[example]]
-name = "debug_websocket"
-path = "examples/debug_websocket.rs"
-required-features = ["websockets"]
-
-[[example]]
-name = "test_websocket"
-path = "examples/test_websocket.rs"
-required-features = ["websockets"]
-
-[[example]]
-name = "debug_pyth"
-path = "examples/debug_pyth.rs"
-required-features = ["websockets"]
-
-# Removed: live_dashboard.rs (file doesn't exist)
 # [[example]]
-# name = "live_dashboard"
-# path = "examples/live_dashboard.rs"
+# name = "debug_websocket"
+# path = "examples/debug_websocket.rs"
+# required-features = ["websockets"]
+
+# [[example]]
+# name = "test_websocket"
+# path = "examples/test_websocket.rs"
+# required-features = ["websockets"]
+
+# [[example]]
+# name = "debug_pyth"
+# path = "examples/debug_pyth.rs"
+# required-features = ["websockets"]
 
 # ═══════════════════════════════════════════════════════════════════════════
 # BENCHMARKS - Performance Testing
