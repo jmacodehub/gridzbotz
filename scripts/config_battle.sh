@@ -35,8 +35,8 @@ REPORT_INTERVAL="1h"  # Status update frequency
 
 # 🔥 V5 DEFAULT CONFIGS - AI vs Static Showdown!
 DEFAULT_CONFIGS=(
-    "config/optimized/conservative_v4.toml"                    # 🛡️ Baseline: Safe & steady
-    "config/optimized/balanced_v4.toml"                        # ⚖️ Comparison: Moderate risk
+    "config/optimized/conservative_v4.1.toml"                  # 🛡️ Baseline: Safe & steady (v4.1 optimized)
+    "config/optimized/balanced_v4.1.toml"                      # ⚖️ Comparison: Moderate risk (v4.1 optimized)
     "config/optimized/multi_strategy_v5_ai_ultimate.toml"      # 🧠🔥 THE CHAMPION: Full AI!
 )
 
@@ -87,7 +87,7 @@ for i in "${!CONFIGS[@]}"; do
     if [[ "$CONFIG" == *"v5"* ]]; then
         AI_BADGE=" 🧠🔥"
     else
-        AI_BADGE=""
+        AI_BADGE=" 📊"
     fi
     
     echo -e "${BOLD}${YELLOW}[$((i+1))]${RESET} ${GREEN}$NICKNAME${AI_BADGE}${RESET}"
