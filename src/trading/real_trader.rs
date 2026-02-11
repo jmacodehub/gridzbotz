@@ -1,9 +1,20 @@
 //! ═══════════════════════════════════════════════════════════════════════════
-//! 🔥 REAL TRADER ENGINE V2.0 - MODULAR & BULLETPROOF
+//! 🔥 REAL TRADER ENGINE V3.0 - MEV-PROTECTED! 🛡️
+//! ═══════════════════════════════════════════════════════════════════════════
+//!
+//! **V3.0 ENHANCEMENTS:**
+//! ✅ Optional MEV Protection (Phase 5 Complete!)
+//! ✅ Dynamic priority fee optimization
+//! ✅ Pre-trade slippage validation
+//! ✅ Jito bundle support (optional)
+//! ✅ Backward compatible (MEV is opt-in)
+//! ✅ Enhanced metrics tracking
+//!
+//! February 11, 2026 - Phase 5: MEV Protection Integrated!
 //! ═══════════════════════════════════════════════════════════════════════════
 
 use anyhow::{bail, Context, Result};
-use log::{debug, error, info};
+use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -21,6 +32,7 @@ use super::executor::{TransactionExecutor, ExecutorConfig};
 use super::trade::Trade;
 use super::paper_trader::{Order, OrderSide};
 use super::jupiter_swap::{JupiterSwapClient, WSOL_MINT, USDC_MINT};
+use super::mev_protection::MevProtectionConfig; // 🛡️ NEW!
 use solana_sdk::{instruction::Instruction, pubkey::Pubkey};
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -38,6 +50,13 @@ pub struct RealTradingConfig {
     pub maker_fee_bps: Option<f64>,
     pub taker_fee_bps: Option<f64>,
     pub reconcile_balances_every_n_trades: Option<u32>,
+    
+    /// 🛡️ NEW: Optional MEV Protection (V3.0)
+    /// If Some(), enables:
+    /// - Dynamic priority fee optimization
+    /// - Slippage validation before trades
+    /// - Optional Jito bundle support
+    pub mev_protection: Option<MevProtectionConfig>,
 }
 
 impl Default for RealTradingConfig {
@@ -53,11 +72,23 @@ impl Default for RealTradingConfig {
             maker_fee_bps: Some(2.0),
             taker_fee_bps: Some(4.0),
             reconcile_balances_every_n_trades: Some(10),
+            mev_protection: None, // 🛡️ Disabled by default (opt-in)
         }
     }
 }
 
 impl RealTradingConfig {
+    /// Create config with MEV protection enabled
+    pub fn with_mev_protection(mut self, mev_config: MevProtectionConfig) -> Self {
+        self.mev_protection = Some(mev_config);
+        self
+    }
+    
+    /// Create conservative config with MEV protection
+    pub fn conservative_with_mev() -> Self {
+        Self::default().with_mev_protection(MevProtectionConfig::conservative())
+    }
+
     pub fn validate(&self) -> Result<()> {
         self.keystore.validate()?;
         self.executor.validate()?;
@@ -72,6 +103,11 @@ impl RealTradingConfig {
             if slippage > 1000 {
                 bail!("slippage_bps too high: {} (max 1000 = 10%)", slippage);
             }
+        }
+        
+        // 🛡️ Validate MEV config if present
+        if let Some(ref mev) = self.mev_protection {
+            mev.validate()?;
         }
 
         Ok(())
@@ -129,10 +165,14 @@ pub struct PerformanceStats {
     pub largest_win: f64,
     pub largest_loss: f64,
     pub profit_factor: f64,
+    
+    /// 🛡️ NEW: MEV protection stats (V3.0)
+    pub mev_protected_trades: usize,
+    pub slippage_rejections: usize,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 🔥 REAL TRADING ENGINE
+// 🔥 REAL TRADING ENGINE (V3.0 - MEV-PROTECTED!)
 // ─────────────────────────────────────────────────────────────────────────────
 pub struct RealTradingEngine {
     keystore: Arc<SecureKeystore>,
@@ -147,6 +187,7 @@ pub struct RealTradingEngine {
     successful_executions: Arc<AtomicU64>,
     failed_executions: Arc<AtomicU64>,
     emergency_shutdown: Arc<AtomicBool>,
+    slippage_rejections: Arc<AtomicU64>, // 🛡️ Track slippage rejections
 }
 
 impl RealTradingEngine {
@@ -156,12 +197,23 @@ impl RealTradingEngine {
         initial_balance_usdc: f64,
         initial_balance_sol: f64,
     ) -> Result<Self> {
-        info!("🚀 Initializing Real Trading Engine V2.0");
+        info!("🚀 Initializing Real Trading Engine V3.0 (MEV-Protected!)");
 
         config.validate()?;
 
         let keystore = Arc::new(SecureKeystore::from_file(config.keystore.clone())?);
-        let executor = Arc::new(RwLock::new(TransactionExecutor::new(config.executor.clone())?));
+        
+        // 🛡️ Create executor with optional MEV protection
+        let executor = if let Some(ref mev_config) = config.mev_protection {
+            info!("🛡️  MEV Protection: ENABLED");
+            Arc::new(RwLock::new(
+                TransactionExecutor::new(config.executor.clone())?
+                    .with_mev_protection(mev_config.clone())?
+            ))
+        } else {
+            info!("🛡️  MEV Protection: DISABLED (enable with .with_mev_protection())");
+            Arc::new(RwLock::new(TransactionExecutor::new(config.executor.clone())?))
+        };
 
         // Use Config for CircuitBreaker
         let circuit_breaker = Arc::new(RwLock::new(
@@ -186,6 +238,7 @@ impl RealTradingEngine {
             successful_executions: Arc::new(AtomicU64::new(0)),
             failed_executions: Arc::new(AtomicU64::new(0)),
             emergency_shutdown: Arc::new(AtomicBool::new(false)),
+            slippage_rejections: Arc::new(AtomicU64::new(0)),
         })
     }
 
@@ -210,14 +263,33 @@ impl RealTradingEngine {
         self.keystore.validate_transaction(amount_usdc).await?;
 
         let order_id = format!("REAL-{:06}", self.next_id.fetch_add(1, Ordering::SeqCst));
-        info!("📝 {:?} order: {:.4} SOL @ ${:.2}", side, size, price);
+        info!("📋 {:?} order: {:.4} SOL @ ${:.2}", side, size, price);
 
         self.total_executions.fetch_add(1, Ordering::SeqCst);
 
         // 🔥 BUILD ACTUAL JUPITER SWAP!
-        let swap_instructions = self.build_jupiter_swap(side, price, size).await?;
-
+        let (swap_instructions, quote_price) = self.build_jupiter_swap(side, price, size).await?;
+        
+        // 🛡️ VALIDATE SLIPPAGE (if MEV protection enabled)
+        let executor = self.executor.read().await;
+        if executor.is_mev_protected() {
+            let slippage_ok = executor.validate_slippage(price, quote_price)?;
+            
+            if !slippage_ok {
+                self.slippage_rejections.fetch_add(1, Ordering::SeqCst);
+                bail!(
+                    "🛡️  Trade rejected: Slippage too high! Expected ${:.4}, got ${:.4}",
+                    price, quote_price
+                );
+            }
+            
+            info!("🛡️  Slippage validated: ${:.4} -> ${:.4} (✅ OK)", price, quote_price);
+        }
+        
+        // Drop read lock before executing
+        drop(executor);
         let executor = self.executor.write().await;
+
         let signature = executor.execute(
             self.keystore.pubkey(),
             swap_instructions,
@@ -256,16 +328,16 @@ impl RealTradingEngine {
         }
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
+    // ─────────────────────────────────────────────────────────────────────────────
     // 🪐 JUPITER SWAP INTEGRATION - THE MONEY MAKER!
-    // ─────────────────────────────────────────────────────────────────────────
-    /// Build Jupiter swap transaction
+    // ─────────────────────────────────────────────────────────────────────────────
+    /// Build Jupiter swap transaction and return (instructions, actual_quote_price)
     async fn build_jupiter_swap(
         &self,
         side: OrderSide,
-        price: f64,
+        _expected_price: f64,
         size: f64,
-    ) -> Result<Vec<Instruction>> {
+    ) -> Result<(Vec<Instruction>, f64)> {
         info!("🪐 Building Jupiter swap transaction...");
 
         // Initialize Jupiter client with slippage from config
@@ -280,7 +352,7 @@ impl RealTradingEngine {
         let (input_mint, output_mint, amount_lamports) = match side {
             OrderSide::Buy => {
                 // Buy SOL with USDC
-                let usdc_amount = (price * size * 1_000_000.0) as u64; // USDC has 6 decimals
+                let usdc_amount = (_expected_price * size * 1_000_000.0) as u64; // USDC has 6 decimals
                 (usdc, wsol, usdc_amount)
             }
             OrderSide::Sell => {
@@ -299,10 +371,27 @@ impl RealTradingEngine {
             .await
             .context("Failed to get Jupiter quote")?;
 
+        // Calculate actual price from quote
+        let quote_price = match side {
+            OrderSide::Buy => {
+                // Price = USDC spent / SOL received
+                let usdc_spent = amount_lamports as f64 / 1_000_000.0;
+                let sol_received = quote.out_amount as f64 / 1_000_000_000.0;
+                usdc_spent / sol_received
+            }
+            OrderSide::Sell => {
+                // Price = USDC received / SOL sold
+                let sol_sold = amount_lamports as f64 / 1_000_000_000.0;
+                let usdc_received = quote.out_amount as f64 / 1_000_000.0;
+                usdc_received / sol_sold
+            }
+        };
+
         info!("   Quote received: {} → {} lamports", amount_lamports, quote.out_amount);
         info!("   Price impact: {:.3}%", quote.price_impact_pct);
+        info!("   Effective price: ${:.4}", quote_price);
 
-        // Get swap transaction - FIX: Dereference pubkey!
+        // Get swap transaction
         let (versioned_tx, _last_valid_height) = jupiter
             .get_swap_transaction(&quote, *self.keystore.pubkey())
             .await
@@ -354,7 +443,7 @@ impl RealTradingEngine {
 
         info!("✅ Jupiter swap transaction built ({} instructions)", instructions.len());
 
-        Ok(instructions)
+        Ok((instructions, quote_price))
     }
 
     async fn reconcile_balances(&self, current_price: f64) -> Result<()> {
@@ -421,6 +510,12 @@ impl RealTradingEngine {
         if pair_trades > 0 {
             stats.win_rate = (stats.winning_trades as f64 / pair_trades as f64) * 100.0;
         }
+        
+        // 🛡️ Add MEV protection stats
+        let executor = self.executor.read().await;
+        let exec_stats = executor.get_stats();
+        stats.mev_protected_trades = exec_stats.mev_protected_executions as usize;
+        stats.slippage_rejections = self.slippage_rejections.load(Ordering::SeqCst) as usize;
 
         stats
     }
@@ -451,10 +546,12 @@ impl RealTradingEngine {
         let stats = self.get_performance_stats().await;
         let (daily_trades, daily_volume) = self.keystore.get_daily_stats().await;
         let executor_stats = self.executor.read().await.get_stats();
+        let is_mev_protected = self.executor.read().await.is_mev_protected();
 
         println!();
         println!("═══════════════════════════════════════════════════════");
-        println!("  REAL TRADING ENGINE V2.0 - STATUS");
+        println!("  REAL TRADING ENGINE V3.0 - STATUS {}",
+            if is_mev_protected { "🛡️  [MEV-PROTECTED]" } else { "" });
         println!("═══════════════════════════════════════════════════════");
         println!();
         println!("💰 Balances:");
@@ -470,6 +567,14 @@ impl RealTradingEngine {
         println!("   Trades:      {} ({} wins, {} losses)",
             stats.total_trades, stats.winning_trades, stats.losing_trades);
         println!();
+        
+        if is_mev_protected {
+            println!("🛡️  MEV Protection:");
+            println!("   Protected Trades:     {}", stats.mev_protected_trades);
+            println!("   Slippage Rejections:  {}", stats.slippage_rejections);
+            println!();
+        }
+        
         println!("📈 Today:");
         println!("   Trades:  {}", daily_trades);
         println!("   Volume:  ${:.2}", daily_volume);
@@ -511,6 +616,12 @@ impl RealTradingEngine {
         self.display_status(0.0).await;
         Ok(())
     }
+    
+    /// Check if MEV protection is enabled
+    pub fn is_mev_protected(&self) -> bool {
+        // We can't await here, so return based on config
+        self.config.mev_protection.is_some()
+    }
 }
 
 #[cfg(test)]
@@ -534,5 +645,16 @@ mod tests {
         // Invalid slippage (too high)
         config.slippage_bps = Some(2000);
         assert!(config.validate().is_err());
+    }
+    
+    #[test]
+    fn test_mev_config() {
+        // Default config (no MEV)
+        let config = RealTradingConfig::default();
+        assert!(config.mev_protection.is_none());
+        
+        // Conservative MEV config
+        let mev_config = RealTradingConfig::conservative_with_mev();
+        assert!(mev_config.mev_protection.is_some());
     }
 }
