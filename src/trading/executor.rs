@@ -1,5 +1,5 @@
 //! ═══════════════════════════════════════════════════════════════════════════
-//! ⚡ EXECUTOR - Transaction Execution Engine
+//! ⚡ EXECUTOR - Transaction Execution Engine (MEV-Protected!)
 //! ═══════════════════════════════════════════════════════════════════════════
 //!
 //! ✅ Transaction building with priority fees
@@ -9,8 +9,9 @@
 //! ✅ Error handling and recovery
 //! ✅ Automatic endpoint rotation with stats
 //! ✅ Thread-safe atomic operations
+//! 🛡️  **NEW: Optional MEV Protection (V5.0)**
 //!
-//! November 2025 | Project Flash V6.1 - Execution Layer (Fixed & Optimized)
+//! February 2026 | Project Flash V7.0 - MEV-Protected Execution Layer
 //! ═══════════════════════════════════════════════════════════════════════════
 
 use anyhow::{bail, Context, Result};
@@ -30,6 +31,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
+
+// 🛡️ Import MEV protection (optional)
+use crate::trading::mev_protection::MevProtectionManager;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // ⚙️ CONFIGURATION
@@ -354,19 +358,35 @@ impl RpcClientPool {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// ⚡ TRANSACTION EXECUTOR
+// ⚡ TRANSACTION EXECUTOR (V7.0 - MEV-PROTECTED!)
 // ═══════════════════════════════════════════════════════════════════════════
 
-#[derive(Debug)]
 pub struct TransactionExecutor {
     rpc: Arc<RpcClientPool>,
     config: ExecutorConfig,
+    mev_protection: Option<MevProtectionManager>, // 🛡️ Optional MEV protection!
     total_executions: AtomicU64,
     successful_executions: AtomicU64,
     failed_executions: AtomicU64,
+    mev_protected_executions: AtomicU64, // 📊 Track MEV-protected txs
+}
+
+// ✅ Manual Debug implementation
+impl std::fmt::Debug for TransactionExecutor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TransactionExecutor")
+            .field("config", &self.config)
+            .field("mev_protection_enabled", &self.mev_protection.is_some())
+            .field("total_executions", &self.total_executions.load(Ordering::Relaxed))
+            .field("successful_executions", &self.successful_executions.load(Ordering::Relaxed))
+            .field("failed_executions", &self.failed_executions.load(Ordering::Relaxed))
+            .field("mev_protected_executions", &self.mev_protected_executions.load(Ordering::Relaxed))
+            .finish()
+    }
 }
 
 impl TransactionExecutor {
+    /// Create new executor WITHOUT MEV protection (existing behavior)
     pub fn new(config: ExecutorConfig) -> Result<Self> {
         config.validate()?;
         let rpc = Arc::new(RpcClientPool::new(&config));
@@ -378,17 +398,54 @@ impl TransactionExecutor {
             config.confirmation_timeout_secs.unwrap_or(60),
             config.priority_fee_microlamports.unwrap_or(10_000)
         );
+        info!("🛡️  MEV Protection: DISABLED (call .with_mev_protection() to enable)");
 
         Ok(Self {
             rpc,
             config,
+            mev_protection: None,
             total_executions: AtomicU64::new(0),
             successful_executions: AtomicU64::new(0),
             failed_executions: AtomicU64::new(0),
+            mev_protected_executions: AtomicU64::new(0),
         })
     }
 
-    /// Build and send a transaction
+    /// 🛡️ Enable MEV protection (builder pattern)
+    /// 
+    /// # Example
+    /// ```ignore
+    /// use solana_grid_bot::trading::prelude::*;
+    /// 
+    /// let executor = TransactionExecutor::new(executor_config)?
+    ///     .with_mev_protection(MevProtectionConfig::conservative())?;
+    /// ```
+    pub fn with_mev_protection(
+        mut self,
+        mev_config: crate::trading::mev_protection::MevProtectionConfig,
+    ) -> Result<Self> {
+        let mev = MevProtectionManager::new(mev_config)?;
+        
+        info!("🛡️  MEV Protection: ENABLED");
+        info!("   Priority Fee Optimizer: {}", if mev.config().priority_fee.enabled { "ON" } else { "OFF" });
+        info!("   Slippage Guardian: {}", if mev.config().slippage.enabled { "ON" } else { "OFF" });
+        info!("   Jito Bundles: {}", if mev.config().jito.enabled { "ON" } else { "OFF" });
+        
+        self.mev_protection = Some(mev);
+        Ok(self)
+    }
+
+    /// Check if MEV protection is enabled
+    pub fn is_mev_protected(&self) -> bool {
+        self.mev_protection.is_some()
+    }
+
+    /// Get MEV protection manager (if enabled)
+    pub fn mev_protection(&self) -> Option<&MevProtectionManager> {
+        self.mev_protection.as_ref()
+    }
+
+    /// Build and send a transaction (with optional MEV protection)
     pub async fn execute(
         &self,
         payer: &Pubkey,
@@ -398,6 +455,23 @@ impl TransactionExecutor {
         let exec_num = self.total_executions.fetch_add(1, Ordering::SeqCst) + 1;
 
         debug!("🚀 Execution #{} starting ({} instructions)", exec_num, instructions.len());
+
+        // 🛡️ Get priority fee (MEV-optimized if enabled)
+        let priority_fee = if let Some(mev) = &self.mev_protection {
+            self.mev_protected_executions.fetch_add(1, Ordering::SeqCst);
+            match mev.get_optimal_priority_fee().await {
+                Ok(fee) => {
+                    debug!("🛡️  Using MEV-optimized priority fee: {} μ", fee);
+                    fee
+                }
+                Err(e) => {
+                    warn!("⚠️  Failed to get MEV fee, using fallback: {}", e);
+                    self.config.priority_fee_microlamports.unwrap_or(10_000)
+                }
+            }
+        } else {
+            self.config.priority_fee_microlamports.unwrap_or(10_000)
+        };
 
         // Get recent blockhash with retry
         let recent_blockhash = self
@@ -445,16 +519,44 @@ impl TransactionExecutor {
         }
     }
 
+    /// 🛡️ Validate slippage before execution (if MEV protection enabled)
+    /// 
+    /// Call this before execute() to check if slippage is acceptable
+    pub fn validate_slippage(
+        &self,
+        expected_price: f64,
+        actual_price: f64,
+    ) -> Result<bool> {
+        if let Some(mev) = &self.mev_protection {
+            let validation = mev.validate_slippage(expected_price, actual_price)?;
+            
+            if !validation.is_acceptable {
+                warn!(
+                    "🛡️  Slippage rejected: {:.4}% > {:.4}% max",
+                    validation.slippage_bps / 100.0,
+                    validation.max_allowed_bps / 100.0
+                );
+            }
+            
+            Ok(validation.is_acceptable)
+        } else {
+            // No MEV protection = always accept
+            Ok(true)
+        }
+    }
+
     /// Get execution statistics
     pub fn get_stats(&self) -> ExecutionStats {
         let total = self.total_executions.load(Ordering::SeqCst);
         let successful = self.successful_executions.load(Ordering::SeqCst);
         let failed = self.failed_executions.load(Ordering::SeqCst);
+        let mev_protected = self.mev_protected_executions.load(Ordering::SeqCst);
 
         ExecutionStats {
             total_executions: total,
             successful_executions: successful,
             failed_executions: failed,
+            mev_protected_executions: mev_protected,
             success_rate: if total > 0 {
                 (successful as f64 / total as f64) * 100.0
             } else {
@@ -478,6 +580,7 @@ pub struct ExecutionStats {
     pub total_executions: u64,
     pub successful_executions: u64,
     pub failed_executions: u64,
+    pub mev_protected_executions: u64, // 🛡️ NEW!
     pub success_rate: f64,
 }
 
@@ -516,8 +619,33 @@ mod tests {
             total_executions: 100,
             successful_executions: 95,
             failed_executions: 5,
+            mev_protected_executions: 95,
             success_rate: 95.0,
         };
         assert_eq!(stats.success_rate, 95.0);
+        assert_eq!(stats.mev_protected_executions, 95);
+    }
+
+    #[test]
+    fn test_executor_without_mev() {
+        let config = ExecutorConfig::default();
+        let executor = TransactionExecutor::new(config).unwrap();
+        
+        assert!(!executor.is_mev_protected());
+        assert!(executor.mev_protection().is_none());
+    }
+
+    #[test]
+    fn test_executor_with_mev() {
+        use crate::trading::mev_protection::MevProtectionConfig;
+        
+        let config = ExecutorConfig::default();
+        let executor = TransactionExecutor::new(config)
+            .unwrap()
+            .with_mev_protection(MevProtectionConfig::conservative())
+            .unwrap();
+        
+        assert!(executor.is_mev_protected());
+        assert!(executor.mev_protection().is_some());
     }
 }
