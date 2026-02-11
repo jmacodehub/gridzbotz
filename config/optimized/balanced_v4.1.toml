@@ -1,0 +1,151 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# ⚖️🏆 BALANCED V4.1 - LIGHT OPTIMIZED! 🏆⚖️
+# Upgraded from v4.0 → v4.1 (Pre-AI Battle Optimization)
+# 
+# Strategy: Perfect middle ground with smart regime filtering
+# Best for: Most market conditions, balanced risk/reward
+# Risk Level: ⚖️ BALANCED
+# 
+# V4.1 CRITICAL FIXES + OPTIMIZATIONS:
+#   🐛 Added missing max_orders_per_side = 16 (CRITICAL!)
+#   ⚡ Pyth update: 500ms → 800ms (match V5 speed)
+#   🎯 Now properly balanced and competitive!
+# 
+# EXPECTED VS V5 AI:
+#   V4.1 ROI: +0.3% to +0.7% (solid manual tuning)
+#   V5 AI ROI: +0.5% to +1.2% (adaptive intelligence!)
+# ═══════════════════════════════════════════════════════════════════════════
+
+test_name = "Balanced v4.1 - Light Optimized"
+
+[bot]
+name = "Balanced-Bot-v4.1-Optimized"
+version = "4.1.0"
+environment = "development"
+
+[network]
+cluster = "devnet"
+rpc_url = "https://api.devnet.solana.com"
+commitment = "confirmed"
+
+[paper_trading]
+initial_usdc = 5000.0
+initial_sol = 10.0
+test_duration_hours = 10
+
+[trading]
+# Core Grid Settings
+grid_levels = 32
+grid_spacing_percent = 0.18
+min_order_size = 0.1
+max_position_size = 100.0
+min_usdc_reserve = 300.0
+min_sol_reserve = 2.0
+
+# Dynamic Grid
+enable_dynamic_grid = true
+reposition_threshold = 0.7
+volatility_window = 100
+
+# Auto-Rebalancing
+enable_auto_rebalance = true
+enable_smart_rebalance = true
+rebalance_threshold_pct = 5.0
+rebalance_cooldown_secs = 60
+
+# Order Management
+max_orders_per_side = 16            # 🔥 V4.1: ADDED! (was missing - critical fix!)
+order_refresh_interval_secs = 600
+enable_market_orders = false
+enable_fee_optimization = true
+
+# Risk Limits
+min_profit_threshold_pct = 0.1
+max_slippage_pct = 1.0
+enable_price_bounds = false
+
+# Market Regime Gate
+enable_regime_gate = true
+min_volatility_to_trade = 0.35
+pause_in_very_low_vol = true
+
+# Order Lifecycle
+enable_order_lifecycle = true
+order_max_age_minutes = 10
+order_refresh_interval_minutes = 5
+min_orders_to_maintain = 8
+
+# Advanced Features (DISABLED - Static config!)
+enable_adaptive_spacing = false
+enable_smart_position_sizing = false
+
+[strategies]
+active = ["grid"]
+consensus_mode = "single"
+
+[strategies.grid]
+enabled = true
+weight = 1.0
+min_confidence = 0.5
+
+[strategies.momentum]
+enabled = false
+weight = 0.8
+min_confidence = 0.6
+lookback_period = 20
+threshold = 0.02
+
+[strategies.mean_reversion]
+enabled = false
+weight = 0.7
+min_confidence = 0.6
+sma_period = 20
+std_dev_multiplier = 2.0
+
+[strategies.rsi]
+enabled = false
+weight = 0.9
+min_confidence = 0.7
+period = 14
+oversold_threshold = 30.0
+overbought_threshold = 70.0
+
+[risk]
+max_position_size_pct = 30.0
+max_drawdown_pct = 10.0
+stop_loss_pct = 5.0
+take_profit_pct = 10.0
+enable_circuit_breaker = true
+circuit_breaker_threshold_pct = 8.0
+circuit_breaker_cooldown_secs = 300
+
+[pyth]
+http_endpoint = "https://hermes.pyth.network"
+feed_ids = ["0xef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d"]
+update_interval_ms = 800            # 🔥 V4.1: 500 → 800 (match V5 speed!)
+
+[performance]
+cycle_interval_ms = 100
+startup_delay_ms = 1000
+
+[logging]
+level = "info"
+file_path = "logs/balanced_v4_optimized.log"
+enable_file_logging = true
+
+[metrics]
+enable_metrics = true
+stats_interval = 50
+
+[database]
+enabled = false
+
+[alerts]
+enabled = false
+
+# ═══════════════════════════════════════════════════════════════════════════
+# ADAPTIVE OPTIMIZER - DISABLED (V4.1 = STATIC CONFIG)
+# ═══════════════════════════════════════════════════════════════════════════
+
+[adaptive_optimizer]
+enabled = false  # ⚖️ V4.1 is STATIC - no AI adaptation
