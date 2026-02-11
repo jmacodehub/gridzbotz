@@ -30,7 +30,7 @@ RESET='\033[0m'
 # ─────────────────────────────────────────────────────────────────────────
 # ⚙️  CONFIGURATION
 # ─────────────────────────────────────────────────────────────────────────
-DURATION="24h"  # Battle duration
+DURATION="24h"  # Battle duration (parsed below)
 REPORT_INTERVAL="1h"  # Status update frequency
 
 # 🔥 V5 DEFAULT CONFIGS - AI vs Static Showdown!
@@ -59,6 +59,14 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# Parse duration (convert to hours for CLI)
+if [[ $DURATION =~ ^([0-9]+)h$ ]]; then
+    DURATION_HOURS="${BASH_REMATCH[1]}"
+else
+    echo "Error: Duration must be in format like '20h' or '24h'"
+    exit 1
+fi
+
 # Use custom or default configs
 if [ -n "${CUSTOM_CONFIGS}" ]; then
     CONFIGS=("${CUSTOM_CONFIGS[@]}")
@@ -75,7 +83,7 @@ echo "  🤖 AI CONFIG BATTLE ROYALE V5.0 🤖"
 echo "  🧠 Now with FULL ADAPTIVE OPTIMIZATION! 🔥"
 echo "═══════════════════════════════════════════════════════════════════════"
 echo -e "${RESET}"
-echo -e "${CYAN}Duration:${RESET} $DURATION"
+echo -e "${CYAN}Duration:${RESET} ${DURATION_HOURS} hours"
 echo -e "${CYAN}Contenders:${RESET} ${#CONFIGS[@]}"
 echo ""
 
@@ -91,7 +99,7 @@ for i in "${!CONFIGS[@]}"; do
     fi
     
     echo -e "${BOLD}${YELLOW}[$((i+1))]${RESET} ${GREEN}$NICKNAME${AI_BADGE}${RESET}"
-    echo "    ${CYAN}→${RESET} $CONFIG"
+    echo -e "    ${CYAN}→${RESET} $CONFIG"
 done
 
 echo ""
@@ -113,7 +121,6 @@ for i in "${!CONFIGS[@]}"; do
     CONFIG="${CONFIGS[$i]}"
     NICKNAME=$(basename "$CONFIG" .toml)
     LOG_FILE="$LOG_DIR/${NICKNAME}.log"
-    METRICS_FILE="$LOG_DIR/${NICKNAME}_metrics.json"
     
     if [[ "$CONFIG" == *"v5"* ]]; then
         AI_BADGE="🧠"
@@ -123,12 +130,11 @@ for i in "${!CONFIGS[@]}"; do
     
     echo -e "${CYAN}[Battle $((i+1))]${RESET} Starting ${GREEN}$NICKNAME${RESET} $AI_BADGE"
     
-    # Launch bot in background with metrics export
+    # Launch bot in background
+    # Note: paper_trading settings are in config files!
     cargo run --release -- \
         --config "$CONFIG" \
-        --paper-trading \
-        --duration "$DURATION" \
-        --metrics-export "$METRICS_FILE" \
+        --duration-hours "$DURATION_HOURS" \
         > "$LOG_FILE" 2>&1 &
     
     PIDS+=($!)
@@ -161,7 +167,7 @@ while true; do
     
     echo ""
     echo -e "${BOLD}${MAGENTA}═══════════════════════════════════════════════════════════════${RESET}"
-    echo -e "${BOLD}${CYAN}  BATTLE STATUS - ${HOURS}h Elapsed${RESET}"
+    echo -e "${BOLD}${CYAN}  BATTLE STATUS - ${HOURS}h / ${DURATION_HOURS}h Elapsed${RESET}"
     echo -e "${BOLD}${MAGENTA}═══════════════════════════════════════════════════════════════${RESET}"
     echo ""
     
@@ -170,7 +176,7 @@ while true; do
         CONFIG="${CONFIGS[$i]}"
         NICKNAME=$(basename "$CONFIG" .toml)
         PID=${PIDS[$i]}
-        METRICS_FILE="$LOG_DIR/${NICKNAME}_metrics.json"
+        LOG_FILE="$LOG_DIR/${NICKNAME}.log"
         
         if ps -p "$PID" > /dev/null 2>&1; then
             STATUS="${GREEN}RUNNING${RESET}"
@@ -187,17 +193,16 @@ while true; do
         echo -e "${BOLD}[$((i+1))] $NICKNAME${AI_BADGE}${RESET}"
         echo -e "   Status: $STATUS"
         
-        # Try to extract quick metrics from log
-        if [ -f "$METRICS_FILE" ]; then
-            PNL=$(jq -r '.total_pnl // "N/A"' "$METRICS_FILE" 2>/dev/null || echo "N/A")
-            TRADES=$(jq -r '.total_trades // "N/A"' "$METRICS_FILE" 2>/dev/null || echo "N/A")
-            WIN_RATE=$(jq -r '.win_rate // "N/A"' "$METRICS_FILE" 2>/dev/null || echo "N/A")
+        # Try to extract quick metrics from log (last stats line)
+        if [ -f "$LOG_FILE" ]; then
+            TRADES=$(grep -c "Trade executed" "$LOG_FILE" 2>/dev/null || echo "0")
+            echo -e "   Trades: ${YELLOW}$TRADES${RESET}"
             
-            echo -e "   PnL: ${YELLOW}\$$PNL${RESET}"
-            echo -e "   Trades: $TRADES"
-            echo -e "   Win Rate: $WIN_RATE%"
+            # Show last significant log line
+            LAST_LINE=$(tail -5 "$LOG_FILE" | grep -E "(Trade|Grid|AI|Position|PnL)" | tail -1 || echo "Running...")
+            echo -e "   Latest: ${CYAN}${LAST_LINE:0:60}...${RESET}"
         else
-            echo -e "   ${YELLOW}Metrics pending...${RESET}"
+            echo -e "   ${YELLOW}No log yet...${RESET}"
         fi
         
         echo ""
@@ -227,59 +232,51 @@ echo -e "${BOLD}${CYAN}  🏆 FINAL RESULTS & WINNER SELECTION 🏆${RESET}"
 echo -e "${BOLD}${MAGENTA}═══════════════════════════════════════════════════════════════${RESET}"
 echo ""
 
-# Run analysis script (Python or Rust analyzer)
-if command -v python3 &> /dev/null; then
-    python3 scripts/analyze_battle.py "$LOG_DIR"
-else
-    # Fallback: Simple bash analysis
-    echo -e "${YELLOW}⚠️  Python not found, using basic analysis${RESET}"
-    echo ""
-    
-    BEST_SCORE=0
-    WINNER=""
-    
-    for i in "${!CONFIGS[@]}"; do
-        NICKNAME=$(basename "${CONFIGS[$i]}" .toml)
-        METRICS_FILE="$LOG_DIR/${NICKNAME}_metrics.json"
-        
-        if [ -f "$METRICS_FILE" ]; then
-            PNL=$(jq -r '.total_pnl // 0' "$METRICS_FILE" 2>/dev/null || echo "0")
-            WIN_RATE=$(jq -r '.win_rate // 0' "$METRICS_FILE" 2>/dev/null || echo "0")
-            
-            # Simple score: PnL * 0.7 + WinRate * 0.3
-            SCORE=$(echo "$PNL * 0.7 + $WIN_RATE * 0.3" | bc -l)
-            
-            if [[ "${CONFIGS[$i]}" == *"v5"* ]]; then
-                AI_BADGE=" 🧠"
-            else
-                AI_BADGE=""
-            fi
-            
-            echo -e "${BOLD}[$((i+1))] $NICKNAME${AI_BADGE}${RESET}"
-            echo -e "   PnL: \$$PNL"
-            echo -e "   Win Rate: $WIN_RATE%"
-            echo -e "   ${CYAN}Score: $SCORE${RESET}"
-            echo ""
-            
-            if (( $(echo "$SCORE > $BEST_SCORE" | bc -l) )); then
-                BEST_SCORE=$SCORE
-                WINNER=$NICKNAME
-            fi
-        fi
-    done
-    
-    echo -e "${BOLD}${GREEN}═══════════════════════════════════════════════════════════════${RESET}"
-    echo -e "${BOLD}${YELLOW}  🥇 WINNER: $WINNER 🥇${RESET}"
-    echo -e "${BOLD}${YELLOW}  Score: $BEST_SCORE${RESET}"
-    echo -e "${BOLD}${GREEN}═══════════════════════════════════════════════════════════════${RESET}"
-    echo ""
-fi
+# Simple analysis: Count trades and check for errors
+BEST_SCORE=0
+WINNER=""
 
-echo -e "${CYAN}Full results saved to:${RESET} $LOG_DIR"
+for i in "${!CONFIGS[@]}"; do
+    NICKNAME=$(basename "${CONFIGS[$i]}" .toml)
+    LOG_FILE="$LOG_DIR/${NICKNAME}.log"
+    
+    if [ -f "$LOG_FILE" ]; then
+        TRADES=$(grep -c "Trade executed" "$LOG_FILE" 2>/dev/null || echo "0")
+        ERRORS=$(grep -c "ERROR" "$LOG_FILE" 2>/dev/null || echo "0")
+        
+        # Simple score: trades - errors
+        SCORE=$((TRADES - ERRORS))
+        
+        if [[ "${CONFIGS[$i]}" == *"v5"* ]]; then
+            AI_BADGE=" 🧠"
+        else
+            AI_BADGE=""
+        fi
+        
+        echo -e "${BOLD}[$((i+1))] $NICKNAME${AI_BADGE}${RESET}"
+        echo -e "   Trades: ${YELLOW}$TRADES${RESET}"
+        echo -e "   Errors: ${RED}$ERRORS${RESET}"
+        echo -e "   ${CYAN}Score: $SCORE${RESET}"
+        echo ""
+        
+        if [ $SCORE -gt $BEST_SCORE ]; then
+            BEST_SCORE=$SCORE
+            WINNER=$NICKNAME
+        fi
+    fi
+done
+
+echo -e "${BOLD}${GREEN}═══════════════════════════════════════════════════════════════${RESET}"
+echo -e "${BOLD}${YELLOW}  🥇 WINNER: $WINNER 🥇${RESET}"
+echo -e "${BOLD}${YELLOW}  Score: $BEST_SCORE${RESET}"
+echo -e "${BOLD}${GREEN}═══════════════════════════════════════════════════════════════${RESET}"
+echo ""
+
+echo -e "${CYAN}Full logs saved to:${RESET} $LOG_DIR"
 echo -e "${CYAN}Next steps:${RESET}"
-echo "  1. Review logs in $LOG_DIR"
-echo "  2. Promote winner to production: cp config/optimized/${WINNER}.toml config/production/mainnet.toml"
-echo "  3. Test winner on devnet before mainnet deployment"
+echo "  1. Review logs: tail -100 $LOG_DIR/*.log"
+echo "  2. Analyze trades: grep 'Trade executed' $LOG_DIR/*.log"
+echo "  3. Check AI decisions: grep '🧠' $LOG_DIR/multi_strategy_v5_ai_ultimate.log"
 echo ""
 
 echo -e "${BOLD}${GREEN}🎉 Battle complete! May the best AI win! 🧠🔥${RESET}"
