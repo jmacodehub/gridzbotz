@@ -14,7 +14,7 @@
 //! ═══════════════════════════════════════════════════════════════════════════
 
 use anyhow::{bail, Context, Result};
-use log::{debug, error, info, warn};
+use log::{debug, error, info};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -372,17 +372,22 @@ impl RealTradingEngine {
             .context("Failed to get Jupiter quote")?;
 
         // Calculate actual price from quote
+        // NOTE: quote.out_amount is a String from Jupiter API, needs parsing
         let quote_price = match side {
             OrderSide::Buy => {
                 // Price = USDC spent / SOL received
                 let usdc_spent = amount_lamports as f64 / 1_000_000.0;
-                let sol_received = quote.out_amount as f64 / 1_000_000_000.0;
+                let out_amount = quote.out_amount.parse::<u64>()
+                    .context("Failed to parse quote.out_amount")?;
+                let sol_received = out_amount as f64 / 1_000_000_000.0;
                 usdc_spent / sol_received
             }
             OrderSide::Sell => {
                 // Price = USDC received / SOL sold
                 let sol_sold = amount_lamports as f64 / 1_000_000_000.0;
-                let usdc_received = quote.out_amount as f64 / 1_000_000.0;
+                let out_amount = quote.out_amount.parse::<u64>()
+                    .context("Failed to parse quote.out_amount")?;
+                let usdc_received = out_amount as f64 / 1_000_000.0;
                 usdc_received / sol_sold
             }
         };
