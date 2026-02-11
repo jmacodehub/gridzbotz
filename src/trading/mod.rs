@@ -1,30 +1,8 @@
 //! ═══════════════════════════════════════════════════════════════════════════
 //! Trading Module V5.1 - Security Hardening Complete!
-//!
-//! Architecture:
-//! - Unified Trading Interface: Generic trait for paper and live trading
-//! - Paper Trading: Risk-free backtesting and simulation
-//! - Grid State Machine: Order lifecycle tracking with buy/sell pairing
-//! - Real Trading: ✅ ENABLED - Live execution with Jupiter swaps!
-//! - Jupiter Integration: Cross-DEX swaps via Jupiter aggregator (🪐)
-//! - Price Feeds: Multiple sources with redundancy and consensus
-//! - Transaction Executor: Solana transaction building and signing
-//! - Enhanced Metrics: Trade-level analytics and performance tracking
-//! - Adaptive Optimizer: Self-learning grid spacing and position sizing
-//! - MEV Protection: 🛡️ Priority fees, slippage guard, Jito bundles
-//! - SECURITY: 🔒 Order validation, RPC security, rate limiting (NEW!)
-//!
-//! V5.1 SECURITY ENHANCEMENTS:
-//! 🔒 OrderValidator - Pre-signature order validation with whitelist
-//! 🔒 RpcSecurity - Secure RPC wrapper with SSL enforcement
-//! 🔒 RateLimiter - Trade rate limiting (global + per-token)
-//!
-//! February 11, 2026 - V5.1 SECURITY HARDENING COMPLETE!
 //! ═══════════════════════════════════════════════════════════════════════════
 
 pub use crate::config::Config;
-
-// Re-export async_trait for trait implementations
 pub use async_trait::async_trait;
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -35,24 +13,24 @@ pub mod price_feed;
 pub mod pyth_price_feed;
 pub mod pyth_http;
 pub mod paper_trader;
-pub mod grid_level;          // V4.0: Grid state machine
-pub mod executor;            // Transaction executor
-pub mod trade;               // Trade data structures
-pub mod feed_consensus;      // Feed consensus logic
-pub mod redundant_feed;      // Redundant price feeds
-pub mod jupiter_swap;        // 🪐 Jupiter DEX aggregator (V4.1)
-pub mod real_trader;         // 🔥 ENABLED - Phase 5 Complete!
-pub mod enhanced_metrics;    // 📊 V4.1: Enhanced analytics tracking
-pub mod adaptive_optimizer;  // 🧠 V4.2: Self-learning optimizer
-pub mod mev_protection;      // 🛡️ V5.0: MEV Protection
+pub mod grid_level;
+pub mod executor;
+pub mod trade;
+pub mod feed_consensus;
+pub mod redundant_feed;
+pub mod jupiter_swap;
+pub mod real_trader;
+pub mod enhanced_metrics;
+pub mod adaptive_optimizer;
+pub mod mev_protection;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Security Modules (V5.1) 🔒 NEW!
 // ═══════════════════════════════════════════════════════════════════════════
 
-pub mod order_validator;     // 🔒 Pre-signature order validation
-pub mod rpc_security;        // 🔒 Secure RPC wrapper
-pub mod rate_limiter;        // 🔒 Trade rate limiting
+pub mod order_validator;
+pub mod rpc_security;
+pub mod rate_limiter;
 
 // WebSocket feeds (optional feature)
 #[cfg(feature = "websockets")]
@@ -63,7 +41,7 @@ pub mod binance_ws;
 pub mod pyth_lazer;
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Paper Trading Exports
+// Exports
 // ═══════════════════════════════════════════════════════════════════════════
 
 pub use paper_trader::{
@@ -77,80 +55,47 @@ pub use paper_trader::{
     PerformanceStats as PaperPerformanceStats,
 };
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Grid Level State Machine Exports (V4.0)
-// ═══════════════════════════════════════════════════════════════════════════
-
 pub use grid_level::{
     GridLevel,
     GridLevelStatus,
     GridStateTracker,
 };
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Enhanced Metrics Exports (V4.1) 📊
-// ═══════════════════════════════════════════════════════════════════════════
-
 pub use enhanced_metrics::EnhancedMetrics;
-
-// ═══════════════════════════════════════════════════════════════════════════
-// Adaptive Optimizer Exports (V4.2) 🧠
-// ═══════════════════════════════════════════════════════════════════════════
 
 pub use adaptive_optimizer::{
     AdaptiveOptimizer,
     OptimizationResult,
 };
 
-// ═══════════════════════════════════════════════════════════════════════════
-// MEV Protection Exports (V5.0) 🛡️
-// ═══════════════════════════════════════════════════════════════════════════
-
 pub use mev_protection::{
-    // Main manager
     MevProtectionManager,
     MevProtectionConfig,
-    
-    // Priority fees
     PriorityFeeOptimizer,
     PriorityFeeConfig,
     FeeRecommendation,
-    
-    // Slippage protection
     SlippageGuardian,
     SlippageConfig,
     SlippageValidation,
-    
-    // Jito bundles
     JitoClient,
     JitoConfig,
     JitoBundleStatus,
 };
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Security Exports (V5.1) 🔒 NEW!
-// ═══════════════════════════════════════════════════════════════════════════
-
+// Security Exports (V5.1) 🔒 - FIXED!
 pub use order_validator::{
     OrderValidator,
-    OrderValidatorConfig,
     ValidationResult,
-    ValidationError,
 };
 
 pub use rpc_security::{
     SecureRpcClient,
-    RpcSecurityConfig,
 };
 
 pub use rate_limiter::{
     TradeRateLimiter,
-    RateLimiterConfig,
+    RateLimitConfig,  // FIXED: Was RateLimiterConfig
 };
-
-// ═══════════════════════════════════════════════════════════════════════════
-// Jupiter Swap Exports (V4.1) 🪐
-// ═══════════════════════════════════════════════════════════════════════════
 
 pub use jupiter_swap::{
     JupiterSwapClient,
@@ -161,19 +106,11 @@ pub use jupiter_swap::{
     USDC_MINT,
 };
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Real Trading Exports (🔥 ENABLED - Phase 5!)
-// ═══════════════════════════════════════════════════════════════════════════
-
 pub use real_trader::{
     RealTradingEngine,
     RealTradingConfig,
     PerformanceStats as RealPerformanceStats,
 };
-
-// ═══════════════════════════════════════════════════════════════════════════
-// Transaction Executor Exports
-// ═══════════════════════════════════════════════════════════════════════════
 
 pub use executor::{
     TransactionExecutor,
@@ -183,20 +120,12 @@ pub use executor::{
 
 pub use trade::Trade;
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Price Feed Exports
-// ═══════════════════════════════════════════════════════════════════════════
-
 pub use price_feed::{PriceFeed, PriceFeedMetrics, FeedMode};
 pub use pyth_http::{PythHttpFeed, PriceUpdate as HttpPriceUpdate, feed_ids as http_feed_ids};
 pub use pyth_price_feed::PythPriceFeed;
 
 #[cfg(feature = "websockets")]
 pub use pyth_websocket::{PythWebSocketFeed, PriceUpdate as WsPriceUpdate};
-
-// ═══════════════════════════════════════════════════════════════════════════
-// Conditional Type Aliases (WebSocket vs HTTP)
-// ═══════════════════════════════════════════════════════════════════════════
 
 #[cfg(feature = "websockets")]
 pub type LivePriceUpdate = WsPriceUpdate;
@@ -209,27 +138,20 @@ pub use pyth_http::feed_ids as live_feed_ids;
 pub use http_feed_ids as live_feed_ids;
 
 // ═══════════════════════════════════════════════════════════════════════════
-// UNIFIED TRADING ENGINE TRAIT (V4.1) 🚀
+// UNIFIED TRADING ENGINE TRAIT
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Result type for trading operations
 pub type TradingResult<T> = anyhow::Result<T>;
 
-/// Order placement result with order ID and optional metadata
 #[derive(Debug, Clone)]
 pub struct OrderPlacementResult {
-    /// Unique order identifier
     pub order_id: String,
-    /// Transaction signature (for live trading)
     pub signature: Option<String>,
-    /// Estimated execution price
     pub estimated_price: Option<f64>,
-    /// Estimated fees
     pub estimated_fees: Option<f64>,
 }
 
 impl OrderPlacementResult {
-    /// Create simple result with just order ID
     pub fn simple(order_id: String) -> Self {
         Self {
             order_id,
@@ -239,7 +161,6 @@ impl OrderPlacementResult {
         }
     }
 
-    /// Create detailed result with all metadata
     pub fn detailed(
         order_id: String,
         signature: String,
@@ -255,7 +176,6 @@ impl OrderPlacementResult {
     }
 }
 
-/// Batch order operation for efficient multi-order placement
 #[derive(Debug, Clone)]
 pub struct BatchOrderRequest {
     pub side: OrderSide,
@@ -264,7 +184,6 @@ pub struct BatchOrderRequest {
     pub grid_level_id: Option<u64>,
 }
 
-/// Engine health status for monitoring
 #[derive(Debug, Clone)]
 pub struct EngineHealthStatus {
     pub is_healthy: bool,
@@ -275,7 +194,6 @@ pub struct EngineHealthStatus {
     pub message: String,
 }
 
-/// Unified trading engine interface for paper and live trading
 #[async_trait]
 pub trait TradingEngine: Send + Sync {
     async fn place_limit_order_with_level(
@@ -343,11 +261,6 @@ pub trait TradingEngine: Send + Sync {
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Helper Functions
-// ═══════════════════════════════════════════════════════════════════════════
-
-/// Quick price fetch utility (HTTP fallback)
 pub async fn get_live_price(feed_id: &str) -> Option<f64> {
     let http = PythHttpFeed::new(vec![feed_id.to_string()]);
     if http.start().await.is_ok() {
@@ -357,67 +270,40 @@ pub async fn get_live_price(feed_id: &str) -> Option<f64> {
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Re-exports for Convenience
-// ═══════════════════════════════════════════════════════════════════════════
-
 pub mod prelude {
     pub use super::{
-        // Engines
         PaperTradingEngine,
         RealTradingEngine,
         TradingEngine,
-
-        // Orders & Types
         OrderSide,
         OrderStatus,
         OrderType,
         Order,
-
-        // Grid State Machine
         GridStateTracker,
         GridLevel,
         GridLevelStatus,
-
-        // Price Feeds
         PriceFeed,
         FeedMode,
-
-        // Jupiter
         JupiterSwapClient,
         QuoteResponse,
-
-        // Results
         TradingResult,
         OrderPlacementResult,
         EngineHealthStatus,
-        
-        // Real Trading
         RealTradingConfig,
         RealPerformanceStats,
-        
-        // Enhanced Metrics
         EnhancedMetrics,
-        
-        // Adaptive Optimizer
         AdaptiveOptimizer,
         OptimizationResult,
-        
-        // MEV Protection
         MevProtectionManager,
         MevProtectionConfig,
         PriorityFeeOptimizer,
         SlippageGuardian,
         JitoClient,
-        
-        // Security (V5.1) 🔒 NEW!
         OrderValidator,
-        OrderValidatorConfig,
         ValidationResult,
         SecureRpcClient,
-        RpcSecurityConfig,
         TradeRateLimiter,
-        RateLimiterConfig,
+        RateLimitConfig,
     };
 }
 
@@ -429,7 +315,6 @@ mod tests {
     fn test_security_exports() {
         use super::prelude::*;
         
-        // Verify all new security exports compile
         let _: Option<OrderValidator> = None;
         let _: Option<SecureRpcClient> = None;
         let _: Option<TradeRateLimiter> = None;
