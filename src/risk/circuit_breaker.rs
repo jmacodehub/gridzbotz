@@ -330,6 +330,7 @@ mod tests {
             paper_trading: PaperTradingConfig::default(),
             database: DatabaseConfig::default(),
             alerts: AlertsConfig::default(),
+            adaptive_optimizer: AdaptiveOptimizerConfig::default(),  // 🧠 NEW!
         }
     }
 
