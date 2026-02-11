@@ -60,6 +60,7 @@ echo "   • Duration: 10 hours"
 echo "   • Session ID: $SESSION_ID"
 echo "   • Mode: PARALLEL (all bots run simultaneously!)"
 echo "   • Contestants: 3 optimized configs"
+echo "   • Paper Trading: ENABLED (devnet)"
 echo ""
 echo "🏆 CONTESTANTS:"
 echo "   1. 🛡️  Conservative v4.0 (defending champion)"
@@ -74,9 +75,9 @@ PIDS=()
 
 # Start Conservative v4.0 in background
 echo "${PURPLE}🛡️  Launching Conservative v4.0...${NC}"
-./target/release/solana-grid-bot --config "config/optimized/conservative_v4.toml" \
+./target/release/solana-grid-bot \
+    --config "config/optimized/conservative_v4.toml" \
     --duration-hours 10 \
-    --dry-run \
     > "logs/battle_royale_3/conservative_v4_${SESSION_ID}.log" 2>&1 &
 PID_CONSERVATIVE=$!
 PIDS+=($PID_CONSERVATIVE)
@@ -87,9 +88,9 @@ sleep 2
 
 # Start Multi-Strategy v4.0 in background
 echo "${PURPLE}🧠 Launching Multi-Strategy v4.0...${NC}"
-./target/release/solana-grid-bot --config "config/optimized/multi_strategy_v4_conservative_ai.toml" \
+./target/release/solana-grid-bot \
+    --config "config/optimized/multi_strategy_v4_conservative_ai.toml" \
     --duration-hours 10 \
-    --dry-run \
     > "logs/battle_royale_3/multi_strategy_v4_${SESSION_ID}.log" 2>&1 &
 PID_MULTI=$!
 PIDS+=($PID_MULTI)
@@ -100,9 +101,9 @@ sleep 2
 
 # Start Balanced v4.0 in background
 echo "${PURPLE}⚖️  Launching Balanced v4.0...${NC}"
-./target/release/solana-grid-bot --config "config/optimized/balanced_v4.toml" \
+./target/release/solana-grid-bot \
+    --config "config/optimized/balanced_v4.toml" \
     --duration-hours 10 \
-    --dry-run \
     > "logs/battle_royale_3/balanced_v4_${SESSION_ID}.log" 2>&1 &
 PID_BALANCED=$!
 PIDS+=($PID_BALANCED)
