@@ -457,7 +457,7 @@ impl TransactionExecutor {
         debug!("🚀 Execution #{} starting ({} instructions)", exec_num, instructions.len());
 
         // 🛡️ Get priority fee (MEV-optimized if enabled)
-        let priority_fee = if let Some(mev) = &self.mev_protection {
+        let _priority_fee = if let Some(mev) = &self.mev_protection {
             self.mev_protected_executions.fetch_add(1, Ordering::SeqCst);
             match mev.get_optimal_priority_fee().await {
                 Ok(fee) => {
@@ -472,6 +472,9 @@ impl TransactionExecutor {
         } else {
             self.config.priority_fee_microlamports.unwrap_or(10_000)
         };
+
+        // TODO: Use priority_fee in transaction building (future enhancement)
+        // For now, it's calculated but not yet wired into the transaction
 
         // Get recent blockhash with retry
         let recent_blockhash = self
@@ -533,8 +536,8 @@ impl TransactionExecutor {
             if !validation.is_acceptable {
                 warn!(
                     "🛡️  Slippage rejected: {:.4}% > {:.4}% max",
-                    validation.slippage_bps / 100.0,
-                    validation.max_allowed_bps / 100.0
+                    validation.slippage_bps as f64 / 100.0,
+                    validation.max_slippage_bps as f64 / 100.0
                 );
             }
             
