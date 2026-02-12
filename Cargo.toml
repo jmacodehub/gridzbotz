@@ -26,7 +26,7 @@ exclude = [
 ]
 
 # ═══════════════════════════════════════════════════════════════════════════
-# DEPENDENCIES - V2.5 Optimized for Maximum Performance
+# DEPENDENCIES - V5.0 Jupiter-Powered Real Trading
 # ═══════════════════════════════════════════════════════════════════════════
 
 [dependencies]
@@ -56,6 +56,25 @@ ahash = "0.8.11"
 hashbrown = "0.14"
 
 # ───────────────────────────────────────────────────────────────────────────
+# 🪐 JUPITER DEX INTEGRATION - V5.0 REAL TRADING ENGINE
+# ───────────────────────────────────────────────────────────────────────────
+# Jupiter Swap API Client for optimal routing
+jupiter-swap-api-client = "0.1.2"
+
+# SPL Token Program for token operations
+spl-token = "6.0"                           # Token account operations
+spl-associated-token-account = "4.0"        # Associated token accounts
+
+# Anchor framework for Jupiter instruction parsing
+anchor-lang = "0.30"                        # Anchor framework
+anchor-spl = "0.30"                         # SPL helpers for Anchor
+
+# Transaction encoding/decoding
+base64 = "0.22"                             # Transaction encoding
+bincode = "1.3"                             # Serialization
+bs58 = "0.5"                                # Base58 encoding for addresses
+
+# ───────────────────────────────────────────────────────────────────────────
 # Serialization & Data Structures
 # ───────────────────────────────────────────────────────────────────────────
 serde = { version = "1.0", features = ["derive"] }
@@ -63,10 +82,6 @@ serde_json = "1.0"
 toml = "0.8"
 chrono = { version = "0.4", features = ["serde", "clock"] }
 uuid = { version = "1.11", features = ["v4", "serde"] }
-
-# Jupiter Swap Integration (NEW! 🪐)
-base64 = "0.22"           # Transaction encoding/decoding
-bincode = "1.3"           # Transaction serialization
 
 # ───────────────────────────────────────────────────────────────────────────
 # Networking & HTTP (rustls for security & performance)
@@ -139,11 +154,14 @@ proptest = "1.5"
 pretty_assertions = "1.4"
 
 # ═══════════════════════════════════════════════════════════════════════════
-# FEATURE FLAGS - V4.0 Modular Architecture + Grid State Machine
+# FEATURE FLAGS - V5.0 Jupiter-Powered Real Trading
 # ═══════════════════════════════════════════════════════════════════════════
 
 [features]
 default = ["simulation", "v25-enhancements"]
+
+# ── V5.0 Features ────────────────────────────────────────────────────────────
+jupiter-dex = []          # 🪐 Jupiter DEX integration for real swaps
 
 # ── V2.5 Features ────────────────────────────────────────────────────────────
 v25-enhancements = []     # ✅ Market Regime Gate + Smart Fees + Order Lifecycle
@@ -169,8 +187,8 @@ tracing-full = ["tracing", "tracing-subscriber"]
 caching = ["redis"]
 
 # ── Feature Bundles ────────────────────────────────────────────────────────────
-full = ["v25-enhancements", "websockets", "database", "metrics", "tracing-full", "caching"]
-production = ["live-trading", "security", "v25-enhancements", "database", "metrics", "tracing-full"]
+full = ["v25-enhancements", "jupiter-dex", "websockets", "database", "metrics", "tracing-full", "caching"]
+production = ["live-trading", "security", "jupiter-dex", "v25-enhancements", "database", "metrics", "tracing-full"]
 development = ["simulation", "v25-enhancements", "tracing-full"]
 
 # ═══════════════════════════════════════════════════════════════════════════
