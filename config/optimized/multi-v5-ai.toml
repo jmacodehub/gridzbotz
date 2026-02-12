@@ -1,0 +1,215 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# 🔥 MULTI V5 AI - AGGRESSIVE HIGH-FREQUENCY GRID BOT
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# STRATEGY: Maximum trade frequency with V2.5 intelligent regime detection
+# RISK LEVEL: HIGH (Aggressive position sizing, tight grids)
+# TARGET: Trending markets with high volatility
+# EXPECTED RETURN: 15-30% monthly in optimal conditions
+#
+# V2.5 ENHANCEMENTS:
+# ✅ Market Regime Gate - Auto-pause in unfavorable conditions
+# ✅ Smart Fee Filtering - Dynamic fee limits per regime
+# ✅ Order Lifecycle - Auto-refresh stale orders
+# ✅ Dynamic Spacing - Volatility-adjusted grid width
+#
+# February 13, 2026 - Battle Royale Ready! 🚀
+# ═══════════════════════════════════════════════════════════════════════════
+
+[bot]
+name = "Multi-V5-AI"
+version = "5.0"
+mode = "simulation"  # Change to "live-trading" for real money!
+
+# ───────────────────────────────────────────────────────────────────────────
+# 🎯 TRADING PAIR
+# ───────────────────────────────────────────────────────────────────────────
+[pair]
+base = "SOL"
+quote = "USDC"
+
+# Price boundaries (auto-adjust based on market)
+min_price = 80.0    # Lower bound (safety)
+max_price = 200.0   # Upper bound (safety)
+
+# ───────────────────────────────────────────────────────────────────────────
+# 📊 GRID CONFIGURATION - AGGRESSIVE
+# ───────────────────────────────────────────────────────────────────────────
+[grid]
+levels = 15                    # 🔥 HIGH: More levels = more trades
+spacing_percent = 0.8          # 🔥 TIGHT: 0.8% between levels
+position_size_usdc = 100.0     # $100 per level
+min_order_size_usdc = 10.0     # Minimum $10 orders
+
+# Dynamic spacing (V2.5)
+enable_dynamic_spacing = true
+volatility_multiplier = 1.5    # Widen grids by 1.5x in high volatility
+volatility_lookback = 24       # 24-hour volatility window
+
+# Grid rebalancing
+auto_rebalance = true
+rebalance_threshold = 5.0      # Rebalance if price moves 5% outside grid
+rebalance_cooldown_minutes = 30
+
+# ───────────────────────────────────────────────────────────────────────────
+# 🛡️ RISK MANAGEMENT - AGGRESSIVE BUT SAFE
+# ───────────────────────────────────────────────────────────────────────────
+[risk]
+max_position_usdc = 2000.0     # Max $2000 total exposure
+max_drawdown_percent = 15.0    # Stop if 15% drawdown
+stop_loss_percent = 8.0        # Individual position stop at -8%
+
+# Position limits
+max_open_orders = 30           # Allow up to 30 simultaneous orders
+max_daily_trades = 200         # Cap at 200 trades/day
+
+# Emergency stops
+emergency_stop_drawdown = 20.0 # HARD STOP at -20%
+
+# ───────────────────────────────────────────────────────────────────────────
+# 🚦 V2.5 MARKET REGIME GATE - INTELLIGENT PAUSE
+# ───────────────────────────────────────────────────────────────────────────
+[regime_gate]
+enabled = true                 # ✅ ENABLE regime detection
+
+# Volatility thresholds (aggressive = tighter bounds)
+volatility_threshold_low = 0.015   # Below 1.5% = too quiet (choppy)
+volatility_threshold_high = 0.08   # Above 8% = too volatile (unsafe)
+
+# Trend detection
+min_trend_strength = 0.3       # Require 30% trend conviction
+trend_lookback_periods = 48    # 48 periods for trend analysis
+
+# Regime check frequency
+check_interval_seconds = 300   # Check every 5 minutes
+
+# Auto-resume
+auto_resume = true
+resume_cooldown_minutes = 15   # Wait 15min before resuming
+
+# Allowed regimes (aggressive = trade more regimes)
+allow_trending = true          # ✅ Trade in trending markets
+allow_ranging = true           # ✅ Trade in ranging markets
+allow_volatile = false         # ❌ Skip extreme volatility
+allow_choppy = false           # ❌ Skip choppy/low-volume
+
+# ───────────────────────────────────────────────────────────────────────────
+# 💰 V2.5 SMART FEE FILTERING - DYNAMIC LIMITS
+# ───────────────────────────────────────────────────────────────────────────
+[fee_filtering]
+enabled = true                 # ✅ ENABLE smart fee filtering
+
+# Base fee limits (% of trade value)
+max_fee_percent = 0.15         # Never pay more than 0.15%
+
+# Dynamic limits per regime (aggressive = higher tolerance)
+trending_max_fee = 0.20        # Pay up to 0.20% in trends
+ranging_max_fee = 0.12         # Pay up to 0.12% in ranges
+volatile_max_fee = 0.25        # Pay up to 0.25% in volatility
+choppy_max_fee = 0.10          # Pay max 0.10% in chop
+
+# Fee estimation
+include_priority_fees = true
+priority_fee_lamports = 10000  # 0.00001 SOL priority
+
+# Rejection handling
+log_rejected_trades = true
+rejection_cooldown_seconds = 30
+
+# ───────────────────────────────────────────────────────────────────────────
+# 🔄 V2.5 ORDER LIFECYCLE - AUTO-REFRESH
+# ───────────────────────────────────────────────────────────────────────────
+[order_lifecycle]
+enabled = true                 # ✅ ENABLE lifecycle management
+
+# Staleness detection (aggressive = faster refresh)
+max_order_age_minutes = 30     # Refresh orders after 30min
+stale_check_interval_seconds = 180  # Check every 3min
+
+# Auto-refresh behavior
+auto_refresh_stale = true
+refresh_price_deviation = 0.5  # Refresh if price moved 0.5%
+
+# Cancellation
+auto_cancel_stale = true
+cancel_age_minutes = 60        # Cancel if unfilled for 60min
+
+# Monitoring
+track_fill_rates = true
+min_fill_rate_percent = 10.0   # Warn if <10% fills
+
+# ───────────────────────────────────────────────────────────────────────────
+# 📈 INDICATORS & SIGNALS
+# ───────────────────────────────────────────────────────────────────────────
+[indicators]
+
+# ATR (Average True Range) for volatility
+[indicators.atr]
+period = 14
+multiplier = 2.0
+
+# RSI (Relative Strength Index) for momentum
+[indicators.rsi]
+period = 14
+overbought = 70
+oversold = 30
+
+# Bollinger Bands for mean reversion
+[indicators.bollinger]
+period = 20
+std_dev = 2.0
+
+# MACD for trend confirmation
+[indicators.macd]
+fast_period = 12
+slow_period = 26
+signal_period = 9
+
+# ───────────────────────────────────────────────────────────────────────────
+# 🌐 RPC & DATA FEEDS
+# ───────────────────────────────────────────────────────────────────────────
+[rpc]
+primary = "https://api.mainnet-beta.solana.com"
+fallback = ["https://solana-api.projectserum.com"]
+timeout_seconds = 10
+max_retries = 3
+
+[price_feed]
+provider = "pyth"              # Pyth Network for low-latency
+update_interval_ms = 1000      # 1 second updates (aggressive)
+redundancy = true              # Use multiple feeds
+fallback_providers = ["chainlink", "switchboard"]
+
+# ───────────────────────────────────────────────────────────────────────────
+# 📊 MONITORING & LOGGING
+# ───────────────────────────────────────────────────────────────────────────
+[monitoring]
+log_level = "info"
+log_trades = true
+log_regime_changes = true
+log_fee_rejections = true
+
+# Performance tracking
+track_pnl = true
+track_fill_rate = true
+track_regime_stats = true
+
+# Alerts
+alert_on_drawdown = true
+alert_threshold = 10.0         # Alert at -10% drawdown
+
+# Export
+export_trades_csv = true
+export_interval_minutes = 60
+
+# ───────────────────────────────────────────────────────────────────────────
+# 🎯 OPTIMIZATION PARAMS (for AI tuning)
+# ───────────────────────────────────────────────────────────────────────────
+[optimization]
+auto_tune = false              # Disable for stable production
+learning_rate = 0.01
+adaptation_window = 1000
+
+# ═══════════════════════════════════════════════════════════════════════════
+# END MULTI V5 AI CONFIG
+# ═══════════════════════════════════════════════════════════════════════════

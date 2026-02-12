@@ -1,0 +1,194 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# 🛡️ CONSERVATIVE V4.1 - CAPITAL PRESERVATION GRID BOT
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# STRATEGY: Low-frequency safe approach with strict risk management
+# RISK LEVEL: LOW (Capital preservation priority)
+# TARGET: All market conditions with minimal drawdown
+# EXPECTED RETURN: 4-8% monthly with <5% max drawdown
+#
+# V2.5 ENHANCEMENTS:
+# ✅ Market Regime Gate - Strict pause criteria
+# ✅ Smart Fee Filtering - Tight fee limits
+# ✅ Order Lifecycle - Conservative refresh
+# ✅ Dynamic Spacing - Minimal volatility adjustment
+#
+# February 13, 2026 - Safe & Steady! 🛡️
+# ═══════════════════════════════════════════════════════════════════════════
+
+[bot]
+name = "Conservative-V4.1"
+version = "4.1"
+mode = "simulation"
+
+# ───────────────────────────────────────────────────────────────────────────
+# 🎯 TRADING PAIR
+# ───────────────────────────────────────────────────────────────────────────
+[pair]
+base = "SOL"
+quote = "USDC"
+min_price = 60.0
+max_price = 250.0             # Wider safety bounds
+
+# ───────────────────────────────────────────────────────────────────────────
+# 📊 GRID CONFIGURATION - CONSERVATIVE
+# ───────────────────────────────────────────────────────────────────────────
+[grid]
+levels = 7                     # 🛡️ LOW: Fewer levels = safer
+spacing_percent = 2.5          # 🛡️ WIDE: 2.5% between levels
+position_size_usdc = 200.0     # Larger per-level for fewer levels
+min_order_size_usdc = 20.0
+
+# Dynamic spacing (V2.5) - minimal adjustment
+enable_dynamic_spacing = true
+volatility_multiplier = 1.1    # Minimal adjustment
+volatility_lookback = 48       # Longer lookback
+
+# Grid rebalancing - conservative
+auto_rebalance = true
+rebalance_threshold = 10.0     # Only rebalance on big moves
+rebalance_cooldown_minutes = 120
+
+# ───────────────────────────────────────────────────────────────────────────
+# 🛡️ RISK MANAGEMENT - ULTRA CONSERVATIVE
+# ───────────────────────────────────────────────────────────────────────────
+[risk]
+max_position_usdc = 1000.0     # Lower total exposure
+max_drawdown_percent = 8.0     # Strict drawdown limit
+stop_loss_percent = 5.0        # Tight stop loss
+
+max_open_orders = 14           # Fewer simultaneous orders
+max_daily_trades = 50          # Lower trade frequency
+
+emergency_stop_drawdown = 12.0 # Conservative emergency stop
+
+# ───────────────────────────────────────────────────────────────────────────
+# 🚦 V2.5 MARKET REGIME GATE - STRICT
+# ───────────────────────────────────────────────────────────────────────────
+[regime_gate]
+enabled = true
+
+# Strict volatility thresholds
+volatility_threshold_low = 0.010   # 1.0% - skip low volatility
+volatility_threshold_high = 0.05   # 5% - skip high volatility
+
+min_trend_strength = 0.40      # Require stronger trends
+trend_lookback_periods = 72    # Longer trend confirmation
+
+check_interval_seconds = 180   # Check more frequently
+
+auto_resume = true
+resume_cooldown_minutes = 30   # Longer cooldown
+
+# Conservative regime selection
+allow_trending = true          # Only trade clear trends
+allow_ranging = true           # And stable ranges
+allow_volatile = false         # ❌ Never trade volatility
+allow_choppy = false           # ❌ Never trade chop
+
+# ───────────────────────────────────────────────────────────────────────────
+# 💰 V2.5 SMART FEE FILTERING - STRICT
+# ───────────────────────────────────────────────────────────────────────────
+[fee_filtering]
+enabled = true
+
+max_fee_percent = 0.08         # Very tight base limit
+
+# Strict fee limits
+trending_max_fee = 0.10
+ranging_max_fee = 0.08
+volatile_max_fee = 0.12
+choppy_max_fee = 0.06
+
+include_priority_fees = true
+priority_fee_lamports = 2000   # Minimal priority fee
+
+log_rejected_trades = true
+rejection_cooldown_seconds = 120
+
+# ───────────────────────────────────────────────────────────────────────────
+# 🔄 V2.5 ORDER LIFECYCLE - CONSERVATIVE
+# ───────────────────────────────────────────────────────────────────────────
+[order_lifecycle]
+enabled = true
+
+max_order_age_minutes = 60     # Longer before refresh
+stale_check_interval_seconds = 600  # Check less frequently
+
+auto_refresh_stale = true
+refresh_price_deviation = 1.0  # Only refresh on bigger moves
+
+auto_cancel_stale = true
+cancel_age_minutes = 120       # Longer before cancel
+
+track_fill_rates = true
+min_fill_rate_percent = 5.0    # Lower fill rate tolerance
+
+# ───────────────────────────────────────────────────────────────────────────
+# 📈 INDICATORS & SIGNALS
+# ───────────────────────────────────────────────────────────────────────────
+[indicators]
+
+[indicators.atr]
+period = 20                    # Longer period = smoother
+multiplier = 2.5
+
+[indicators.rsi]
+period = 21
+overbought = 65                # Tighter overbought
+oversold = 35                  # Tighter oversold
+
+[indicators.bollinger]
+period = 30
+std_dev = 2.5
+
+[indicators.macd]
+fast_period = 12
+slow_period = 26
+signal_period = 9
+
+# ───────────────────────────────────────────────────────────────────────────
+# 🌐 RPC & DATA FEEDS
+# ───────────────────────────────────────────────────────────────────────────
+[rpc]
+primary = "https://api.mainnet-beta.solana.com"
+fallback = ["https://solana-api.projectserum.com"]
+timeout_seconds = 20
+max_retries = 5
+
+[price_feed]
+provider = "pyth"
+update_interval_ms = 3000      # 3 second updates (conservative)
+redundancy = true
+fallback_providers = ["chainlink", "switchboard"]
+
+# ───────────────────────────────────────────────────────────────────────────
+# 📊 MONITORING & LOGGING
+# ───────────────────────────────────────────────────────────────────────────
+[monitoring]
+log_level = "info"
+log_trades = true
+log_regime_changes = true
+log_fee_rejections = true
+
+track_pnl = true
+track_fill_rate = true
+track_regime_stats = true
+
+alert_on_drawdown = true
+alert_threshold = 5.0          # Alert early
+
+export_trades_csv = true
+export_interval_minutes = 60
+
+# ───────────────────────────────────────────────────────────────────────────
+# 🎯 OPTIMIZATION PARAMS
+# ───────────────────────────────────────────────────────────────────────────
+[optimization]
+auto_tune = false
+learning_rate = 0.005          # Lower learning rate
+adaptation_window = 2000       # Longer adaptation
+
+# ═══════════════════════════════════════════════════════════════════════════
+# END CONSERVATIVE V4.1 CONFIG
+# ═══════════════════════════════════════════════════════════════════════════
