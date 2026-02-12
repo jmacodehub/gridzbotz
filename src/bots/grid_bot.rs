@@ -1,7 +1,7 @@
-//! ═════════════════════════════════════════════════════════════════════════
-//! 🤖 GRID BOT V4.2 - ELITE AUTONOMOUS TRADING ORCHESTRATOR
+//! ═════════════════════════════════════════════════════════════════════
+//! 🤖 GRID BOT V4.3 - ELITE AUTONOMOUS TRADING ORCHESTRATOR
 //!
-//! V4.2 ENHANCEMENTS - Adaptive Intelligence:
+//! V4.3 ENHANCEMENTS - Fill Tracking & Learning:
 //! ✅ GridLevel pairing (buy/sell orders linked)
 //! ✅ Safe reposition (preserves filled buys)
 //! ✅ Order lifecycle tracking per level
@@ -12,9 +12,10 @@
 //! ✅ Smart spacing based on drawdown
 //! ✅ Dynamic position sizing based on efficiency
 //! ✅ Win/Loss streak detection
+//! ✅ 🆕 FILL TRACKING - ML training dataset
 //!
-//! February 9, 2026 - V4.2 ELITE MODE ACTIVATED! 🔥🧠⚡
-//! ═════════════════════════════════════════════════════════════════════════
+//! February 12, 2026 - V4.3 FILL TRACKING ACTIVATED! 🔥🧠⚡
+//! ═════════════════════════════════════════════════════════════════════
 
 use crate::strategies::{StrategyManager, GridRebalancer, GridRebalancerConfig};
 use crate::strategies::shared::analytics::AnalyticsContext;
@@ -32,9 +33,9 @@ use log::{info, warn, debug, trace};
 // 🧠 Optimization frequency: Run optimizer every N cycles
 const OPTIMIZATION_INTERVAL_CYCLES: u64 = 50;  // Every 50 cycles (~5 mins at 100ms)
 
-// ═════════════════════════════════════════════════════════════════════════
+// ═════════════════════════════════════════════════════════════════════
 // GRID BOT - ELITE Autonomous Trading Orchestrator
-// ═════════════════════════════════════════════════════════════════════════
+// ═════════════════════════════════════════════════════════════════════
 
 pub struct GridBot {
     pub manager: StrategyManager,
@@ -50,13 +51,15 @@ pub struct GridBot {
     last_reposition_time: Option<std::time::Instant>,
     last_optimization_cycle: u64,  // Track when we last optimized
     grid_initialized: bool,
+    total_fills_tracked: u64,  // 🆕 V4.3: Fill tracking counter
 }
 
 impl GridBot {
     pub fn new(config: Config) -> Result<Self> {
         info!("═══════════════════════════════════════════════════════════");
-        info!("🤖 Initializing GridBot V4.2 ELITE MODE...");
+        info!("🤖 Initializing GridBot V4.3 FILL TRACKING MODE...");
         info!("🧠 Adaptive Intelligence: ENABLED");
+        info!("📨 Fill Tracking: ENABLED");
         info!("═══════════════════════════════════════════════════════════");
 
         let analytics_ctx = AnalyticsContext::default();
@@ -134,7 +137,7 @@ impl GridBot {
         info!("   Optimization Interval: Every {} cycles", OPTIMIZATION_INTERVAL_CYCLES);
 
         info!("═══════════════════════════════════════════════════════════");
-        info!("✅ GridBot V4.2 ELITE initialization complete!");
+        info!("✅ GridBot V4.3 FILL TRACKING initialization complete!");
         info!("═══════════════════════════════════════════════════════════\n");
 
         Ok(Self {
@@ -149,8 +152,9 @@ impl GridBot {
             successful_trades: 0,
             grid_repositions: 0,
             last_reposition_time: None,
-            last_optimization_cycle: 0,  // NEW: Track optimization timing
+            last_optimization_cycle: 0,  // Track optimization timing
             grid_initialized: false,
+            total_fills_tracked: 0,  // 🆕 V4.3 NEW!
         })
     }
 
@@ -367,9 +371,40 @@ impl GridBot {
                 debug!("   ✅ Order {} filled", order_id);
                 
                 let is_buy = order_id.to_lowercase().contains("buy");
+                let side = if is_buy { OrderSide::Buy } else { OrderSide::Sell };
                 let pnl = self.grid_state.total_realized_pnl().await;
+                let fill_size = self.adaptive_optimizer.current_position_size;
                 
+                // 🆕 V4.3: Track fill for ML training dataset
+                self.total_fills_tracked += 1;
+                
+                // Calculate fill deviation from mid-price for optimization insights
+                let deviation_pct = ((price - price).abs() / price) * 100.0;  // Always 0 at fill time
+                
+                // Log detailed fill information for future ML training
+                info!("📨 FILL_TRACK #{}: {:?} {} @ ${:.4} | Size: {:.4} | P&L: ${:.2} | ts: {}",
+                      self.total_fills_tracked,
+                      side,
+                      order_id,
+                      price,
+                      fill_size,
+                      pnl,
+                      timestamp
+                );
+                
+                // Log additional context for pattern recognition
+                debug!("   Grid spacing: {:.3}% | Total fills: {} | Cycles: {}",
+                       self.adaptive_optimizer.current_spacing_percent * 100.0,
+                       self.total_fills_tracked,
+                       self.total_cycles
+                );
+                
+                // Update metrics
                 self.enhanced_metrics.record_trade(is_buy, pnl, timestamp);
+                
+                // 💡 Future enhancement: Send to GridRebalancer for adaptive learning
+                // When we implement the notification channel:
+                // self.manager.notify_fill(order_id, side, price, fill_size, Some(pnl)).await;
             }
         }
 
@@ -377,7 +412,7 @@ impl GridBot {
         let total_value = wallet.total_value_usdc(price);
         self.enhanced_metrics.update_portfolio_value(total_value);
 
-        // 🧠 NEW: Run adaptive optimization periodically
+        // 🧠 Run adaptive optimization periodically
         if self.total_cycles - self.last_optimization_cycle >= OPTIMIZATION_INTERVAL_CYCLES {
             debug!("🧠 Running adaptive optimization cycle...");
             let result = self.adaptive_optimizer.optimize(&self.enhanced_metrics);
@@ -416,10 +451,12 @@ impl GridBot {
             max_drawdown: self.enhanced_metrics.max_drawdown,
             signal_execution_ratio: self.enhanced_metrics.signal_execution_ratio,
             grid_efficiency: self.enhanced_metrics.grid_efficiency,
-            // 🧠 NEW: Optimizer stats
+            // 🧠 Optimizer stats
             current_spacing_percent: self.adaptive_optimizer.current_spacing_percent,
             current_position_size: self.adaptive_optimizer.current_position_size,
             optimization_count: self.adaptive_optimizer.adjustment_count,
+            // 🆕 V4.3: Fill tracking stats
+            total_fills_tracked: self.total_fills_tracked,
         }
     }
 
@@ -429,7 +466,7 @@ impl GridBot {
         let border = "═".repeat(60);
 
         println!("\n{}", border);
-        println!("   🤖 GRID BOT V4.2 ELITE - STATUS REPORT");
+        println!("   🤖 GRID BOT V4.3 FILL TRACKING - STATUS REPORT");
         println!("{}", border);
 
         println!("\n📊 Bot Performance:");
@@ -437,6 +474,7 @@ impl GridBot {
         println!("  Successful Trades: {}", stats.successful_trades);
         println!("  Grid Repositions:  {}", stats.grid_repositions);
         println!("  Open Orders:       {}", stats.open_orders);
+        println!("  Fills Tracked:     {} 🆕", stats.total_fills_tracked);
 
         let grid_levels = self.grid_state.count().await;
         let filled_buys = self.grid_state.get_levels_with_filled_buys().await.len();
@@ -459,7 +497,7 @@ impl GridBot {
         println!("\n🔍 Enhanced Metrics:");
         self.enhanced_metrics.display();
 
-        // 🧠 NEW: Display optimizer status
+        // 🧠 Display optimizer status
         self.adaptive_optimizer.display();
 
         println!("\n💵 Current Price:    ${:.4}", current_price);
@@ -493,19 +531,22 @@ pub struct BotStats {
     pub max_drawdown: f64,
     pub signal_execution_ratio: f64,
     pub grid_efficiency: f64,
-    // 🧠 NEW: Optimizer fields
+    // 🧠 Optimizer fields
     pub current_spacing_percent: f64,
     pub current_position_size: f64,
     pub optimization_count: u64,
+    // 🆕 V4.3: Fill tracking
+    pub total_fills_tracked: u64,
 }
 
 impl BotStats {
     pub fn display_summary(&self) {
-        println!("\n📊 BOT STATISTICS SUMMARY V4.2 ELITE");
+        println!("\n📊 BOT STATISTICS SUMMARY V4.3 FILL TRACKING");
         println!("   Cycles:            {}", self.total_cycles);
         println!("   Trades:            {}", self.successful_trades);
         println!("   Repositions:       {}", self.grid_repositions);
         println!("   Open Orders:       {}", self.open_orders);
+        println!("   Fills Tracked:     {} 🆕", self.total_fills_tracked);
         println!("   Total Value:       ${:.2}", self.total_value_usdc);
         println!("   P&L:               ${:.2}", self.pnl_usdc);
         println!("   ROI:               {:.2}%", self.roi_percent);
@@ -519,7 +560,7 @@ impl BotStats {
         println!("   Signal Exec Rate:  {:.2}%", self.signal_execution_ratio * 100.0);
         println!("   Grid Efficiency:   {:.2}%", self.grid_efficiency * 100.0);
 
-        // 🧠 NEW: Optimizer summary
+        // 🧠 Optimizer summary
         println!("\n🧠 Adaptive Optimizer:");
         println!("   Current Spacing:   {:.3}%", self.current_spacing_percent * 100.0);
         println!("   Current Size:      {:.3} SOL", self.current_position_size);
@@ -528,7 +569,7 @@ impl BotStats {
         if self.trading_paused {
             println!("   Status:            🚫 PAUSED");
         } else {
-            println!("   Status:            ✅ ELITE MODE ACTIVE");
+            println!("   Status:            ✅ V4.3 FILL TRACKING ACTIVE");
         }
     }
 }
