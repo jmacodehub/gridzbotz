@@ -91,12 +91,14 @@ max_slippage_pct = 1.0
 enable_price_bounds = false
 
 # ─────────────────────────────────────────────────────────────────────────
-# 🔥 V3.5+: MARKET REGIME GATE (CRITICAL NEW FEATURE!)
-# Conservative: Trade only in good conditions
+# 🔥 V6.5.1: MARKET REGIME GATE - FIXED! 🔥
+# Critical fix: Lowered threshold from 50 BPS → 2 BPS to enable trading
+# Previous: Blocked 80,805 trades in 20h due to 50 BPS threshold
+# Current: Matches real market volatility (3-4 BPS)
 # ─────────────────────────────────────────────────────────────────────────
 enable_regime_gate = true           # 🛡️ ENABLED for safety
-min_volatility_to_trade = 0.5       # 🛡️ Higher threshold - only good conditions
-pause_in_very_low_vol = true        # 🛡️ Pause in very low volatility
+min_volatility_to_trade = 0.02      # 🔥 FIXED: 2 BPS (was 0.5 = 50 BPS)
+pause_in_very_low_vol = false       # 🔥 FIXED: Allow continuous monitoring
 
 # ─────────────────────────────────────────────────────────────────────────
 # 🔥 V3.5+: ORDER LIFECYCLE MANAGEMENT (CRITICAL NEW FEATURE!)

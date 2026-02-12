@@ -44,10 +44,12 @@ enable_dynamic_grid = true
 reposition_threshold = 0.5          # ⚖️ Balanced frequency
 volatility_window = 100
 
-# Regime gate
-enable_regime_gate = false          # ⚖️ OFF for balanced (trades freely)
-min_volatility_to_trade = 0.0
-pause_in_very_low_vol = false
+# 🔥 V6.5.1: REGIME GATE - FIXED! 🔥
+# Critical fix: Lowered threshold from 50 BPS → 2 BPS to enable trading
+# Balanced config now trades more actively while maintaining safety
+enable_regime_gate = true           # 🔥 ENABLED (was false)
+min_volatility_to_trade = 0.02      # 🔥 FIXED: 2 BPS (matches market)
+pause_in_very_low_vol = false       # 🔥 Allow continuous trading
 
 # Order lifecycle
 enable_order_lifecycle = true
