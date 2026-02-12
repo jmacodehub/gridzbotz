@@ -1,5 +1,5 @@
-//! ═══════════════════════════════════════════════════════════════════════════
-//! Trading Module V4.2 - Unified Trading Engine with Adaptive Intelligence
+//! ═════════════════════════════════════════════════════════════════════════
+//! Trading Module V5.0 - Jupiter-Powered Real Trading Engine
 //!
 //! Architecture:
 //! - Unified Trading Interface: Generic trait for paper and live trading
@@ -7,12 +7,13 @@
 //! - Grid State Machine: Order lifecycle tracking with buy/sell pairing
 //! - Real Trading: ✅ ENABLED - Live execution with Jupiter swaps!
 //! - Jupiter Integration: Cross-DEX swaps via Jupiter aggregator (🪐)
+//! - Jupiter Client: 🆕 NEW - Direct Jupiter API v6 integration
 //! - Price Feeds: Multiple sources with redundancy and consensus
 //! - Transaction Executor: Solana transaction building and signing
 //! - Enhanced Metrics: Trade-level analytics and performance tracking
 //! - Adaptive Optimizer: Self-learning grid spacing and position sizing
 //!
-//! V4.2 ENHANCEMENTS:
+//! V5.0 ENHANCEMENTS:
 //! ✅ TradingEngine trait - unified interface for all trading modes
 //! ✅ Grid level ID tracking in orders
 //! ✅ Circuit breaker integration
@@ -22,9 +23,10 @@
 //! ✅ RealTradingEngine ENABLED with full security (🔥 Phase 5)
 //! ✅ Enhanced Metrics for deep analytics (📊 V4.1)
 //! ✅ Adaptive Optimizer for self-learning (🧠 V4.2)
+//! ✅ JupiterClient for direct API access (🪐 V5.0)
 //!
-//! February 9, 2026 - V4.2 ADAPTIVE INTELLIGENCE INTEGRATED!
-//! ═══════════════════════════════════════════════════════════════════════════
+//! February 13, 2026 - V5.0 JUPITER POWERED! 🚀
+//! ═════════════════════════════════════════════════════════════════════════
 
 pub use crate::config::Config;
 
@@ -45,6 +47,7 @@ pub mod trade;               // Trade data structures
 pub mod feed_consensus;      // Feed consensus logic
 pub mod redundant_feed;      // Redundant price feeds
 pub mod jupiter_swap;        // 🪐 Jupiter DEX aggregator (V4.1)
+pub mod jupiter_client;      // 🆕 V5.0: Jupiter API v6 client
 pub mod real_trader;         // 🔥 ENABLED - Phase 5 Complete!
 pub mod enhanced_metrics;    // 📊 V4.1: Enhanced analytics tracking
 pub mod adaptive_optimizer;  // 🧠 V4.2: Self-learning optimizer
@@ -108,6 +111,21 @@ pub use jupiter_swap::{
     SwapResponse,         // ✅ FIXED: Was JupiterSwapResponse
     WSOL_MINT,
     USDC_MINT,
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Jupiter Client Exports (V5.0) 🆕
+// ═══════════════════════════════════════════════════════════════════════════
+
+pub use jupiter_client::{
+    JupiterClient,
+    JupiterConfig,
+    JupiterQuoteRequest,
+    JupiterQuoteResponse,
+    JupiterSwapRequest,
+    JupiterSwapResponse,
+    SOL_MINT,
+    USDC_MINT as USDC_MINT_V6,  // Distinguish from old USDC_MINT
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -252,9 +270,9 @@ pub struct EngineHealthStatus {
 /// - Multi-DEX routing (V5.0)
 #[async_trait]
 pub trait TradingEngine: Send + Sync {
-    // ═══════════════════════════════════════════════════════════════════════
+    // ═════════════════════════════════════════════════════════════════════
     // CORE ORDER OPERATIONS (Required)
-    // ═══════════════════════════════════════════════════════════════════════
+    // ═════════════════════════════════════════════════════════════════════
 
     /// Place limit order with optional grid level tracking
     ///
@@ -315,9 +333,9 @@ pub trait TradingEngine: Send + Sync {
     /// Get count of currently open orders
     async fn open_order_count(&self) -> usize;
 
-    // ═══════════════════════════════════════════════════════════════════════
+    // ═════════════════════════════════════════════════════════════════════
     // RISK MANAGEMENT (Required)
-    // ═══════════════════════════════════════════════════════════════════════
+    // ═════════════════════════════════════════════════════════════════════
 
     /// Check if trading is allowed (circuit breaker + emergency shutdown)
     ///
@@ -340,9 +358,9 @@ pub trait TradingEngine: Send + Sync {
         }
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
+    // ═════════════════════════════════════════════════════════════════════
     // ADVANCED OPERATIONS (Optional - Future Extensions)
-    // ═══════════════════════════════════════════════════════════════════════
+    // ═════════════════════════════════════════════════════════════════════
 
     /// Place multiple orders in a single batch (optimized for gas/latency)
     ///
@@ -443,9 +461,11 @@ pub mod prelude {
         PriceFeed,
         FeedMode,
 
-        // Jupiter (🆕 V4.1)
-        JupiterSwapClient,
-        QuoteResponse,        // ✅ FIXED: Was JupiterQuote
+        // Jupiter (V4.1 + V5.0)
+        JupiterSwapClient,      // Legacy swap client
+        JupiterClient,          // 🆕 NEW: Direct API client
+        JupiterConfig,
+        QuoteResponse,          // ✅ FIXED: Was JupiterQuote
 
         // Results
         TradingResult,
@@ -504,5 +524,6 @@ mod tests {
         let _: Option<RealTradingConfig> = None;
         let _: Option<EnhancedMetrics> = None;  // 📊 V4.1 export test
         let _: Option<AdaptiveOptimizer> = None; // 🧠 V4.2 export test
+        let _: Option<JupiterClient> = None;     // 🆕 V5.0 export test
     }
 }
