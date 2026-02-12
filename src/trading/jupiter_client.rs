@@ -18,9 +18,10 @@ use reqwest::Client as HttpClient;
 use serde::{Deserialize, Serialize};
 use solana_sdk::{
     instruction::{AccountMeta, Instruction},
-    message::v0::CompiledInstruction,  // ✅ FIXED: Moved to v0 module in SDK v3
     pubkey::Pubkey,
 };
+// ✅ FIXED: Correct import path for Solana SDK v3.0
+use solana_message::compiled_instruction::CompiledInstruction;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -340,7 +341,7 @@ impl JupiterClient {
     /// Note: This is a simplified implementation for HTTP-based integration.
     /// Production version should handle address lookup tables and proper account resolution.
     fn decode_compiled_instructions(
-        compiled_instructions: &[CompiledInstruction],  // ✅ FIXED: Use v0::CompiledInstruction
+        compiled_instructions: &[CompiledInstruction],
         message: &solana_sdk::message::VersionedMessage,
     ) -> Result<Vec<Instruction>> {
         let account_keys = match message {
