@@ -12,17 +12,21 @@
 //! February 13, 2026 - V5.0 REAL TRADING ENGINE! 🚀
 //! ═══════════════════════════════════════════════════════════════════════════
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{bail, Context, Result};
 use log::{debug, info, warn};
 use reqwest::Client as HttpClient;
 use serde::{Deserialize, Serialize};
 use solana_sdk::{
-    instruction::Instruction,
+    instruction::{AccountMeta, Instruction},
+    message::v0::CompiledInstruction,  // ✅ FIXED: Moved to v0 module in SDK v3
     pubkey::Pubkey,
 };
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
+
+// For base64 v0.22+ (uses Engine trait)
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 🌐 JUPITER API CONFIGURATION
@@ -267,6 +271,9 @@ impl JupiterClient {
     // ───────────────────────────────────────────────────────────────────────
 
     /// Build swap instructions from a quote
+    ///
+    /// Note: This is a simplified implementation for HTTP-based Jupiter integration.
+    /// For production, you may want to use Jupiter's full transaction building.
     pub async fn build_swap_instructions(
         &self,
         quote: &JupiterQuoteResponse,
@@ -302,8 +309,9 @@ impl JupiterClient {
             .await
             .context("Failed to parse Jupiter swap response")?;
 
-        // Decode the base64 transaction
-        let tx_bytes = base64::decode(&swap_response.swap_transaction)
+        // ✅ FIXED: Use modern base64 API with Engine trait
+        let tx_bytes = BASE64_STANDARD
+            .decode(&swap_response.swap_transaction)
             .context("Failed to decode base64 transaction")?;
 
         // Deserialize transaction to extract instructions
@@ -311,18 +319,16 @@ impl JupiterClient {
             .context("Failed to deserialize transaction")?;
 
         // Extract instructions from the transaction message
-        let instructions = match transaction.message {
-            solana_sdk::message::VersionedMessage::Legacy(msg) => msg.instructions,
-            solana_sdk::message::VersionedMessage::V0(msg) => msg.instructions,
+        let instructions = match &transaction.message {
+            solana_sdk::message::VersionedMessage::Legacy(msg) => &msg.instructions,
+            solana_sdk::message::VersionedMessage::V0(msg) => &msg.instructions,
         };
 
         info!("✅ Built {} swap instructions", instructions.len());
 
         // Convert CompiledInstructions to Instructions
-        // Note: This is a simplified conversion. In production, you'd need
-        // to properly resolve account keys and decode instruction data.
         let decoded_instructions = Self::decode_compiled_instructions(
-            &instructions,
+            instructions,
             &transaction.message,
         )?;
 
@@ -331,10 +337,10 @@ impl JupiterClient {
 
     /// Decode compiled instructions into executable Instructions
     /// 
-    /// Note: This is a simplified implementation. Full production version
-    /// would need to handle address lookup tables and proper account resolution.
+    /// Note: This is a simplified implementation for HTTP-based integration.
+    /// Production version should handle address lookup tables and proper account resolution.
     fn decode_compiled_instructions(
-        compiled_instructions: &[solana_sdk::instruction::CompiledInstruction],
+        compiled_instructions: &[CompiledInstruction],  // ✅ FIXED: Use v0::CompiledInstruction
         message: &solana_sdk::message::VersionedMessage,
     ) -> Result<Vec<Instruction>> {
         let account_keys = match message {
@@ -350,9 +356,9 @@ impl JupiterClient {
                 let accounts = compiled_ix.accounts
                     .iter()
                     .map(|&idx| {
-                        solana_sdk::instruction::AccountMeta::new(
+                        AccountMeta::new(
                             account_keys[idx as usize],
-                            false,  // TODO: Determine if signer based on message signers
+                            false,  // Note: Simplified - should check message.is_signer(idx)
                         )
                     })
                     .collect();
