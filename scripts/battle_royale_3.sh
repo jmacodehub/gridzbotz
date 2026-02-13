@@ -1,10 +1,10 @@
 #!/bin/bash
 # ═══════════════════════════════════════════════════════════════════════════
-# 🔥🏆 BATTLE ROYALE V2.5 - ULTIMATE SHOWDOWN! 🏆🔥
+# 🔥🏆 BATTLE ROYALE V2.5 - 20-HOUR MARATHON SHOWDOWN! 🏆🔥
 # 
-# Version: 2.5 (Enhanced)
-# Duration: Configurable (default 10 hours)
-# Configs: 3 V2.5 optimized strategies with Jupiter V5.0 ready
+# Version: 2.5 Enhanced (Parallel Default)
+# Duration: 20 hours (EPIC MARATHON!)
+# Configs: 3 V2.5 optimized strategies running SIMULTANEOUSLY
 # Goal: Crown the champion & deploy to mainnet!
 # 
 # V2.5 Features Tested:
@@ -13,7 +13,7 @@
 # ✅ Order Lifecycle (auto-refresh)
 # ✅ Dynamic Grid Spacing (volatility-based)
 # 
-# February 13, 2026 - Enhanced Battle Royale! 🚀
+# February 13, 2026 - 20-Hour Parallel Marathon! 🚀⏰
 # ═══════════════════════════════════════════════════════════════════════════
 
 set -eo pipefail  # Exit on error, pipe failures
@@ -32,10 +32,10 @@ BOLD='\033[1m'
 NC='\033[0m'
 
 # ───────────────────────────────────────────────────────────────────────────
-# ⚙️ CONFIGURATION
+# ⚙️ CONFIGURATION - PARALLEL & 20 HOURS BY DEFAULT!
 # ───────────────────────────────────────────────────────────────────────────
-DURATION_HOURS=${1:-10}         # Default 10 hours, override with arg
-PARALLEL=${PARALLEL:-false}     # Set PARALLEL=true for parallel execution
+DURATION_HOURS=${1:-20}         # 🔥 DEFAULT: 20 HOURS!
+PARALLEL=${PARALLEL:-true}      # 🔥 DEFAULT: PARALLEL MODE!
 SESSION_ID=$(date +"%Y%m%d_%H%M%S")
 LOG_DIR="logs/battle_royale_${SESSION_ID}"
 RESULTS_DIR="results/battle_royale_${SESSION_ID}"
@@ -46,15 +46,18 @@ CONFIG_MULTI="${CONFIG_DIR}/multi-v5-ai.toml"
 CONFIG_BALANCED="${CONFIG_DIR}/balanced-v4.1.toml"
 CONFIG_CONSERVATIVE="${CONFIG_DIR}/conservative-v4.1.toml"
 
+# PIDs for parallel tracking
+declare -A pids
+
 # ───────────────────────────────────────────────────────────────────────────
 # 🛠️ HELPER FUNCTIONS
 # ───────────────────────────────────────────────────────────────────────────
 
 print_header() {
     echo ""
-    echo -e "${CYAN}════════════════════════════════════════════════════════════════════════════${NC}"
+    echo -e "${CYAN}═══════════════════════════════════════════════════════════════════════════${NC}"
     echo -e "${BOLD}${WHITE}$1${NC}"
-    echo -e "${CYAN}════════════════════════════════════════════════════════════════════════════${NC}"
+    echo -e "${CYAN}═══════════════════════════════════════════════════════════════════════════${NC}"
     echo ""
 }
 
@@ -70,21 +73,52 @@ timestamp() {
     date +"%Y-%m-%d %H:%M:%S"
 }
 
+cleanup() {
+    echo ""
+    echo -e "${YELLOW}🛑 Caught interrupt signal - cleaning up...${NC}"
+    
+    # Kill all bot processes
+    for pid in "${pids[@]}"; do
+        if ps -p $pid > /dev/null 2>&1; then
+            echo -e "${YELLOW}Stopping PID $pid...${NC}"
+            kill -TERM $pid 2>/dev/null || true
+        fi
+    done
+    
+    # Wait a bit for graceful shutdown
+    sleep 2
+    
+    # Force kill if still running
+    for pid in "${pids[@]}"; do
+        if ps -p $pid > /dev/null 2>&1; then
+            echo -e "${RED}Force killing PID $pid...${NC}"
+            kill -KILL $pid 2>/dev/null || true
+        fi
+    done
+    
+    echo -e "${GREEN}✅ Cleanup complete${NC}"
+    exit 130
+}
+
+# Trap Ctrl+C and cleanup
+trap cleanup SIGINT SIGTERM
+
 # ───────────────────────────────────────────────────────────────────────────
 # 🚀 BANNER
 # ───────────────────────────────────────────────────────────────────────────
 
 clear
-print_header "🔥🏆 BATTLE ROYALE V2.5 - ULTIMATE SHOWDOWN! 🏆🔥"
+print_header "🔥🏆 BATTLE ROYALE V2.5 - 20-HOUR MARATHON! 🏆🔥"
 
 echo -e "${CYAN}Version:${NC} 2.5 Enhanced"
-echo -e "${CYAN}Duration:${NC} ${DURATION_HOURS} hours"
+echo -e "${CYAN}Duration:${NC} ${BOLD}${YELLOW}${DURATION_HOURS} HOURS${NC} ⏰"
 echo -e "${CYAN}Session ID:${NC} ${SESSION_ID}"
-echo -e "${CYAN}Mode:${NC} $([ "$PARALLEL" = "true" ] && echo "Parallel" || echo "Sequential")"
+echo -e "${CYAN}Mode:${NC} ${BOLD}${GREEN}PARALLEL${NC} (all 3 bots simultaneously) ⚡"
 echo -e "${CYAN}Start Time:${NC} $(timestamp)"
+echo -e "${CYAN}Expected End:${NC} $(date -d "+${DURATION_HOURS} hours" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date -v+${DURATION_HOURS}H '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo "${DURATION_HOURS} hours from now")"
 echo ""
 
-print_section "🎯 CONTESTANTS"
+print_section "🎯 CONTESTANTS (Running Simultaneously)"
 echo -e "   🔥 ${BOLD}Multi V5 AI${NC}       - Aggressive (15 levels @ 0.8%)"
 echo -e "   ⚖️  ${BOLD}Balanced V4.1${NC}    - All-Weather (10 levels @ 1.5%)"
 echo -e "   🛡️  ${BOLD}Conservative V4.1${NC} - Safe (7 levels @ 2.5%)"
@@ -146,110 +180,127 @@ echo -e "${GREEN}✅ All checks passed!${NC}"
 echo ""
 
 # ───────────────────────────────────────────────────────────────────────────
-# 🎮 RUN BOT FUNCTION
+# 🎮 RUN BOT FUNCTION (Background with proper logging)
 # ───────────────────────────────────────────────────────────────────────────
 
-run_bot() {
+run_bot_parallel() {
     local bot_name=$1
     local config_path=$2
     local emoji=$3
     local log_file="${LOG_DIR}/${bot_name}.log"
     local result_file="${RESULTS_DIR}/${bot_name}_results.json"
     
-    echo ""
-    echo -e "${PURPLE}───────────────────────────────────────────────────────────────────────────${NC}"
-    echo -e "${emoji} ${BOLD}Starting: ${bot_name}${NC}"
-    echo -e "${PURPLE}───────────────────────────────────────────────────────────────────────────${NC}"
-    echo -e "${CYAN}Config:${NC} $config_path"
-    echo -e "${CYAN}Duration:${NC} ${DURATION_HOURS}h"
-    echo -e "${CYAN}Log:${NC} $log_file"
-    echo -e "${CYAN}Start:${NC} $(timestamp)"
-    echo ""
+    (
+        echo "═══════════════════════════════════════════════════════════════════════════"
+        echo "${emoji} ${bot_name} - STARTED"
+        echo "═══════════════════════════════════════════════════════════════════════════"
+        echo "Config:   $config_path"
+        echo "Duration: ${DURATION_HOURS}h"
+        echo "PID:      $$"
+        echo "Start:    $(timestamp)"
+        echo "═══════════════════════════════════════════════════════════════════════════"
+        echo ""
+        
+        ./target/release/solana-grid-bot run \
+            --config "$config_path" \
+            --duration-hours "$DURATION_HOURS" 2>&1
+        
+        local exit_code=$?
+        
+        echo ""
+        echo "═══════════════════════════════════════════════════════════════════════════"
+        echo "${emoji} ${bot_name} - COMPLETED"
+        echo "═══════════════════════════════════════════════════════════════════════════"
+        echo "End:        $(timestamp)"
+        echo "Exit Code:  $exit_code"
+        echo "Results:    $result_file"
+        echo "═══════════════════════════════════════════════════════════════════════════"
+        
+        exit $exit_code
+    ) > "$log_file" 2>&1 &
     
-    # Run bot with proper error handling
-    set +e  # Don't exit on error for this command
-    ./target/release/solana-grid-bot run \
-        --config "$config_path" \
-        --duration-hours "$DURATION_HOURS" \
-        2>&1 | tee "$log_file"
+    local pid=$!
+    echo -e "${emoji} ${BOLD}${bot_name}${NC} started (PID: ${CYAN}${pid}${NC})"
+    echo -e "   ${BLUE}Log:${NC} tail -f ${log_file}"
     
-    local exit_code=$?
-    set -e
-    
-    echo ""
-    echo -e "${CYAN}End:${NC} $(timestamp)"
-    
-    if [ $exit_code -eq 0 ]; then
-        echo -e "${emoji} ${GREEN}✅ ${bot_name} completed successfully!${NC}"
-    else
-        echo -e "${emoji} ${RED}❌ ${bot_name} failed (exit code: $exit_code)${NC}"
-    fi
-    
-    echo -e "${BLUE}📊 Results: ${result_file}${NC}"
-    echo ""
-    
-    return $exit_code
+    return $pid
 }
 
 # ───────────────────────────────────────────────────────────────────────────
-# 🚀 EXECUTION
+# 🚀 PARALLEL EXECUTION
 # ───────────────────────────────────────────────────────────────────────────
 
-print_header "🚀 LAUNCHING BATTLE ROYALE"
+print_header "🚀 LAUNCHING 20-HOUR PARALLEL BATTLE ROYALE"
 
-echo -e "${YELLOW}⏱️  Expected completion: $(date -d "+${DURATION_HOURS} hours" 2>/dev/null || date -v+${DURATION_HOURS}H 2>/dev/null || echo "${DURATION_HOURS} hours from now")${NC}"
+echo -e "${GREEN}⚡ Running all 3 bots simultaneously!${NC}"
+echo ""
+echo -e "${CYAN}Expected completion:${NC} $(date -d "+${DURATION_HOURS} hours" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date -v+${DURATION_HOURS}H '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo "${DURATION_HOURS} hours from now")"
+echo ""
+
+print_section "🎬 STARTING BOTS"
+
+# Start all 3 bots in parallel
+run_bot_parallel "multi-v5-ai" "$CONFIG_MULTI" "🔥"
+pids[multi]=$?
+
+run_bot_parallel "balanced-v4.1" "$CONFIG_BALANCED" "⚖️"
+pids[balanced]=$?
+
+run_bot_parallel "conservative-v4.1" "$CONFIG_CONSERVATIVE" "🛡️"
+pids[conservative]=$?
+
+echo ""
+echo -e "${GREEN}✅ All 3 bots launched!${NC}"
+echo ""
+
+print_section "📊 LIVE MONITORING"
+echo "Monitor individual bots with:"
+echo ""
+echo -e "  ${CYAN}# Multi V5 AI (aggressive)${NC}"
+echo "  tail -f ${LOG_DIR}/multi-v5-ai.log"
+echo ""
+echo -e "  ${CYAN}# Balanced V4.1 (all-weather)${NC}"
+echo "  tail -f ${LOG_DIR}/balanced-v4.1.log"
+echo ""
+echo -e "  ${CYAN}# Conservative V4.1 (safe)${NC}"
+echo "  tail -f ${LOG_DIR}/conservative-v4.1.log"
+echo ""
+echo -e "  ${CYAN}# Monitor all at once with multitail (if installed)${NC}"
+echo "  multitail ${LOG_DIR}/*.log"
+echo ""
+
+print_section "⏳ WAITING FOR COMPLETION (${DURATION_HOURS} hours)"
+echo -e "${YELLOW}This will take a while... Grab a coffee (or 10) ☕☕☕${NC}"
+echo -e "${CYAN}Press Ctrl+C to stop all bots gracefully${NC}"
 echo ""
 
 # Track results
 declare -A results
-declare -A pids
 
-if [ "$PARALLEL" = "true" ]; then
-    # ☀️ PARALLEL MODE
-    echo -e "${CYAN}⚡ Running all bots in parallel...${NC}"
-    echo ""
-    
-    run_bot "multi-v5-ai" "$CONFIG_MULTI" "🔥" &
-    pids[multi]=$!
-    
-    run_bot "balanced-v4.1" "$CONFIG_BALANCED" "⚖️" &
-    pids[balanced]=$!
-    
-    run_bot "conservative-v4.1" "$CONFIG_CONSERVATIVE" "🛡️" &
-    pids[conservative]=$!
-    
-    # Wait for all to complete
-    echo -e "${CYAN}🕒 Waiting for all bots to complete...${NC}"
-    echo ""
-    
-    wait ${pids[multi]}
-    results[multi]=$?
-    
-    wait ${pids[balanced]}
-    results[balanced]=$?
-    
-    wait ${pids[conservative]}
-    results[conservative]=$?
-else
-    # 🔄 SEQUENTIAL MODE (Default)
-    echo -e "${CYAN}🔄 Running bots sequentially...${NC}"
-    echo ""
-    
-    run_bot "multi-v5-ai" "$CONFIG_MULTI" "🔥"
-    results[multi]=$?
-    
-    run_bot "balanced-v4.1" "$CONFIG_BALANCED" "⚖️"
-    results[balanced]=$?
-    
-    run_bot "conservative-v4.1" "$CONFIG_CONSERVATIVE" "🛡️"
-    results[conservative]=$?
-fi
+# Wait for all to complete and track exit codes
+echo -e "${CYAN}Waiting for: 🔥 Multi V5 AI...${NC}"
+wait ${pids[multi]}
+results[multi]=$?
+echo -e "${emoji} ${GREEN}Multi V5 AI finished!${NC} (exit ${results[multi]})"
+echo ""
+
+echo -e "${CYAN}Waiting for: ⚖️ Balanced V4.1...${NC}"
+wait ${pids[balanced]}
+results[balanced]=$?
+echo -e "⚖️ ${GREEN}Balanced V4.1 finished!${NC} (exit ${results[balanced]})"
+echo ""
+
+echo -e "${CYAN}Waiting for: 🛡️ Conservative V4.1...${NC}"
+wait ${pids[conservative]}
+results[conservative]=$?
+echo -e "🛡️ ${GREEN}Conservative V4.1 finished!${NC} (exit ${results[conservative]})"
+echo ""
 
 # ───────────────────────────────────────────────────────────────────────────
 # 🏆 RESULTS SUMMARY
 # ───────────────────────────────────────────────────────────────────────────
 
-print_header "🏁 BATTLE ROYALE COMPLETE!"
+print_header "🏁 20-HOUR BATTLE ROYALE COMPLETE!"
 
 echo -e "${CYAN}End Time:${NC} $(timestamp)"
 echo -e "${CYAN}Duration:${NC} ${DURATION_HOURS} hours"
@@ -283,29 +334,32 @@ echo -e "   ${BLUE}Logs:${NC}    ${LOG_DIR}/"
 echo -e "   ${BLUE}Results:${NC} ${RESULTS_DIR}/"
 echo ""
 
-print_section "🔍 NEXT STEPS"
-echo "1. Review detailed logs in ${LOG_DIR}/"
-echo "2. Analyze results (PnL, trades, regime changes)"
-echo "3. Compare V2.5 features performance"
+print_section "🔍 QUICK ANALYSIS COMMANDS"
+echo "Compare performance across all 3 bots:"
+echo ""
+echo -e "  ${CYAN}# Final P&L comparison${NC}"
+echo "  grep -h 'Final PnL' ${LOG_DIR}/*.log | sort"
+echo ""
+echo -e "  ${CYAN}# Total trades per bot${NC}"
+echo "  for log in ${LOG_DIR}/*.log; do echo \"\$(basename \$log): \$(grep -c 'Trade executed' \$log) trades\"; done"
+echo ""
+echo -e "  ${CYAN}# Regime pauses (V2.5 feature)${NC}"
+echo "  for log in ${LOG_DIR}/*.log; do echo \"\$(basename \$log): \$(grep -c 'Regime.*PAUSED' \$log) pauses\"; done"
+echo ""
+echo -e "  ${CYAN}# Fee rejections (V2.5 feature)${NC}"
+echo "  for log in ${LOG_DIR}/*.log; do echo \"\$(basename \$log): \$(grep -c 'Fee rejected' \$log) rejections\"; done"
+echo ""
+echo -e "  ${CYAN}# Order refreshes (V2.5 feature)${NC}"
+echo "  for log in ${LOG_DIR}/*.log; do echo \"\$(basename \$log): \$(grep -c 'Order refreshed' \$log) refreshes\"; done"
+echo ""
+
+print_section "🎯 NEXT STEPS"
+echo "1. Analyze logs for detailed performance metrics"
+echo "2. Compare V2.5 feature effectiveness"
+echo "3. Calculate Sharpe ratios and risk metrics"
 echo "4. Crown the champion! 🏆"
-echo "5. Deploy winner to mainnet with Jupiter V5.0"
+echo "5. Deploy winner to mainnet with Jupiter V5.0 🚀"
 echo ""
 
-print_section "📊 QUICK ANALYSIS"
-echo "Run these commands to analyze results:"
-echo ""
-echo -e "  ${CYAN}# View logs${NC}"
-echo "  tail -f ${LOG_DIR}/multi-v5-ai.log"
-echo ""
-echo -e "  ${CYAN}# Compare final P&L${NC}"
-echo "  grep 'Final PnL' ${LOG_DIR}/*.log"
-echo ""
-echo -e "  ${CYAN}# Count regime pauses${NC}"
-echo "  grep 'Regime Gate: PAUSED' ${LOG_DIR}/*.log | wc -l"
-echo ""
-echo -e "  ${CYAN}# Count fee rejections${NC}"
-echo "  grep 'Fee rejected' ${LOG_DIR}/*.log | wc -l"
-echo ""
-
-echo -e "${GREEN}🎉 Battle Royale V2.5 Complete! Good luck analyzing! 🚀${NC}"
+echo -e "${GREEN}🎉 Epic 20-hour battle royale complete! May the best bot win! 🏆${NC}"
 echo ""
