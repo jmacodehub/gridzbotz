@@ -1,6 +1,6 @@
 //! ═══════════════════════════════════════════════════════════════════════════
 //! 🤖 SOLANA GRID TRADING BOT - MULTI-STRATEGY V4.0 "CONSERVATIVE AI"
-//! 
+//!
 //! High-performance Rust implementation with:
 //! • Dynamic grid repositioning
 //! • Multi-strategy consensus engine (MACD, RSI, Mean Reversion)
@@ -8,11 +8,11 @@
 //! • Market regime detection
 //! • Automatic order lifecycle management
 //! • Technical indicators library (ATR, MACD, EMA, SMA)
-//! 
+//!
 //! Built for production trading on Solana DEX (OpenBook/Serum)
-//! 
+//!
 //! Architecture:
-//! ```
+//! ```text
 //! ┌─────────────────────────────────────────────────────────────────┐
 //! │                      GridBot (Orchestrator)                     │
 //! ├─────────────────────────────────────────────────────────────────┤
@@ -20,17 +20,17 @@
 //! │          │           │  Indicators  │        │           │     │
 //! └─────────────────────────────────────────────────────────────────┘
 //! ```
-//! 
+//!
 //! Version: 4.0.0
 //! License: MIT
 //! Date: February 10, 2026
 //! ═══════════════════════════════════════════════════════════════════════════
 
-#![allow(missing_docs)] 
+#![allow(missing_docs)]
 #![allow(missing_debug_implementations)]
 
 // ═══════════════════════════════════════════════════════════════════════════
-//Standard Library & External Dependencies
+// Standard Library & External Dependencies
 // ═══════════════════════════════════════════════════════════════════════════
 
 #![warn(
@@ -42,7 +42,7 @@
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Module Declarations - Organized by Domain
-//═══════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════
 
 /// Configuration management (TOML-based + programmatic)
 pub mod config;
@@ -134,11 +134,10 @@ pub const BUILD_INFO: BuildInfo = BuildInfo {
     version: VERSION,
     name: NAME,
     codename: CODENAME,
-    git_hash: "phase3a",           
-    build_date: "2026-02-10",  
-    rust_version: "1.70",      
+    git_hash: "phase3a",
+    build_date: "2026-02-10",
+    rust_version: "1.70",
 };
-
 
 /// Build metadata structure
 #[derive(Debug, Clone, Copy)]
@@ -161,17 +160,15 @@ pub struct BuildInfo {
 // Library Initialization
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Initialize the trading bot library with enhanced startup banner
-/// 
+/// Initialize the trading bot library with enhanced startup banner.
+///
 /// # Returns
-/// 
+///
 /// Returns `Ok(())` on successful initialization, or an error if setup fails.
-/// 
+///
 /// # Examples
-/// 
-/// ```
-/// use solana_grid_bot;
-/// 
+///
+/// ```no_run
 /// fn main() -> Result<(), Box<dyn std::error::Error>> {
 ///     solana_grid_bot::init()?;
 ///     // Your bot code here
@@ -180,33 +177,33 @@ pub struct BuildInfo {
 /// ```
 pub fn init() -> Result<(), Box<dyn std::error::Error>> {
     print_startup_banner();
-    
+
     // Initialize logging if not already configured
     if std::env::var("RUST_LOG").is_err() {
         std::env::set_var("RUST_LOG", "info");
     }
-    
+
     Ok(())
 }
 
-/// Initialize with custom configuration
-/// 
+/// Initialize with custom configuration.
+///
 /// # Arguments
-/// 
+///
 /// * `config` - Configuration to validate and use
-/// 
+///
 /// # Returns
-/// 
+///
 /// Returns `Ok(())` if configuration is valid, otherwise returns validation errors.
 pub fn init_with_config(config: &Config) -> Result<(), Box<dyn std::error::Error>> {
     print_startup_banner();
-    
+
     // Validate configuration
     config.validate()?;
-    
+
     println!("✅ Configuration validated successfully!");
     println!();
-    
+
     Ok(())
 }
 
@@ -217,7 +214,7 @@ pub fn init_with_config(config: &Config) -> Result<(), Box<dyn std::error::Error
 /// Print enhanced startup banner with version info
 fn print_startup_banner() {
     let border = "═".repeat(70);
-    
+
     println!("\n{}", border);
     println!("  🤖 {} V{}", NAME.to_uppercase(), VERSION);
     println!("  🧠 {}", CODENAME);
@@ -259,17 +256,17 @@ pub fn version_string() -> String {
 // Prelude - Common imports for convenience
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Prelude module for convenient imports
-/// 
+/// Prelude module for convenient imports.
+///
 /// # Examples
-/// 
-/// ```
+///
+/// ```no_run
 /// use solana_grid_bot::prelude::*;
-/// 
+///
 /// #[tokio::main]
 /// async fn main() -> Result<()> {
 ///     let config = Config::load()?;
-///     let bot = GridBot::new(config)?;
+///     let mut bot = GridBot::new(config)?;
 ///     bot.initialize().await?;
 ///     Ok(())
 /// }
@@ -281,18 +278,18 @@ pub mod prelude {
         init,
         version,
     };
-    
+
     pub use crate::trading::{
         OrderSide,
         OrderType,
         Order,
     };
-    
+
     pub use crate::strategies::{
         Strategy,
         // StrategySignal,
     };
-    
+
     pub use crate::indicators::{
         Indicator,
         ATR,
@@ -300,7 +297,7 @@ pub mod prelude {
         EMA,
         SMA,
     };
-    
+
     pub use anyhow::{Result, Context};
 }
 
@@ -336,14 +333,14 @@ mod tests {
         assert!(init().is_ok());
         println!("✅ Library initialization test passed!");
     }
-    
+
     #[test]
     fn test_version() {
         let ver = version();
         assert!(!ver.is_empty());
         println!("✅ Version: {}", ver);
     }
-    
+
     #[test]
     fn test_version_string() {
         let ver_str = version_string();
@@ -351,18 +348,18 @@ mod tests {
         assert!(ver_str.contains("CONSERVATIVE AI"));
         println!("✅ Version string: {}", ver_str);
     }
-    
+
     #[test]
     fn test_build_info() {
         assert!(!BUILD_INFO.version.is_empty());
         assert!(!BUILD_INFO.name.is_empty());
         println!("✅ Build info validated!");
     }
-    
+
     #[test]
     fn test_prelude_imports() {
         use crate::prelude::*;
-        
+
         // Test that common types are available
         let _ver = version();
         println!("✅ Prelude imports working!");
@@ -375,18 +372,12 @@ mod tests {
 
 #[cfg(doctest)]
 mod doctests {
-    /// Example usage in documentation
-    /// 
-    /// ```
-    /// use solana_grid_bot::prelude::*;
-    /// 
-    /// fn main() -> Result<()> {
-    ///     // Initialize library
-    ///     init()?;
-    ///     
-    ///     // Print version
-    ///     println!("Version: {}", version());
-    ///     
+    /// Example usage in documentation.
+    ///
+    /// ```no_run
+    /// fn main() -> Result<(), Box<dyn std::error::Error>> {
+    ///     solana_grid_bot::init()?;
+    ///     println!("Version: {}", solana_grid_bot::version());
     ///     Ok(())
     /// }
     /// ```
