@@ -149,12 +149,19 @@ impl CircuitBreaker {
         }
 
         // Check 1: Daily loss limit
-        if self.daily_pnl.abs() >= self.max_daily_loss_pct {
-            error!("🚨 CIRCUIT BREAKER TRIPPED - Daily loss limit exceeded!");
-            error!("   Daily P&L:    {:.2}%", self.daily_pnl);
-            error!("   Limit:        -{:.1}%", self.max_daily_loss_pct);
-            self.trip(TripReason::DailyLossLimit);
-            return;
+        // daily_pnl is in dollars; normalise against peak_balance before
+        // comparing to max_daily_loss_pct (which is a percentage).  Without
+        // this normalisation any loss > $max_daily_loss_pct would trip
+        // immediately (e.g. -$100 compared to 10 → trip on first trade).
+        if self.peak_balance > 0.0 {
+            let daily_loss_pct = (-self.daily_pnl / self.peak_balance) * 100.0;
+            if daily_loss_pct >= self.max_daily_loss_pct {
+                error!("🚨 CIRCUIT BREAKER TRIPPED - Daily loss limit exceeded!");
+                error!("   Daily loss:   -{:.2}%", daily_loss_pct);
+                error!("   Limit:        -{:.1}%", self.max_daily_loss_pct);
+                self.trip(TripReason::DailyLossLimit);
+                return;
+            }
         }
 
         // Check 2: Maximum drawdown
@@ -201,7 +208,8 @@ impl CircuitBreaker {
     /// Reset daily statistics (call at start of new trading day)
     pub fn reset_daily(&mut self) {
         info!("📅 Resetting daily circuit breaker statistics");
-        info!("   Final daily P&L:     {:.2}%", self.daily_pnl);
+        info!("   Final daily P&L:     {:.2}%",
+            if self.peak_balance > 0.0 { (self.daily_pnl / self.peak_balance) * 100.0 } else { 0.0 });
         info!("   Consecutive losses:  {}", self.consecutive_losses);
         info!("   Current drawdown:    -{:.2}%", self.current_drawdown_pct);
 
@@ -278,10 +286,9 @@ mod tests {
                 cluster: "devnet".to_string(),
                 rpc_url: "http://localhost".to_string(),
                 commitment: "confirmed".to_string(),
-                ws_url: None,  // 🔥 FIX 1: Added missing field
+                ws_url: None,
             },
             trading: TradingConfig {
-                // 🔥 FIX 2: Complete struct instead of ..Default::default()
                 grid_levels: 10,
                 grid_spacing_percent: 0.2,
                 min_order_size: 0.01,
@@ -349,13 +356,14 @@ mod tests {
         let config = test_config();
         let mut breaker = CircuitBreaker::with_balance(&config, 10000.0);
 
-        // Record losses
+        // Record 4 losses — each is 1% of balance, total 4% < 10% daily limit
+        // so only consecutive-loss check is relevant here
         for _ in 0..4 {
             breaker.record_trade(-100.0, 9900.0);
             assert!(!breaker.is_tripped);
         }
 
-        // 5th loss should trip
+        // 5th loss hits max_consecutive_losses (5) → trip
         breaker.record_trade(-100.0, 9800.0);
         assert!(breaker.is_tripped);
     }
@@ -375,5 +383,19 @@ mod tests {
         // 1 profit resets streak
         breaker.record_trade(100.0, 10000.0);
         assert_eq!(breaker.consecutive_losses, 0);
+    }
+
+    #[test]
+    fn test_daily_loss_limit_fires_as_percentage() {
+        let config = test_config(); // max_drawdown_pct = 10.0
+        let mut breaker = CircuitBreaker::with_balance(&config, 1000.0);
+
+        // 9% loss — should NOT trip (9 < 10)
+        breaker.record_trade(-90.0, 910.0);
+        assert!(!breaker.is_tripped, "9% loss should not trip 10% daily limit");
+
+        // Another 2% loss — total 11% — should trip
+        breaker.record_trade(-20.0, 890.0);
+        assert!(breaker.is_tripped, "11% total daily loss should trip 10% limit");
     }
 }

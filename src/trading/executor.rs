@@ -9,8 +9,10 @@
 //! ✅ Error handling and recovery
 //! ✅ Automatic endpoint rotation with stats
 //! ✅ Thread-safe atomic operations
+//! ✅ VersionedTransaction execution (Jupiter swaps / V0 with ALTs)
 //!
 //! November 2025 | Project Flash V6.1 - Execution Layer (Fixed & Optimized)
+//! February 2026  | V6.2 — Added execute_versioned() for Jupiter V0 swaps
 //! ═══════════════════════════════════════════════════════════════════════════
 
 use anyhow::{bail, Context, Result};
@@ -24,7 +26,7 @@ use solana_sdk::{
     instruction::Instruction,
     pubkey::Pubkey,
     signature::Signature,
-    transaction::Transaction,
+    transaction::{Transaction, VersionedTransaction},
 };
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -217,7 +219,6 @@ impl RpcClientPool {
         let failures = self.failure_counts.read().await;
         let requests = self.request_counts.read().await;
 
-
         self.endpoints
             .iter()
             .enumerate()
@@ -279,6 +280,51 @@ impl RpcClientPool {
 
         bail!(
             "Transaction failed after {} retries across {} endpoints",
+            self.max_retries,
+            self.endpoints.len()
+        );
+    }
+
+    /// Send a VersionedTransaction (e.g. Jupiter V0 swap with ALTs).
+    ///
+    /// Uses `send_transaction()` which accepts any `SerializableTransaction`,
+    /// including `VersionedTransaction` — ALTs are preserved intact.
+    pub async fn send_versioned_transaction_with_retry(
+        &self,
+        tx: &VersionedTransaction,
+    ) -> Result<Signature> {
+        for attempt in 0..self.max_retries {
+            let client = self.get_client();
+            let endpoint_idx = self.current_index.load(Ordering::Relaxed);
+
+            match client.send_transaction(tx).await {
+                Ok(sig) => {
+                    self.record_request(true).await;
+                    info!(
+                        "✅ Versioned tx sent: {} (endpoint {}, attempt {}/{})",
+                        sig, endpoint_idx, attempt + 1, self.max_retries
+                    );
+                    return Ok(sig);
+                }
+                Err(e) => {
+                    self.record_request(false).await;
+                    error!(
+                        "❌ Versioned tx failed (endpoint {}, attempt {}/{}): {}",
+                        endpoint_idx, attempt + 1, self.max_retries, e
+                    );
+
+                    if attempt < self.max_retries - 1 {
+                        self.rotate_endpoint().await;
+                        let backoff_secs = 2_u64.pow(attempt as u32);
+                        debug!("⏳ Exponential backoff: {} seconds", backoff_secs);
+                        tokio::time::sleep(Duration::from_secs(backoff_secs)).await;
+                    }
+                }
+            }
+        }
+
+        bail!(
+            "Versioned transaction failed after {} retries across {} endpoints",
             self.max_retries,
             self.endpoints.len()
         );
@@ -388,7 +434,7 @@ impl TransactionExecutor {
         })
     }
 
-    /// Build and send a transaction
+    /// Build and send a legacy Transaction from instructions.
     pub async fn execute(
         &self,
         payer: &Pubkey,
@@ -421,7 +467,6 @@ impl TransactionExecutor {
 
         match self.rpc.send_transaction_with_retry(&tx, rpc_config).await {
             Ok(signature) => {
-                // Wait for confirmation
                 let confirmation_timeout = self.config.confirmation_timeout_secs.unwrap_or(60);
 
                 match self.rpc.wait_for_confirmation(&signature, confirmation_timeout).await {
@@ -440,6 +485,49 @@ impl TransactionExecutor {
             Err(e) => {
                 self.failed_executions.fetch_add(1, Ordering::SeqCst);
                 error!("❌ Execution #{} submission failed: {}", exec_num, e);
+                Err(e)
+            }
+        }
+    }
+
+    /// Send a pre-built VersionedTransaction (Jupiter V0 swap with ALTs).
+    ///
+    /// The sign_fn fills in `tx.signatures[0]` (fee-payer slot) using
+    /// `keystore.sign_versioned_transaction()`.  ALTs are preserved intact —
+    /// do NOT decompose into Vec<Instruction> before calling this.
+    pub async fn execute_versioned(
+        &self,
+        mut versioned_tx: VersionedTransaction,
+        sign_fn: impl FnOnce(&mut VersionedTransaction) -> Result<()>,
+    ) -> Result<Signature> {
+        let exec_num = self.total_executions.fetch_add(1, Ordering::SeqCst) + 1;
+        debug!("🚀 Versioned execution #{} starting", exec_num);
+
+        // Sign the transaction (keystore writes into signatures[0])
+        sign_fn(&mut versioned_tx).context("Failed to sign VersionedTransaction")?;
+
+        // Send with retry — send_transaction() accepts SerializableTransaction
+        // so VersionedTransaction is passed directly (no bincode, ALTs intact)
+        match self.rpc.send_versioned_transaction_with_retry(&versioned_tx).await {
+            Ok(signature) => {
+                let confirmation_timeout = self.config.confirmation_timeout_secs.unwrap_or(60);
+
+                match self.rpc.wait_for_confirmation(&signature, confirmation_timeout).await {
+                    Ok(_) => {
+                        self.successful_executions.fetch_add(1, Ordering::SeqCst);
+                        info!("🎉 Versioned execution #{} successful!", exec_num);
+                        Ok(signature)
+                    }
+                    Err(e) => {
+                        self.failed_executions.fetch_add(1, Ordering::SeqCst);
+                        error!("❌ Versioned execution #{} confirmation failed: {}", exec_num, e);
+                        Err(e)
+                    }
+                }
+            }
+            Err(e) => {
+                self.failed_executions.fetch_add(1, Ordering::SeqCst);
+                error!("❌ Versioned execution #{} submission failed: {}", exec_num, e);
                 Err(e)
             }
         }

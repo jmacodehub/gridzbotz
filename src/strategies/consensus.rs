@@ -151,7 +151,30 @@ mod tests {
     #[test]
     fn test_majority_vote_returns_expected() {
         let engine = ConsensusEngine::new(ConsensusMode::MajorityVote);
-        let s = engine.resolve(&sample_signals());
-        assert!(matches!(s, Signal::Buy { .. }) || matches!(s, Signal::Sell { .. }));
+        // 2 bulls vs 1 bear — clear majority → Buy
+        // Note: [Buy, Sell, Hold] = 1 bull vs 1 bear = tie → Hold (not a valid
+        // majority test).  Use an unambiguous 2-vs-1 set instead.
+        let signals = vec![
+            Signal::Buy {
+                price: 100.0,
+                size: 1.0,
+                reason: "bull1".into(),
+                confidence: 0.9,
+            },
+            Signal::Buy {
+                price: 100.0,
+                size: 1.0,
+                reason: "bull2".into(),
+                confidence: 0.8,
+            },
+            Signal::Sell {
+                price: 101.0,
+                size: 1.0,
+                reason: "bear".into(),
+                confidence: 0.3,
+            },
+        ];
+        let s = engine.resolve(&signals);
+        assert!(matches!(s, Signal::Buy { .. }));
     }
 }

@@ -3,12 +3,11 @@
 //! ═══════════════════════════════════════════════════════════════════════════
 
 use anyhow::{bail, Context, Result};
-use log::{debug, error, info};
+use log::{error, info};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
-use std::str::FromStr;
 use tokio::sync::RwLock;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -20,8 +19,8 @@ use crate::Config;
 use super::executor::{TransactionExecutor, ExecutorConfig};
 use super::trade::Trade;
 use super::paper_trader::{Order, OrderSide};
-use super::jupiter_swap::{JupiterSwapClient, WSOL_MINT, USDC_MINT};
-use solana_sdk::{instruction::Instruction, pubkey::Pubkey};
+use super::jupiter_client::{JupiterClient, JupiterConfig, SOL_MINT, USDC_MINT};
+use solana_sdk::transaction::VersionedTransaction;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ⚙️ CONFIGURATION
@@ -214,14 +213,13 @@ impl RealTradingEngine {
 
         self.total_executions.fetch_add(1, Ordering::SeqCst);
 
-        // 🔥 BUILD ACTUAL JUPITER SWAP!
-        let swap_instructions = self.build_jupiter_swap(side, price, size).await?;
+        // 🔥 BUILD ACTUAL JUPITER SWAP — full VersionedTransaction (ALTs preserved)
+        let (versioned_tx, _last_valid) = self.build_jupiter_swap(side, price, size).await?;
 
         let executor = self.executor.write().await;
-        let signature = executor.execute(
-            self.keystore.pubkey(),
-            swap_instructions,
-            |tx| self.keystore.sign_transaction(tx),
+        let signature = executor.execute_versioned(
+            versioned_tx,
+            |tx| self.keystore.sign_versioned_transaction(tx),
         ).await;
 
         match signature {
@@ -257,109 +255,57 @@ impl RealTradingEngine {
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // 🪐 JUPITER SWAP INTEGRATION - THE MONEY MAKER!
+    // 🪐 JUPITER SWAP INTEGRATION — VersionedTransaction (ALTs preserved)
     // ─────────────────────────────────────────────────────────────────────────
-    /// Build Jupiter swap transaction
+    /// Build a Jupiter swap as a VersionedTransaction.
+    ///
+    /// Uses JupiterClient::prepare_swap() which calls Jupiter's V6 API and
+    /// returns a complete V0 VersionedTransaction — Address Lookup Tables
+    /// (ALTs) are fully preserved.  Sign via keystore.sign_versioned_transaction()
+    /// and submit via executor.execute_versioned().
+    ///
+    /// ⚠️  Do NOT decompose into Vec<Instruction> — that silently drops ALTs
+    ///    and causes on-chain failures.
     async fn build_jupiter_swap(
         &self,
         side: OrderSide,
         price: f64,
         size: f64,
-    ) -> Result<Vec<Instruction>> {
-        info!("🪐 Building Jupiter swap transaction...");
+    ) -> Result<(VersionedTransaction, u64)> {
+        info!("🪐 Building Jupiter VersionedTransaction...");
 
-        // Initialize Jupiter client with slippage from config
-        let slippage_bps = self.config.slippage_bps.unwrap_or(50);
-        let jupiter = JupiterSwapClient::new(slippage_bps)?
-            .with_priority_fee(5000);
+        let jupiter = JupiterClient::new(JupiterConfig {
+            slippage_bps: self.config.slippage_bps.unwrap_or(50),
+            ..Default::default()
+        })?
+        .with_priority_fee(10_000);
 
-        let wsol = Pubkey::from_str(WSOL_MINT)?;
-        let usdc = Pubkey::from_str(USDC_MINT)?;
-
-        // Determine swap direction and amounts
-        let (input_mint, output_mint, amount_lamports) = match side {
+        let (input_mint, output_mint, amount) = match side {
             OrderSide::Buy => {
-                // Buy SOL with USDC
-                let usdc_amount = (price * size * 1_000_000.0) as u64; // USDC has 6 decimals
-                (usdc, wsol, usdc_amount)
+                // Buy SOL with USDC — USDC has 6 decimals
+                let usdc_micro = (price * size * 1_000_000.0) as u64;
+                info!("   BUY:  {:.2} USDC → SOL", price * size);
+                (USDC_MINT, SOL_MINT, usdc_micro)
             }
             OrderSide::Sell => {
-                // Sell SOL for USDC  
-                let sol_lamports = (size * 1_000_000_000.0) as u64; // SOL has 9 decimals
-                (wsol, usdc, sol_lamports)
+                // Sell SOL for USDC — SOL has 9 decimals (lamports)
+                let sol_lamports = (size * 1_000_000_000.0) as u64;
+                info!("   SELL: {:.4} SOL → USDC", size);
+                (SOL_MINT, USDC_MINT, sol_lamports)
             }
         };
 
-        debug!("   Input:  {} ({})", input_mint, amount_lamports);
-        debug!("   Output: {}", output_mint);
-
-        // Get quote from Jupiter
-        let quote = jupiter
-            .get_quote(input_mint, output_mint, amount_lamports)
+        let user_pubkey = *self.keystore.pubkey();
+        let (tx, last_valid, _quote) = jupiter
+            .prepare_swap(input_mint, output_mint, amount, user_pubkey)
             .await
-            .context("Failed to get Jupiter quote")?;
+            .context("Failed to prepare Jupiter swap")?;
 
-        info!("   Quote received: {} → {} lamports", amount_lamports, quote.out_amount);
-        info!("   Price impact: {:.3}%", quote.price_impact_pct);
-
-        // Get swap transaction - FIX: Dereference pubkey!
-        let (versioned_tx, _last_valid_height) = jupiter
-            .get_swap_transaction(&quote, *self.keystore.pubkey())
-            .await
-            .context("Failed to get swap transaction")?;
-
-        // Extract instructions from versioned transaction
-        let message = versioned_tx.message;
-        let instructions: Vec<Instruction> = match message {
-            solana_sdk::message::VersionedMessage::Legacy(msg) => {
-                msg.instructions
-                    .into_iter()
-                    .map(|ix| Instruction {
-                        program_id: msg.account_keys[ix.program_id_index as usize],
-                        accounts: ix
-                            .accounts
-                            .into_iter()
-                            .map(|idx| solana_sdk::instruction::AccountMeta {
-                                pubkey: msg.account_keys[idx as usize],
-                                is_signer: false,
-                                is_writable: false,
-                            })
-                            .collect(),
-                        data: ix.data,
-                    })
-                    .collect()
-            }
-            solana_sdk::message::VersionedMessage::V0(msg) => {
-                msg.instructions
-                    .into_iter()
-                    .map(|ix| {
-                        let account_keys = msg.account_keys.clone();
-                        Instruction {
-                            program_id: account_keys[ix.program_id_index as usize],
-                            accounts: ix
-                                .accounts
-                                .into_iter()
-                                .map(|idx| solana_sdk::instruction::AccountMeta {
-                                    pubkey: account_keys[idx as usize],
-                                    is_signer: false,
-                                    is_writable: false,
-                                })
-                                .collect(),
-                            data: ix.data,
-                        }
-                    })
-                    .collect()
-            }
-        };
-
-        info!("✅ Jupiter swap transaction built ({} instructions)", instructions.len());
-
-        Ok(instructions)
+        info!("✅ Jupiter swap tx built (last valid block: {})", last_valid);
+        Ok((tx, last_valid))
     }
 
     async fn reconcile_balances(&self, current_price: f64) -> Result<()> {
-        debug!("🔄 Reconciling balances...");
-
         let (usdc, sol) = self.balance_tracker.get_balances().await;
         let total_value = usdc + (sol * current_price);
 
@@ -526,11 +472,11 @@ mod tests {
     #[test]
     fn test_slippage_validation() {
         let mut config = RealTradingConfig::default();
-        
+
         // Valid slippage
         config.slippage_bps = Some(50);
         assert!(config.validate().is_ok());
-        
+
         // Invalid slippage (too high)
         config.slippage_bps = Some(2000);
         assert!(config.validate().is_err());

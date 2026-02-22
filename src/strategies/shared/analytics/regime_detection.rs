@@ -235,12 +235,19 @@ mod tests {
 
     #[test]
     fn test_pause_when_below_min_threshold() {
-        let mut cfg = RegimeConfig::default();
-        cfg.min_volatility_to_trade = 0.5;
+        // Disable pause_in_very_low_vol so the min-threshold check fires.
+        // With pause_in_very_low_vol=true, volatility=0.3 < very_low=0.5 would
+        // early-return "RegimeGate: VERY_LOW_VOL" before reaching the
+        // "Volatility" message path we want to test here.
+        let cfg = RegimeConfig {
+            min_volatility_to_trade: 0.5,
+            pause_in_very_low_vol: false,
+            ..Default::default()
+        };
         let r = RegimeDetector::new(cfg);
         let (pause, reason) = r.should_pause(0.3);
-        assert!(pause, "Should pause for too-low volatility");
-        assert!(reason.contains("Volatility"));
+        assert!(pause, "Should pause when below min_volatility_to_trade");
+        assert!(reason.contains("Volatility"), "Reason was: {}", reason);
     }
 
     #[test]
@@ -287,7 +294,6 @@ mod tests {
         assert_eq!(r.classify(3.5), MarketRegime::High);
     }
 
-    // ✅ NEW TEST: Verify public getter works
     #[test]
     fn test_get_current_regime_getter() {
         let r = default_detector();
