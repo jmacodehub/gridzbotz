@@ -12,6 +12,7 @@
 //!
 //! November 2025 | Project Flash V6.0 - Security Layer
 //! February 2026  | V5.1 — Added sign_versioned_transaction()
+//!                  V5.2 — Hardened: fee-payer identity check + bail on 0-signer tx
 //! ═══════════════════════════════════════════════════════════════════════════
 
 use anyhow::{bail, Context, Result};
@@ -188,16 +189,43 @@ impl SecureKeystore {
     ///
     /// Jupiter returns a VersionedTransaction whose message is already fully
     /// constructed (blockhash set, accounts resolved, ALTs referenced).
-    /// We sign by serializing the message bytes and calling sign_message(),
-    /// then placing the signature at index 0 (the fee payer / user slot).
+    /// We sign by serializing the message bytes and placing the signature
+    /// at index 0 — the fee-payer / user slot.
+    ///
+    /// # Errors
+    /// - Returns an error if the transaction has no signature slots (malformed).
+    /// - Returns an error if `static_account_keys()[0]` does not match this
+    ///   keystore's pubkey — catches a misconfigured `user_pubkey` passed to
+    ///   `JupiterClient::prepare_swap()` before it reaches the network.
     pub fn sign_versioned_transaction(&self, tx: &mut VersionedTransaction) -> Result<()> {
+        if tx.signatures.is_empty() {
+            bail!(
+                "Jupiter returned a VersionedTransaction with 0 signature slots — \
+                 transaction may be malformed. Cannot determine signer position."
+            );
+        }
+
+        // Defensive: verify we are the expected fee-payer (always index 0 in
+        // static account keys for Jupiter V6 swaps).  This catches a wrong
+        // user_pubkey passed to prepare_swap() at signing time — much clearer
+        // than a silent on-chain signature-verification failure.
+        let fee_payer = tx
+            .message
+            .static_account_keys()
+            .first()
+            .context("VersionedTransaction has no static account keys")?;
+        if fee_payer != &self.pubkey {
+            bail!(
+                "Fee-payer mismatch: transaction expects {}, keystore holds {}. \
+                 Ensure JupiterClient::prepare_swap() is called with the correct user_pubkey.",
+                fee_payer,
+                self.pubkey
+            );
+        }
+
         let message_bytes = tx.message.serialize();
         let signature = self.keypair.sign_message(&message_bytes);
-        if tx.signatures.is_empty() {
-            tx.signatures.push(signature);
-        } else {
-            tx.signatures[0] = signature;
-        }
+        tx.signatures[0] = signature;
         Ok(())
     }
 

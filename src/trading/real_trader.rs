@@ -83,15 +83,21 @@ impl RealTradingConfig {
 struct BalanceTracker {
     expected_usdc: Arc<RwLock<f64>>,
     expected_sol: Arc<RwLock<f64>>,
-    initial_balance: f64,
+    /// Initial portfolio value in USD, calculated at boot using the live
+    /// SOL price from the Pyth feed — never a hardcoded estimate.
+    initial_balance_usd: f64,
 }
 
 impl BalanceTracker {
-    fn new(initial_usdc: f64, initial_sol: f64) -> Self {
+    /// Create a new balance tracker.
+    ///
+    /// `sol_price_usd` must be the live SOL/USD price fetched from the
+    /// price feed at engine initialisation — do NOT pass a hardcoded value.
+    fn new(initial_usdc: f64, initial_sol: f64, sol_price_usd: f64) -> Self {
         Self {
             expected_usdc: Arc::new(RwLock::new(initial_usdc)),
             expected_sol: Arc::new(RwLock::new(initial_sol)),
-            initial_balance: initial_usdc + (initial_sol * 190.0),  // Estimate
+            initial_balance_usd: initial_usdc + (initial_sol * sol_price_usd),
         }
     }
 
@@ -107,8 +113,8 @@ impl BalanceTracker {
         *self.expected_sol.write().await = sol;
     }
 
-    fn initial_balance(&self) -> f64 {
-        self.initial_balance
+    fn initial_balance_usd(&self) -> f64 {
+        self.initial_balance_usd
     }
 }
 
@@ -149,11 +155,18 @@ pub struct RealTradingEngine {
 }
 
 impl RealTradingEngine {
+    /// Construct the real trading engine.
+    ///
+    /// `initial_sol_price_usd` must be the live SOL/USD price from the
+    /// Pyth price feed at the time of construction — e.g.
+    /// `feed.latest_price().await`.  This is used to compute the initial
+    /// portfolio NAV and, from it, the accurate ROI throughout the session.
     pub async fn new(
         config: RealTradingConfig,
         global_config: &Config,
         initial_balance_usdc: f64,
         initial_balance_sol: f64,
+        initial_sol_price_usd: f64,
     ) -> Result<Self> {
         info!("🚀 Initializing Real Trading Engine V2.0");
 
@@ -167,10 +180,16 @@ impl RealTradingEngine {
             CircuitBreaker::with_balance(global_config, initial_balance_usdc)
         ));
 
-        let balance_tracker = Arc::new(BalanceTracker::new(initial_balance_usdc, initial_balance_sol));
+        let balance_tracker = Arc::new(BalanceTracker::new(
+            initial_balance_usdc,
+            initial_balance_sol,
+            initial_sol_price_usd,
+        ));
 
         info!("✅ Real Trading Engine initialized");
-        info!("   Wallet: {}", keystore.pubkey());
+        info!("   Wallet:        {}", keystore.pubkey());
+        info!("   Initial NAV:   ${:.2} (SOL @ ${:.4})",
+            balance_tracker.initial_balance_usd(), initial_sol_price_usd);
 
         Ok(Self {
             keystore,
@@ -309,7 +328,7 @@ impl RealTradingEngine {
         let (usdc, sol) = self.balance_tracker.get_balances().await;
         let total_value = usdc + (sol * current_price);
 
-        let initial = self.balance_tracker.initial_balance();
+        let initial = self.balance_tracker.initial_balance_usd();
         let pnl = total_value - initial;
 
         let mut breaker = self.circuit_breaker.write().await;
@@ -374,7 +393,7 @@ impl RealTradingEngine {
     pub async fn get_roi(&self, current_price: f64) -> f64 {
         let (usdc, sol) = self.balance_tracker.get_balances().await;
         let current_value = usdc + (sol * current_price);
-        let initial_value = self.balance_tracker.initial_balance();
+        let initial_value = self.balance_tracker.initial_balance_usd();
 
         if initial_value > 0.0 {
             ((current_value - initial_value) / initial_value) * 100.0
