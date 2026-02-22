@@ -4,20 +4,18 @@
 //! Proves the full gridzbotz stack in sequence:
 //!   [1] Keystore load + pubkey check
 //!   [2] Live SOL/USD price via Pyth Hermes
-//!   [3] Jupiter V6 quote -> VersionedTransaction (ALTs preserved)
+//!   [3] Jupiter quote -> VersionedTransaction (api.jup.ag/swap/v1)
 //!   [4] Keystore sign (fee-payer identity verified)
 //!   [5] Submit to mainnet  <- only with --submit flag
+//!
+//! SETUP:
+//!   export JUPITER_API_KEY=your_key_from_portal.jup.ag
 //!
 //! USAGE - Dry run (zero risk):
 //!   cargo run --bin smoke_test -- --keypair ~/.config/solana/id.json
 //!
-//! If quote-api.jup.ag is DNS-blocked, look up the IP and pass it:
-//!   1. Visit https://dnschecker.org/#A/quote-api.jup.ag in your browser
-//!   2. Copy any IP shown (e.g. 104.26.12.35)
-//!   3. cargo run --bin smoke_test -- --keypair ... --jup-ip 104.26.12.35
-//!
 //! Live submit (0.001 SOL -> USDC, ~$0.08):
-//!   cargo run --bin smoke_test -- --keypair ... --jup-ip <IP> --submit
+//!   cargo run --bin smoke_test -- --keypair ... --submit
 //!
 //! February 2026 | Project Flash V6.0
 //! =============================================================================
@@ -48,9 +46,13 @@ struct Args {
     #[clap(short, long, default_value = "https://api.mainnet-beta.solana.com")]
     rpc: String,
 
-    /// Hardcode the Jupiter API IP to bypass DNS filtering.
-    /// Get it from: https://dnschecker.org/#A/quote-api.jup.ag
-    /// Example: --jup-ip 104.26.12.35
+    /// Jupiter API key (overrides JUPITER_API_KEY env var).
+    /// Get a free key at https://portal.jup.ag
+    #[clap(long, env = "JUPITER_API_KEY")]
+    jup_key: Option<String>,
+
+    /// Hardcode the Jupiter API IP to bypass DNS filtering (optional).
+    /// Get it from: https://dnschecker.org/#A/api.jup.ag
     #[clap(long)]
     jup_ip: Option<String>,
 
@@ -83,9 +85,10 @@ async fn main() -> Result<()> {
     );
     println!("  Keypair:  {}", args.keypair);
     println!("  RPC:      {}", &args.rpc[..args.rpc.len().min(60)]);
-    if let Some(ref ip) = args.jup_ip {
-        println!("  Jup IP:   {} (DNS bypass active)", ip);
-    }
+    println!("  Jup API:  {} | auth: {}",
+        JupiterConfig::default().api_url,
+        if args.jup_key.is_some() { "key configured" } else { "NO KEY - set JUPITER_API_KEY" }
+    );
     println!();
 
     // -- [1] Keystore --------------------------------------------------------
@@ -116,35 +119,36 @@ async fn main() -> Result<()> {
     // -- [3] Jupiter: resolve DNS, quote, build tx ---------------------------
     print!("  [3/5] Jupiter quote + build tx...... ");
 
-    let jupiter_base = JupiterClient::new(JupiterConfig::default())?
+    // Build config - API key from --jup-key flag or JUPITER_API_KEY env var
+    let mut config = JupiterConfig::default();
+    if let Some(ref key) = args.jup_key {
+        config.api_key = Some(key.clone());
+    }
+
+    let jupiter_base = JupiterClient::new(config)?
         .with_priority_fee(10_000);
 
     // DNS resolution priority:
-    //   1. --jup-ip flag (user-supplied hardcoded IP, most reliable)
-    //   2. Cloudflare DoH (1.1.1.1) with CNAME following
-    //   3. Google DoH (8.8.8.8) with CNAME following
-    //   4. System DNS fallback
+    //   1. --jup-ip flag (explicit override)
+    //   2. Cloudflare DoH 1.1.1.1 -> Google DoH 8.8.8.8 (CNAME-aware)
+    //   3. System DNS fallback
     let jupiter = if let Some(ref ip_str) = args.jup_ip {
-        let ip: IpAddr = ip_str
-            .parse()
-            .with_context(|| format!("Invalid --jup-ip value: '{}'", ip_str))?;
-        info!("[DNS] Using hardcoded IP from --jup-ip: {}", ip);
-        // Single call - with_resolved_host consumes jupiter_base
+        let ip: IpAddr = ip_str.parse()
+            .with_context(|| format!("Invalid --jup-ip: '{}'", ip_str))?;
+        info!("[DNS] Hardcoded IP from --jup-ip: {}", ip);
         jupiter_base
-            .with_resolved_host("quote-api.jup.ag", ip)
+            .with_resolved_host("api.jup.ag", ip)
             .context("Failed to apply --jup-ip DNS override")?
     } else {
-        match resolve_via_doh("quote-api.jup.ag").await {
+        match resolve_via_doh("api.jup.ag").await {
             Ok(ip) => {
-                info!("[DNS] DoH resolved quote-api.jup.ag -> {} (system DNS bypassed)", ip);
+                info!("[DNS] DoH resolved api.jup.ag -> {} (system DNS bypassed)", ip);
                 jupiter_base
-                    .with_resolved_host("quote-api.jup.ag", ip)
+                    .with_resolved_host("api.jup.ag", ip)
                     .context("Failed to apply DoH DNS override")?
             }
             Err(e) => {
-                info!("[DNS] DoH failed ({}), falling back to system DNS", e);
-                info!("[DNS] Tip: run with --jup-ip <IP> to bypass DNS filtering");
-                info!("[DNS] Get IP from: https://dnschecker.org/#A/quote-api.jup.ag");
+                info!("[DNS] DoH unavailable ({}), using system DNS", e);
                 jupiter_base
             }
         }
@@ -197,7 +201,7 @@ async fn main() -> Result<()> {
     let sig = rpc_client
         .send_and_confirm_transaction(&vtx)
         .await
-        .map_err(|e| anyhow::anyhow!("Transaction rejected -- check balance and RPC health: {}", e))?;
+        .map_err(|e| anyhow::anyhow!("Transaction rejected: {}", e))?;
     println!("OK  CONFIRMED");
 
     keystore.record_transaction(trade_value_usd).await;
