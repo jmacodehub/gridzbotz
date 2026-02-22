@@ -20,7 +20,7 @@ use super::executor::{TransactionExecutor, ExecutorConfig};
 use super::trade::Trade;
 use super::paper_trader::{Order, OrderSide};
 use super::jupiter_client::{JupiterClient, JupiterConfig, SOL_MINT, USDC_MINT};
-use solana_sdk::{pubkey::Pubkey, transaction::VersionedTransaction};
+use solana_sdk::transaction::VersionedTransaction;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ⚙️ CONFIGURATION

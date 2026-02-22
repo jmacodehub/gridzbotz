@@ -285,23 +285,19 @@ impl RpcClientPool {
         );
     }
 
-    /// Send a pre-serialised VersionedTransaction (e.g. Jupiter V0 swap).
+    /// Send a VersionedTransaction (e.g. Jupiter V0 swap with ALTs).
     ///
-    /// ⚠️  Must be called with the fully-signed transaction.
-    ///    Uses send_raw_transaction so the transaction is submitted as-is,
-    ///    preserving Address Lookup Tables (ALTs).
+    /// Uses `send_transaction()` which accepts any `SerializableTransaction`,
+    /// including `VersionedTransaction` — ALTs are preserved intact.
     pub async fn send_versioned_transaction_with_retry(
         &self,
         tx: &VersionedTransaction,
     ) -> Result<Signature> {
-        let tx_bytes = bincode::serialize(tx)
-            .context("Failed to serialize VersionedTransaction")?;
-
         for attempt in 0..self.max_retries {
             let client = self.get_client();
             let endpoint_idx = self.current_index.load(Ordering::Relaxed);
 
-            match client.send_raw_transaction(&tx_bytes).await {
+            match client.send_transaction(tx).await {
                 Ok(sig) => {
                     self.record_request(true).await;
                     info!(
@@ -471,7 +467,6 @@ impl TransactionExecutor {
 
         match self.rpc.send_transaction_with_retry(&tx, rpc_config).await {
             Ok(signature) => {
-                // Wait for confirmation
                 let confirmation_timeout = self.config.confirmation_timeout_secs.unwrap_or(60);
 
                 match self.rpc.wait_for_confirmation(&signature, confirmation_timeout).await {
@@ -511,7 +506,8 @@ impl TransactionExecutor {
         // Sign the transaction (keystore writes into signatures[0])
         sign_fn(&mut versioned_tx).context("Failed to sign VersionedTransaction")?;
 
-        // Send with retry via send_raw_transaction (preserves ALTs)
+        // Send with retry — send_transaction() accepts SerializableTransaction
+        // so VersionedTransaction is passed directly (no bincode, ALTs intact)
         match self.rpc.send_versioned_transaction_with_retry(&versioned_tx).await {
             Ok(signature) => {
                 let confirmation_timeout = self.config.confirmation_timeout_secs.unwrap_or(60);
