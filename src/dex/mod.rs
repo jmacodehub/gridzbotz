@@ -1,5 +1,5 @@
 //! 🔗 DEX Integration Module
-//! 
+//!
 //! Production-grade interfaces for decentralized exchange trading on Solana:
 //! - Unified `Trader` trait for paper, Serum/OpenBook, and Jupiter trading
 //! - Order placement and cancellation with retry logic
@@ -7,13 +7,13 @@
 //! - Position tracking and real-time P&L calculation
 //! - Order lifecycle management with status tracking
 //! - Cross-DEX support via trait-based architecture
-//! 
+//!
 //! # Architecture
-//! 
-//! ```
-//! ┌─────────────────────────────────────────────────────┐
+//!
+//! ```text
+//! ┌───────────────────────────────────────────────────┐
 //! │              Trader Trait (Unified API)              │
-//! └─────────────────┬───────────────────────────────────┘
+//! └─────────────────┤───────────────────────────────┘
 //!                   │
 //!       ┌───────────┼───────────┐
 //!       │           │           │
@@ -22,24 +22,25 @@
 //!  │ Trader  │ │ Client │ │  Client  │
 //!  └─────────┘ └────────┘ └──────────┘
 //! ```
-//! 
+//!
 //! # Example
-//! ```
+//!
+//! ```no_run
 //! use solana_grid_bot::dex::{SerumClient, OrderSide, Order, OrderType, Trader};
 //! use solana_sdk::signature::Keypair;
 //! use solana_sdk::pubkey::Pubkey;
-//! 
+//!
 //! # async fn example() -> anyhow::Result<()> {
 //! let wallet = Keypair::new();
 //! let market = Pubkey::new_unique();
-//! 
+//!
 //! // Create Serum client
 //! let mut client = SerumClient::new(
 //!     "https://api.mainnet-beta.solana.com".to_string(),
 //!     wallet,
 //!     market,
 //! )?;
-//! 
+//!
 //! // Place order using Trader trait
 //! let order = Order {
 //!     side: OrderSide::Bid,
@@ -48,10 +49,10 @@
 //!     order_type: OrderType::Limit,
 //!     client_order_id: 1,
 //! };
-//! 
+//!
 //! let placed = client.place_order(order).await?;
 //! println!("Order placed: {}", placed.order_id);
-//! 
+//!
 //! // Get position
 //! let position = client.get_position().await?;
 //! position.display(193.50);
@@ -79,20 +80,20 @@ use solana_sdk::pubkey::Pubkey;
 // ═══════════════════════════════════════════════════════════════════════════
 
 /// Unified trading interface for all backend implementations
-/// 
+///
 /// This trait provides a common API for:
 /// - Paper trading (simulation for testing)
 /// - Direct DEX trading (Serum/OpenBook)
 /// - Aggregator trading (Jupiter for best prices)
-/// 
+///
 /// # Benefits
 /// - Seamless backend switching
 /// - Easy testing (paper → real)
 /// - Strategy-agnostic code
 /// - Future-proof architecture
-/// 
+///
 /// # Example
-/// ```
+/// ```no_run
 /// # use solana_grid_bot::dex::{Trader, Order, OrderSide, OrderType};
 /// # async fn example<T: Trader>(mut trader: T) -> anyhow::Result<()> {
 /// // Works with ANY trader implementation!
@@ -103,7 +104,7 @@ use solana_sdk::pubkey::Pubkey;
 ///     order_type: OrderType::Limit,
 ///     client_order_id: 1,
 /// };
-/// 
+///
 /// let placed = trader.place_order(order).await?;
 /// println!("{} placed order: {}", trader.trader_type(), placed.order_id);
 /// # Ok(())
@@ -112,37 +113,37 @@ use solana_sdk::pubkey::Pubkey;
 #[async_trait]
 pub trait Trader: Send + Sync {
     /// Place an order (limit, market, or post-only)
-    /// 
+    ///
     /// # Arguments
     /// * `order` - Order specification with side, price, size, type
-    /// 
+    ///
     /// # Returns
     /// * `PlacedOrder` with on-chain order ID and timestamp
-    /// 
+    ///
     /// # Errors
     /// * Invalid order parameters (negative price/size)
     /// * Insufficient balance
     /// * RPC/network failures
     async fn place_order(&mut self, order: Order) -> anyhow::Result<PlacedOrder>;
-    
+
     /// Cancel an existing order by ID
-    /// 
+    ///
     /// # Arguments
     /// * `order_id` - On-chain order ID to cancel
-    /// 
+    ///
     /// # Errors
     /// * Order not found
     /// * Already filled/cancelled
     /// * RPC failures
     async fn cancel_order(&mut self, order_id: u128) -> anyhow::Result<()>;
-    
+
     /// Get current token balances
-    /// 
+    ///
     /// # Returns
     /// * Tuple of (base_amount, quote_amount)
-    /// 
+    ///
     /// # Example
-    /// ```
+    /// ```no_run
     /// # use solana_grid_bot::dex::Trader;
     /// # async fn example<T: Trader>(trader: T) -> anyhow::Result<()> {
     /// let (base, quote) = trader.get_balance().await?;
@@ -151,15 +152,15 @@ pub trait Trader: Send + Sync {
     /// # }
     /// ```
     async fn get_balance(&self) -> anyhow::Result<(f64, f64)>;
-    
+
     /// Get current position with P&L
-    /// 
+    ///
     /// # Returns
     /// * `Position` with holdings, entry price, and P&L
     async fn get_position(&self) -> anyhow::Result<Position>;
-    
+
     /// Get trader implementation name for logging
-    /// 
+    ///
     /// # Returns
     /// * Human-readable trader type (e.g., "Serum DEX", "Jupiter Aggregator")
     fn trader_type(&self) -> &'static str;
@@ -180,7 +181,7 @@ pub enum OrderSide {
 
 impl OrderSide {
     /// Convert to human-readable string
-    /// 
+    ///
     /// # Returns
     /// * "BUY" for Bid, "SELL" for Ask
     pub fn as_str(&self) -> &'static str {
@@ -189,9 +190,9 @@ impl OrderSide {
             OrderSide::Ask => "SELL",
         }
     }
-    
+
     /// Get opposite side
-    /// 
+    ///
     /// # Returns
     /// * Ask if Bid, Bid if Ask
     pub fn opposite(&self) -> Self {
@@ -200,12 +201,12 @@ impl OrderSide {
             OrderSide::Ask => OrderSide::Bid,
         }
     }
-    
+
     /// Check if this is a buy order
     pub fn is_buy(&self) -> bool {
         matches!(self, OrderSide::Bid)
     }
-    
+
     /// Check if this is a sell order
     pub fn is_sell(&self) -> bool {
         matches!(self, OrderSide::Ask)
@@ -228,12 +229,12 @@ impl OrderType {
     pub fn is_maker_only(&self) -> bool {
         matches!(self, OrderType::PostOnly)
     }
-    
+
     /// Check if order allows taker execution
     pub fn allows_taker(&self) -> bool {
         !self.is_maker_only()
     }
-    
+
     /// Get human-readable description
     pub fn description(&self) -> &'static str {
         match self {
@@ -269,17 +270,17 @@ impl OrderStatus {
             OrderStatus::Filled | OrderStatus::Cancelled | OrderStatus::Failed
         )
     }
-    
+
     /// Check if order is active (can still be filled/cancelled)
     pub fn is_active(&self) -> bool {
         matches!(self, OrderStatus::Open | OrderStatus::PartiallyFilled)
     }
-    
+
     /// Check if order is pending confirmation
     pub fn is_pending(&self) -> bool {
         matches!(self, OrderStatus::Pending)
     }
-    
+
     /// Get human-readable description
     pub fn as_str(&self) -> &'static str {
         match self {
@@ -320,7 +321,7 @@ impl Order {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_millis() as u64;
-        
+
         Self {
             side,
             price,
@@ -329,17 +330,17 @@ impl Order {
             client_order_id,
         }
     }
-    
+
     /// Calculate order value in quote currency
-    /// 
+    ///
     /// # Returns
     /// * Total value (price × size)
     pub fn value(&self) -> f64 {
         self.price * self.size
     }
-    
+
     /// Validate order parameters
-    /// 
+    ///
     /// # Returns
     /// * `Ok(())` if valid
     /// * `Err` if price or size is invalid
@@ -352,7 +353,7 @@ impl Order {
         }
         Ok(())
     }
-    
+
     /// Display order details to console
     pub fn display(&self) {
         println!("📝 Order Details:");
@@ -385,17 +386,17 @@ impl PlacedOrder {
     pub fn is_buy(&self) -> bool {
         self.order.side.is_buy()
     }
-    
+
     /// Check if order is sell
     pub fn is_sell(&self) -> bool {
         self.order.side.is_sell()
     }
-    
+
     /// Get order age in seconds
     pub fn age_seconds(&self) -> i64 {
         chrono::Utc::now().timestamp() - self.timestamp
     }
-    
+
     /// Get order age as human-readable string
     pub fn age_str(&self) -> String {
         let age = self.age_seconds();
@@ -430,7 +431,7 @@ pub struct Position {
 
 impl Position {
     /// Create empty position with starting capital
-    /// 
+    ///
     /// # Arguments
     /// * `starting_capital` - Initial quote currency amount
     pub fn new(starting_capital: f64) -> Self {
@@ -442,12 +443,12 @@ impl Position {
             realized_pnl: 0.0,
         }
     }
-    
+
     /// Calculate current unrealized P&L given current price
-    /// 
+    ///
     /// # Arguments
     /// * `current_price` - Current market price
-    /// 
+    ///
     /// # Returns
     /// * Unrealized profit/loss in quote currency
     pub fn calculate_pnl(&self, current_price: f64) -> f64 {
@@ -457,24 +458,24 @@ impl Position {
             0.0
         }
     }
-    
+
     /// Calculate total portfolio value at current price
-    /// 
+    ///
     /// # Arguments
     /// * `current_price` - Current market price
-    /// 
+    ///
     /// # Returns
     /// * Total value (base × price + quote)
     pub fn total_value(&self, current_price: f64) -> f64 {
         (self.base_amount * current_price) + self.quote_amount
     }
-    
+
     /// Calculate ROI percentage
-    /// 
+    ///
     /// # Arguments
     /// * `current_price` - Current market price
     /// * `initial_capital` - Starting capital amount
-    /// 
+    ///
     /// # Returns
     /// * ROI as percentage
     pub fn roi(&self, current_price: f64, initial_capital: f64) -> f64 {
@@ -484,28 +485,28 @@ impl Position {
             0.0
         }
     }
-    
+
     /// Check if position is flat (no base currency held)
     pub fn is_flat(&self) -> bool {
         self.base_amount.abs() < 0.0001
     }
-    
+
     /// Check if position is long (positive base)
     pub fn is_long(&self) -> bool {
         self.base_amount > 0.0001
     }
-    
+
     /// Calculate total P&L (realized + unrealized)
-    /// 
+    ///
     /// # Arguments
     /// * `current_price` - Current market price
-    /// 
+    ///
     /// # Returns
     /// * Total P&L
     pub fn total_pnl(&self, current_price: f64) -> f64 {
         self.realized_pnl + self.calculate_pnl(current_price)
     }
-    
+
     /// Display position info to console
     pub fn display(&self, current_price: f64) {
         println!("\n💼 Current Position:");
@@ -525,11 +526,11 @@ impl Position {
 // ═══════════════════════════════════════════════════════════════════════════
 
 /// Calculate trading fee for an order
-/// 
+///
 /// # Arguments
 /// * `value` - Order value in quote currency
 /// * `fee_rate` - Fee rate (e.g., 0.001 for 0.1%)
-/// 
+///
 /// # Returns
 /// * Fee amount in quote currency
 pub fn calculate_fee(value: f64, fee_rate: f64) -> f64 {
@@ -537,11 +538,11 @@ pub fn calculate_fee(value: f64, fee_rate: f64) -> f64 {
 }
 
 /// Calculate slippage between expected and actual price
-/// 
+///
 /// # Arguments
 /// * `expected_price` - Expected execution price
 /// * `actual_price` - Actual execution price
-/// 
+///
 /// # Returns
 /// * Slippage as percentage (always positive)
 pub fn calculate_slippage(expected_price: f64, actual_price: f64) -> f64 {
@@ -549,13 +550,13 @@ pub fn calculate_slippage(expected_price: f64, actual_price: f64) -> f64 {
 }
 
 /// Calculate maker/taker fees based on order type
-/// 
+///
 /// # Arguments
 /// * `value` - Order value
 /// * `order_type` - Order type (affects fee tier)
 /// * `maker_rate` - Maker fee rate
 /// * `taker_rate` - Taker fee rate
-/// 
+///
 /// # Returns
 /// * Estimated fee
 pub fn calculate_trading_fee(
@@ -579,18 +580,18 @@ pub fn calculate_trading_fee(
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_order_value() {
         let order = Order::new(OrderSide::Bid, 100.0, 2.5, OrderType::Limit);
         assert_eq!(order.value(), 250.0);
     }
-    
+
     #[test]
     fn test_order_validation() {
         let valid = Order::new(OrderSide::Bid, 100.0, 1.0, OrderType::Limit);
         assert!(valid.validate().is_ok());
-        
+
         let invalid = Order {
             side: OrderSide::Bid,
             price: -1.0,
@@ -600,27 +601,27 @@ mod tests {
         };
         assert!(invalid.validate().is_err());
     }
-    
+
     #[test]
     fn test_position_pnl() {
         let mut position = Position::new(1000.0);
-        
+
         // Buy 5 units at $100
         position.base_amount = 5.0;
         position.avg_entry_price = 100.0;
         position.quote_amount = 500.0;
-        
+
         // Price goes to $110
         let pnl = position.calculate_pnl(110.0);
         assert_eq!(pnl, 50.0);
-        
+
         // Total value
         assert_eq!(position.total_value(110.0), 1050.0);
-        
+
         // ROI
         assert!((position.roi(110.0, 1000.0) - 5.0).abs() < 0.01);
     }
-    
+
     #[test]
     fn test_order_side() {
         assert_eq!(OrderSide::Bid.as_str(), "BUY");
@@ -629,7 +630,7 @@ mod tests {
         assert!(OrderSide::Bid.is_buy());
         assert!(OrderSide::Ask.is_sell());
     }
-    
+
     #[test]
     fn test_order_status() {
         assert!(OrderStatus::Filled.is_terminal());
@@ -637,13 +638,13 @@ mod tests {
         assert!(OrderStatus::Pending.is_pending());
         assert!(!OrderStatus::Filled.is_active());
     }
-    
+
     #[test]
     fn test_fee_calculation() {
         let order_value = 1000.0;
         let fee_rate = 0.001;
         assert_eq!(calculate_fee(order_value, fee_rate), 1.0);
-        
+
         // Maker vs taker
         let maker_fee = calculate_trading_fee(
             1000.0,
@@ -652,7 +653,7 @@ mod tests {
             0.0004,
         );
         assert_eq!(maker_fee, 0.2);
-        
+
         let taker_fee = calculate_trading_fee(
             1000.0,
             OrderType::Limit,
@@ -661,7 +662,7 @@ mod tests {
         );
         assert_eq!(taker_fee, 0.4);
     }
-    
+
     #[test]
     fn test_slippage() {
         let expected = 100.0;
