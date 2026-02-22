@@ -205,12 +205,12 @@ impl GridBot {
             self.place_grid_orders(current_price).await?;
             self.grid_initialized = true;
             info!("✅ Initial grid placed successfully");
-            
+
             // 🔧 FIX: Cast u32 to usize
             let total_levels = self.config.trading.grid_levels as usize;
             let used_levels = self.grid_state.count().await;
             self.enhanced_metrics.update_grid_stats(total_levels, used_levels);
-            
+
             return Ok(());
         }
 
@@ -369,18 +369,19 @@ impl GridBot {
 
             for order_id in &filled_orders {
                 debug!("   ✅ Order {} filled", order_id);
-                
+
                 let is_buy = order_id.to_lowercase().contains("buy");
                 let side = if is_buy { OrderSide::Buy } else { OrderSide::Sell };
                 let pnl = self.grid_state.total_realized_pnl().await;
                 let fill_size = self.adaptive_optimizer.current_position_size;
-                
+
                 // 🆕 V4.3: Track fill for ML training dataset
                 self.total_fills_tracked += 1;
-                
-                // Calculate fill deviation from mid-price for optimization insights
-                let deviation_pct = ((price - price).abs() / price) * 100.0;  // Always 0 at fill time
-                
+
+                // _deviation_pct: always 0.0 at exact fill time; reserved for
+                // future ML delta tracking (e.g. slippage from mid-price)
+                let _deviation_pct = ((price - price).abs() / price) * 100.0;
+
                 // Log detailed fill information for future ML training
                 info!("📨 FILL_TRACK #{}: {:?} {} @ ${:.4} | Size: {:.4} | P&L: ${:.2} | ts: {}",
                       self.total_fills_tracked,
@@ -391,17 +392,17 @@ impl GridBot {
                       pnl,
                       timestamp
                 );
-                
+
                 // Log additional context for pattern recognition
                 debug!("   Grid spacing: {:.3}% | Total fills: {} | Cycles: {}",
                        self.adaptive_optimizer.current_spacing_percent * 100.0,
                        self.total_fills_tracked,
                        self.total_cycles
                 );
-                
+
                 // Update metrics
                 self.enhanced_metrics.record_trade(is_buy, pnl, timestamp);
-                
+
                 // 💡 Future enhancement: Send to GridRebalancer for adaptive learning
                 // When we implement the notification channel:
                 // self.manager.notify_fill(order_id, side, price, fill_size, Some(pnl)).await;
@@ -416,13 +417,13 @@ impl GridBot {
         if self.total_cycles - self.last_optimization_cycle >= OPTIMIZATION_INTERVAL_CYCLES {
             debug!("🧠 Running adaptive optimization cycle...");
             let result = self.adaptive_optimizer.optimize(&self.enhanced_metrics);
-            
+
             if result.any_changes() {
                 info!("🔥 OPTIMIZATION APPLIED: {}", result.reason);
                 info!("   New Spacing: {:.3}%", result.new_spacing * 100.0);
                 info!("   New Size: {:.3} SOL", result.new_position_size);
             }
-            
+
             self.last_optimization_cycle = self.total_cycles;
         }
 
@@ -552,7 +553,7 @@ impl BotStats {
         println!("   ROI:               {:.2}%", self.roi_percent);
         println!("   Win Rate:          {:.2}%", self.win_rate);
         println!("   Fees:              ${:.2}", self.total_fees);
-        
+
         println!("\n🔍 Enhanced Analytics:");
         println!("   Profitable Trades: {}", self.profitable_trades);
         println!("   Losing Trades:     {}", self.unprofitable_trades);
@@ -576,8 +577,6 @@ impl BotStats {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
     fn test_bot_creation() {
         assert!(true);

@@ -295,33 +295,21 @@ impl StrategyManager {
             }
         }
     }
-    
+
     // ═══════════════════════════════════════════════════════════════════
     // V5.4 ENHANCEMENT: GRID REBALANCER ACCESS FOR FILL NOTIFICATIONS
     // ═══════════════════════════════════════════════════════════════════
-    
+
     /// Get reference to GridRebalancer strategy if present
-    /// 
+    ///
     /// This enables GridBot to notify the strategy about fills for adaptive learning.
-    /// Uses type-safe downcasting via std::any::Any trait.
+    /// TODO: Implement proper downcasting once GridRebalancer implements Any.
     pub fn get_grid_rebalancer(&self) -> Option<&GridRebalancer> {
-        use std::any::Any;
-        
         for strategy in &self.strategies {
-            // Check if strategy name matches GridRebalancer
             if strategy.name().contains("Grid Rebalancer") {
-                // Safe downcast attempt
-                // Note: This requires GridRebalancer to implement Any,
-                // but Box<dyn Strategy> doesn't currently support this.
-                // 
-                // Alternative approach: Store GridRebalancer separately
-                // or use a different pattern.
-                //
-                // For now, we'll use a simpler approach via the manager's
-                // internal reference.
                 log::debug!("Found GridRebalancer strategy");
                 // TODO: Implement proper downcasting or refactor architecture
-                return None;  // Temporary - see next commit for full solution
+                return None; // Temporary - see next commit for full solution
             }
         }
         None
@@ -342,7 +330,6 @@ mod tests {
         let mut mgr = StrategyManager::new(ctx);
         mgr.engine.mode = ConsensusMode::MajorityVote;
 
-        // Create and add GridRebalancer strategy
         mgr.add_strategy(GridRebalancer::new(GridRebalancerConfig::default()).unwrap());
 
         let sig = mgr.analyze_all(100.0, 1).await.unwrap();
