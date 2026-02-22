@@ -6,7 +6,7 @@
 
 use solana_grid_bot::{Config, GridBot};
 use tokio::time::{interval, Duration, Instant};
-use log::{info, warn};
+use log::info;
 use std::env;
 
 // ═══════════════════════════════════════════════════════════════════════════

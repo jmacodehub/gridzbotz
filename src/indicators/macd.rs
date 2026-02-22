@@ -17,6 +17,9 @@
 use super::{Indicator, EMA};
 use std::collections::VecDeque;
 
+// period fields are used in construction and test assertions;
+// macd_values is reserved for future streaming/buffering logic
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct MACD {
     fast_period: usize,

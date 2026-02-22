@@ -10,7 +10,7 @@
 //! 4. Execute simultaneous buy/sell when profitable
 //!
 //! ## Example:
-//! ```
+//! ```text
 //! Jupiter:  SOL = $150.00 (BUY)
 //! Raydium:  SOL = $150.60 (SELL)
 //!
