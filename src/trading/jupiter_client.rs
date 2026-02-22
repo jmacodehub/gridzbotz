@@ -10,7 +10,7 @@
 //! [OK] Dynamic priority fees via Jupiter "high" level
 //! [OK] prepare_swap() all-in-one convenience (quote + tx in single call)
 //! [OK] with_priority_fee() / with_priority_level() builder pattern
-//! [OK] with_api_key() builder - Bearer token auth for api.jup.ag
+//! [OK] with_api_key() builder - x-api-key header auth for api.jup.ag
 //! [OK] with_resolved_host() - bypass system DNS with a pre-resolved IP
 //! [OK] resolve_via_doh() - Cloudflare + Google DoH, full CNAME chain following
 //! [OK] Price impact safety guard (warns at > 1%)
@@ -153,6 +153,7 @@ pub struct JupiterConfig {
     /// Base URL - defaults to https://api.jup.ag/swap/v1
     pub api_url: String,
     /// API key from portal.jup.ag - load from JUPITER_API_KEY env var
+    /// Sent as: x-api-key: <key>  (per dev.jup.ag docs)
     pub api_key: Option<String>,
     pub slippage_bps: u16,
     pub priority_fee_lamports: u64,
@@ -248,10 +249,12 @@ impl JupiterClient {
     }
 
     // -- Internal: auth header -----------------------------------------------
+    // Jupiter API uses x-api-key header (NOT Authorization: Bearer)
+    // Reference: https://dev.jup.ag/api-reference/swap/quote
 
     fn apply_auth(&self, builder: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
         if let Some(ref key) = self.config.api_key {
-            builder.header("Authorization", format!("Bearer {}", key))
+            builder.header("x-api-key", key.as_str())
         } else {
             builder
         }
