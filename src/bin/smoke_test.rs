@@ -99,29 +99,32 @@ async fn main() -> Result<()> {
     // ── [2] Live SOL price ───────────────────────────────────────────────────
     print!("  [2/5] Fetching live SOL/USD......... ");
     let feed = PriceFeed::new(20);
-    feed.start().await.context("Failed to start Pyth price feed")?;
-    sleep(Duration::from_millis(1500)).await;  // let first poll arrive
+    // PriceFeed::start() returns Result<(), Box<dyn Error+Send+Sync>>.
+    // anyhow::Context cannot wrap that type directly — use map_err instead.
+    feed.start()
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to start Pyth price feed: {}", e))?;
+    sleep(Duration::from_millis(1500)).await; // let first poll arrive
     let sol_price = feed.latest_price().await;
     if sol_price <= 0.0 {
         anyhow::bail!("Price feed returned invalid price: {}", sol_price);
     }
     let trade_value_usd = 0.001 * sol_price;
     println!("✅  ${:.4}  (0.001 SOL ≈ ${:.4})", sol_price, trade_value_usd);
-    info!("💰 Initial SOL price from Pyth: ${:.4}", sol_price);
+    info!("💰 Pyth price confirmed: ${:.4}", sol_price);
 
     // ── [3] Jupiter quote + VersionedTransaction ─────────────────────────────
     print!("  [3/5] Jupiter quote + build tx...... ");
     let jupiter = JupiterClient::new(JupiterConfig::default())?
-        .with_priority_fee(10_000);  // max 0.00001 SOL priority fee
+        .with_priority_fee(10_000); // max 0.00001 SOL priority fee
 
-    let lamports: u64 = 1_000_000;  // 0.001 SOL
+    let lamports: u64 = 1_000_000; // 0.001 SOL
     let user_pubkey = *keystore.pubkey();
 
     let (mut vtx, last_valid, quote) = jupiter
         .prepare_swap(SOL_MINT, USDC_MINT, lamports, user_pubkey)
         .await
-        .context("Jupiter API call failed — is mainnet RPC reachable?")?
-    ;
+        .context("Jupiter API call failed — is mainnet RPC reachable?")?;
 
     let out_usdc = quote.out_amount.parse::<u64>().unwrap_or(0) as f64 / 1_000_000.0;
     let impact   = quote.price_impact_pct.parse::<f64>().unwrap_or(0.0);
@@ -129,10 +132,10 @@ async fn main() -> Result<()> {
         out_usdc, impact, last_valid);
 
     if impact > 1.0 {
-        anyhow::bail!("❌  Price impact too high ({:.2}%) — aborting for safety", impact);
+        anyhow::bail!("❌ Price impact too high ({:.2}%) — aborting for safety", impact);
     }
 
-    // ── [4] Sign ─────────────────────────────────────────────────────────────
+    // ── [4] Sign ───────────────────────────────────────────────────────────
     print!("  [4/5] Signing transaction........... ");
     keystore
         .sign_versioned_transaction(&mut vtx)
@@ -162,8 +165,7 @@ async fn main() -> Result<()> {
     let sig = rpc_client
         .send_and_confirm_transaction(&vtx)
         .await
-        .context("Transaction rejected — check balance, RPC health, or try again")?
-    ;
+        .map_err(|e| anyhow::anyhow!("Transaction rejected — check balance and RPC health: {}", e))?;
     println!("✅  CONFIRMED");
 
     // Record the trade in keystore counters
