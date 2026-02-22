@@ -95,6 +95,9 @@ pub struct RoutePlan {
     pub percent: u8,
 }
 
+/// Route hop details from Jupiter v1.
+/// fee_amount and fee_mint are Option<> because the v1 API omits them
+/// on certain AMM types (e.g. concentrated liquidity pools).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SwapInfo {
@@ -104,8 +107,10 @@ pub struct SwapInfo {
     pub output_mint: String,
     pub in_amount: String,
     pub out_amount: String,
-    pub fee_amount: String,
-    pub fee_mint: String,
+    #[serde(default)]
+    pub fee_amount: Option<String>,
+    #[serde(default)]
+    pub fee_mint: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
