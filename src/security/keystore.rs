@@ -7,11 +7,12 @@
 //! ✅ Daily trade limits enforcement
 //! ✅ Position size validation
 //! ✅ Secure legacy transaction signing
-//! ✅ Secure VersionedTransaction signing (V5.1 — for Jupiter swaps)
+//! ✅ Secure VersionedTransaction signing (V5.2 — for Jupiter swaps)
 //! ✅ Thread-safe atomic counters
 //!
 //! November 2025 | Project Flash V6.0 - Security Layer
 //! February 2026  | V5.1 — Added sign_versioned_transaction()
+//!                  V5.2 — Hardened: fee-payer identity check + bail on 0-signer tx
 //! ═══════════════════════════════════════════════════════════════════════════
 
 use anyhow::{bail, Context, Result};
@@ -79,15 +80,12 @@ pub struct SecureKeystore {
     keypair: Keypair,
     pubkey: Pubkey,
     config: KeystoreConfig,
-
-    // Daily limits tracking (thread-safe)
     daily_tx_count: Arc<AtomicU64>,
     daily_volume_usdc: Arc<RwLock<f64>>,
     last_reset: Arc<RwLock<Instant>>,
 }
 
 impl SecureKeystore {
-    /// Load keypair from file (JSON array or raw bytes format)
     pub fn from_file(config: KeystoreConfig) -> Result<Self> {
         info!("🔐 Loading secure keystore from: {}", config.keypair_path);
         config.validate()?;
@@ -135,14 +133,11 @@ impl SecureKeystore {
         })
     }
 
-    /// Get public key
     pub fn pubkey(&self) -> &Pubkey {
         &self.pubkey
     }
 
-    /// Validate a transaction against daily limits before signing
     pub async fn validate_transaction(&self, amount_usdc: f64) -> Result<()> {
-        // Reset daily counters if 24 hours have elapsed
         {
             let mut last_reset = self.last_reset.write().await;
             if last_reset.elapsed() > Duration::from_secs(86400) {
@@ -178,7 +173,6 @@ impl SecureKeystore {
         Ok(())
     }
 
-    /// Sign a legacy Transaction
     pub fn sign_transaction(&self, tx: &mut Transaction) -> Result<()> {
         tx.sign(&[&self.keypair], tx.message.recent_blockhash);
         Ok(())
@@ -186,36 +180,51 @@ impl SecureKeystore {
 
     /// Sign a VersionedTransaction (required for Jupiter V0 swaps with ALTs).
     ///
-    /// Jupiter returns a VersionedTransaction whose message is already fully
-    /// constructed (blockhash set, accounts resolved, ALTs referenced).
-    /// We sign by serializing the message bytes and calling sign_message(),
-    /// then placing the signature at index 0 (the fee payer / user slot).
+    /// # Errors
+    /// - Returns an error if the transaction has no signature slots (malformed).
+    /// - Returns an error if `static_account_keys()[0]` does not match this
+    ///   keystore's pubkey — catches a misconfigured `user_pubkey` passed to
+    ///   `JupiterClient::prepare_swap()` before it reaches the network.
     pub fn sign_versioned_transaction(&self, tx: &mut VersionedTransaction) -> Result<()> {
+        if tx.signatures.is_empty() {
+            bail!(
+                "Jupiter returned a VersionedTransaction with 0 signature slots — \
+                 transaction may be malformed. Cannot determine signer position."
+            );
+        }
+
+        let fee_payer = tx
+            .message
+            .static_account_keys()
+            .first()
+            .context("VersionedTransaction has no static account keys")?;
+        if fee_payer != &self.pubkey {
+            bail!(
+                "Fee-payer mismatch: transaction expects {}, keystore holds {}. \
+                 Ensure JupiterClient::prepare_swap() is called with the correct user_pubkey.",
+                fee_payer,
+                self.pubkey
+            );
+        }
+
         let message_bytes = tx.message.serialize();
         let signature = self.keypair.sign_message(&message_bytes);
-        if tx.signatures.is_empty() {
-            tx.signatures.push(signature);
-        } else {
-            tx.signatures[0] = signature;
-        }
+        tx.signatures[0] = signature;
         Ok(())
     }
 
-    /// Record a completed transaction against daily limits
     pub async fn record_transaction(&self, amount_usdc: f64) {
         self.daily_tx_count.fetch_add(1, Ordering::SeqCst);
         let mut vol = self.daily_volume_usdc.write().await;
         *vol += amount_usdc;
     }
 
-    /// Get daily statistics (count, volume)
     pub async fn get_daily_stats(&self) -> (u64, f64) {
         let count = self.daily_tx_count.load(Ordering::SeqCst);
         let volume = *self.daily_volume_usdc.read().await;
         (count, volume)
     }
 
-    /// Check if we're approaching limits (for warnings)
     pub async fn check_limits_warning(&self) -> Option<String> {
         let (count, volume) = self.get_daily_stats().await;
 
@@ -239,9 +248,6 @@ impl SecureKeystore {
     }
 }
 
-// ───────────────────────────────────────────────────────────────────────────────
-// ✅ TESTS
-// ───────────────────────────────────────────────────────────────────────────────
 #[cfg(test)]
 mod tests {
     use super::*;

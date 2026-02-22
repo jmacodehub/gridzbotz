@@ -24,7 +24,7 @@ use solana_sdk::transaction::VersionedTransaction;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ⚙️ CONFIGURATION
-// ─────────────────────────────────────────────────────────────────────────────
+// ────────────────────────────────────────────────────────══════════════════
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RealTradingConfig {
     pub keystore: KeystoreConfig,
@@ -83,15 +83,22 @@ impl RealTradingConfig {
 struct BalanceTracker {
     expected_usdc: Arc<RwLock<f64>>,
     expected_sol: Arc<RwLock<f64>>,
-    initial_balance: f64,
+    /// Initial portfolio value in USD, calculated at boot using the live
+    /// SOL price from the Pyth feed — never a hardcoded estimate.
+    initial_balance_usd: f64,
 }
 
 impl BalanceTracker {
-    fn new(initial_usdc: f64, initial_sol: f64) -> Self {
+    /// Create a new balance tracker.
+    ///
+    /// `sol_price_usd` must be the live SOL/USD price fetched from the
+    /// price feed at engine initialisation — e.g. `feed.latest_price().await`.
+    /// Do NOT pass a hardcoded value.
+    fn new(initial_usdc: f64, initial_sol: f64, sol_price_usd: f64) -> Self {
         Self {
             expected_usdc: Arc::new(RwLock::new(initial_usdc)),
             expected_sol: Arc::new(RwLock::new(initial_sol)),
-            initial_balance: initial_usdc + (initial_sol * 190.0),  // Estimate
+            initial_balance_usd: initial_usdc + (initial_sol * sol_price_usd),
         }
     }
 
@@ -107,8 +114,8 @@ impl BalanceTracker {
         *self.expected_sol.write().await = sol;
     }
 
-    fn initial_balance(&self) -> f64 {
-        self.initial_balance
+    fn initial_balance_usd(&self) -> f64 {
+        self.initial_balance_usd
     }
 }
 
@@ -149,11 +156,18 @@ pub struct RealTradingEngine {
 }
 
 impl RealTradingEngine {
+    /// Construct the real trading engine.
+    ///
+    /// `initial_sol_price_usd` must be the live SOL/USD price from the
+    /// Pyth price feed at the time of construction — e.g.
+    /// `feed.latest_price().await`.  This is used to compute the initial
+    /// portfolio NAV and, from it, the accurate ROI throughout the session.
     pub async fn new(
         config: RealTradingConfig,
         global_config: &Config,
         initial_balance_usdc: f64,
         initial_balance_sol: f64,
+        initial_sol_price_usd: f64,
     ) -> Result<Self> {
         info!("🚀 Initializing Real Trading Engine V2.0");
 
@@ -162,15 +176,20 @@ impl RealTradingEngine {
         let keystore = Arc::new(SecureKeystore::from_file(config.keystore.clone())?);
         let executor = Arc::new(RwLock::new(TransactionExecutor::new(config.executor.clone())?));
 
-        // Use Config for CircuitBreaker
         let circuit_breaker = Arc::new(RwLock::new(
             CircuitBreaker::with_balance(global_config, initial_balance_usdc)
         ));
 
-        let balance_tracker = Arc::new(BalanceTracker::new(initial_balance_usdc, initial_balance_sol));
+        let balance_tracker = Arc::new(BalanceTracker::new(
+            initial_balance_usdc,
+            initial_balance_sol,
+            initial_sol_price_usd,
+        ));
 
         info!("✅ Real Trading Engine initialized");
-        info!("   Wallet: {}", keystore.pubkey());
+        info!("   Wallet:      {}", keystore.pubkey());
+        info!("   Initial NAV: ${:.2} (SOL @ ${:.4})",
+            balance_tracker.initial_balance_usd(), initial_sol_price_usd);
 
         Ok(Self {
             keystore,
@@ -213,7 +232,6 @@ impl RealTradingEngine {
 
         self.total_executions.fetch_add(1, Ordering::SeqCst);
 
-        // 🔥 BUILD ACTUAL JUPITER SWAP — full VersionedTransaction (ALTs preserved)
         let (versioned_tx, _last_valid) = self.build_jupiter_swap(side, price, size).await?;
 
         let executor = self.executor.write().await;
@@ -254,18 +272,6 @@ impl RealTradingEngine {
         }
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // 🪐 JUPITER SWAP INTEGRATION — VersionedTransaction (ALTs preserved)
-    // ─────────────────────────────────────────────────────────────────────────
-    /// Build a Jupiter swap as a VersionedTransaction.
-    ///
-    /// Uses JupiterClient::prepare_swap() which calls Jupiter's V6 API and
-    /// returns a complete V0 VersionedTransaction — Address Lookup Tables
-    /// (ALTs) are fully preserved.  Sign via keystore.sign_versioned_transaction()
-    /// and submit via executor.execute_versioned().
-    ///
-    /// ⚠️  Do NOT decompose into Vec<Instruction> — that silently drops ALTs
-    ///    and causes on-chain failures.
     async fn build_jupiter_swap(
         &self,
         side: OrderSide,
@@ -282,13 +288,11 @@ impl RealTradingEngine {
 
         let (input_mint, output_mint, amount) = match side {
             OrderSide::Buy => {
-                // Buy SOL with USDC — USDC has 6 decimals
                 let usdc_micro = (price * size * 1_000_000.0) as u64;
                 info!("   BUY:  {:.2} USDC → SOL", price * size);
                 (USDC_MINT, SOL_MINT, usdc_micro)
             }
             OrderSide::Sell => {
-                // Sell SOL for USDC — SOL has 9 decimals (lamports)
                 let sol_lamports = (size * 1_000_000_000.0) as u64;
                 info!("   SELL: {:.4} SOL → USDC", size);
                 (SOL_MINT, USDC_MINT, sol_lamports)
@@ -308,8 +312,7 @@ impl RealTradingEngine {
     async fn reconcile_balances(&self, current_price: f64) -> Result<()> {
         let (usdc, sol) = self.balance_tracker.get_balances().await;
         let total_value = usdc + (sol * current_price);
-
-        let initial = self.balance_tracker.initial_balance();
+        let initial = self.balance_tracker.initial_balance_usd();
         let pnl = total_value - initial;
 
         let mut breaker = self.circuit_breaker.write().await;
@@ -350,7 +353,6 @@ impl RealTradingEngine {
 
         for trade in trades.iter() {
             stats.total_fees += trade.fees_paid;
-
             let pnl = trade.net_pnl;
             stats.total_pnl += pnl;
 
@@ -374,7 +376,7 @@ impl RealTradingEngine {
     pub async fn get_roi(&self, current_price: f64) -> f64 {
         let (usdc, sol) = self.balance_tracker.get_balances().await;
         let current_value = usdc + (sol * current_price);
-        let initial_value = self.balance_tracker.initial_balance();
+        let initial_value = self.balance_tracker.initial_balance_usd();
 
         if initial_value > 0.0 {
             ((current_value - initial_value) / initial_value) * 100.0
@@ -424,11 +426,9 @@ impl RealTradingEngine {
         println!("   Success Rate: {:.1}%", executor_stats.success_rate);
         println!("   Total Executions: {}", executor_stats.total_executions);
         println!();
-
         println!("🚦 Circuit Breaker:");
         let breaker = self.circuit_breaker.read().await;
         let status = breaker.status();
-
         if status.is_tripped {
             println!("   Status:  🚨 TRIPPED");
             if let Some(reason) = status.trip_reason {
@@ -440,7 +440,6 @@ impl RealTradingEngine {
         } else {
             println!("   Status:  ✅ OK");
         }
-
         println!();
         println!("💻 Current SOL Price: ${:.4}", current_price);
         println!("═══════════════════════════════════════════════════════");
@@ -450,10 +449,8 @@ impl RealTradingEngine {
     pub async fn emergency_shutdown(&self, reason: &str) -> Result<()> {
         error!("🚨 EMERGENCY SHUTDOWN: {}", reason);
         self.emergency_shutdown.store(true, Ordering::SeqCst);
-
         let mut breaker = self.circuit_breaker.write().await;
         breaker.force_trip(TripReason::MaxDrawdown);
-
         self.display_status(0.0).await;
         Ok(())
     }
@@ -472,12 +469,8 @@ mod tests {
     #[test]
     fn test_slippage_validation() {
         let mut config = RealTradingConfig::default();
-
-        // Valid slippage
         config.slippage_bps = Some(50);
         assert!(config.validate().is_ok());
-
-        // Invalid slippage (too high)
         config.slippage_bps = Some(2000);
         assert!(config.validate().is_err());
     }
