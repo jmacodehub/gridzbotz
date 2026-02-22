@@ -25,6 +25,7 @@ use log::{info, debug, warn};
 const LOW_DRAWDOWN_THRESHOLD: f64 = 2.0;      // < 2% = doing great, tighten
 const MODERATE_DRAWDOWN_THRESHOLD: f64 = 5.0; // 2-5% = normal, maintain
 const HIGH_DRAWDOWN_THRESHOLD: f64 = 8.0;     // 5-8% = caution, widen
+#[allow(dead_code)] // semantic label; else-branch catches > 8% via SPACING_EMERGENCY_MULTIPLIER
 const EMERGENCY_DRAWDOWN_THRESHOLD: f64 = 12.0; // > 8% = emergency, max widen
 
 // 🧠 Spacing Multipliers
@@ -147,7 +148,7 @@ impl AdaptiveOptimizer {
             
             let drawdown = metrics.max_drawdown;
             self.last_reason = format!(
-                "Drawdown {:.2}%: {:.3}% → {:.3}%",
+                "Drawdown {:.2}%: {:.3}% -> {:.3}%",
                 drawdown, old_spacing, new_spacing
             );
             
@@ -238,7 +239,7 @@ impl AdaptiveOptimizer {
             
             let efficiency = metrics.grid_efficiency;
             self.last_reason = format!(
-                "Efficiency {:.1}%: {:.3} → {:.3} SOL",
+                "Efficiency {:.1}%: {:.3} -> {:.3} SOL",
                 efficiency * 100.0, old_size, new_size
             );
             

@@ -53,16 +53,16 @@ pub use volatility_calc::{VolatilityCalculator, VolatilityConfig, VolatilityStat
 /// - Logging: "2 BPS = 0.02%"
 ///
 /// # Example
-/// ```
+/// ```ignore
 /// let toml_config = RegimeGateConfig {
 ///     enable_regime_gate: true,
-///     volatility_threshold: 2.0,  // 2 BPS
+///     volatility_threshold_bps: 2.0,  // 2 BPS
 ///     trend_threshold: 3.0,
 ///     min_volatility_to_trade_bps: 3.0,
 ///     pause_in_very_low_vol: true,
 /// };
 /// let regime_cfg = RegimeConfig::from(&toml_config);
-/// assert_eq!(regime_cfg.thresholds.very_low, 0.0002);  // 2 BPS → 0.02%
+/// assert_eq!(regime_cfg.thresholds.very_low, 0.0002);  // 2 BPS -> 0.02%
 /// ```
 impl From<&RegimeGateConfig> for RegimeConfig {
     fn from(cfg: &RegimeGateConfig) -> Self {

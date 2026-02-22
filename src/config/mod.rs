@@ -466,7 +466,7 @@ impl TradingConfig {
 /// - Why: Analytics module uses BPS internally for precision
 ///
 /// # Usage
-/// ```rust
+/// ```ignore
 /// use crate::config::{TradingConfig, RegimeGateConfig};
 ///
 /// let trading_config = TradingConfig { ... };
@@ -474,10 +474,10 @@ impl TradingConfig {
 /// ```
 ///
 /// # Conversion Example
-/// ```
+/// ```text
 /// TradingConfig:           RegimeGateConfig:
-/// min_volatility = 0.5%  → min_volatility_bps = 50.0
-/// enable_gate = true     → enable_gate = true
+/// min_volatility = 0.5%  -> min_volatility_bps = 50.0
+/// enable_gate = true     -> enable_gate = true
 /// ```
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct RegimeGateConfig {

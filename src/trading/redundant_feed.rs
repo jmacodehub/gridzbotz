@@ -42,6 +42,7 @@ use crate::trading::pyth_lazer::PythLazerClient;
 // ═══════════════════════════════════════════════════════════════════════════
 
 /// Maximum allowed price divergence between feeds (5%)
+#[cfg(feature = "websockets")]
 const MAX_PRICE_DEVIATION: f64 = 0.05;
 
 /// Consensus loop refresh rate (100ms = 10 updates/sec)
@@ -524,6 +525,7 @@ impl RedundantPriceFeed {
     }
 
     /// Calculate weighted consensus from multiple price sources
+    #[cfg(feature = "websockets")]
     fn calc_consensus(sources: &[PriceSource]) -> ConsensusPrice {
         if sources.is_empty() {
             return ConsensusPrice {
