@@ -1,18 +1,18 @@
 //! =============================================================================
-//! JUPITER CLIENT - DEX Aggregator Integration V5.2 (Consolidated)
+//! JUPITER CLIENT - DEX Aggregator Integration V5.3
 //!
 //! [OK] Full VersionedTransaction swap - Address Lookup Tables (ALTs) preserved
 //! [OK] Dynamic priority fees via Jupiter "high" level
 //! [OK] prepare_swap() all-in-one convenience (quote + tx in single call)
 //! [OK] with_priority_fee() / with_priority_level() builder pattern
 //! [OK] with_resolved_host() - bypass system DNS with a pre-resolved IP
-//! [OK] resolve_via_doh() - resolve hostnames via Cloudflare DoH (no system DNS)
+//! [OK] resolve_via_doh() - Cloudflare + Google DoH, full CNAME chain following
 //! [OK] Price impact safety guard (warns at > 1%)
 //! [OK] Convenience helpers: get_quote_sol_to_usdc / get_quote_usdc_to_sol
-//! [OK] Utility: parse_output_amount, parse_price_impact, is_price_impact_acceptable
 //!
-//! February 2026 - V5.1 Consolidated (replaces jupiter_swap.rs)
-//! February 2026 - V5.2 Added DoH DNS fallback for restricted networks
+//! February 2026 - V5.1 Consolidated
+//! February 2026 - V5.2 Added DoH DNS fallback
+//! February 2026 - V5.3 DoH follows CNAME chains; Google 8.8.8.8 fallback
 //! =============================================================================
 
 use anyhow::{bail, Context, Result};
@@ -104,8 +104,6 @@ pub struct SwapInfo {
     pub fee_mint: String,
 }
 
-// -- Dynamic Priority Fee (Jupiter API) --------------------------------------
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PriorityFee {
@@ -116,7 +114,7 @@ pub struct PriorityFee {
 #[serde(rename_all = "camelCase")]
 pub struct PriorityLevelWithMaxLamports {
     pub max_lamports: u64,
-    pub priority_level: String,  // "medium" | "high" | "veryHigh"
+    pub priority_level: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -137,7 +135,7 @@ pub struct JupiterSwapRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct JupiterSwapResponse {
-    pub swap_transaction: String,          // Base64 encoded VersionedTransaction
+    pub swap_transaction: String,
     pub last_valid_block_height: Option<u64>,
     pub prioritization_fee_lamports: Option<u64>,
 }
@@ -160,10 +158,10 @@ impl Default for JupiterConfig {
     fn default() -> Self {
         Self {
             api_url: JUPITER_API_V6.to_string(),
-            slippage_bps: 50,                    // 0.5% slippage tolerance
-            priority_fee_lamports: 10_000,       // max 0.00001 SOL
-            priority_level: "high".to_string(),  // Jupiter dynamic fee level
-            only_direct_routes: false,           // Allow multi-hop for best price
+            slippage_bps: 50,
+            priority_fee_lamports: 10_000,
+            priority_level: "high".to_string(),
+            only_direct_routes: false,
             timeout_secs: JUPITER_API_TIMEOUT_SECS,
         }
     }
@@ -181,9 +179,8 @@ pub struct JupiterClient {
 }
 
 impl JupiterClient {
-    /// Create a new JupiterClient from a full config.
     pub fn new(config: JupiterConfig) -> Result<Self> {
-        info!("[Jupiter] V5.2 | slippage: {} BPS | priority: {} (max {} lamports)",
+        info!("[Jupiter] V5.3 | slippage: {} BPS | priority: {} (max {} lamports)",
             config.slippage_bps, config.priority_level, config.priority_fee_lamports);
 
         let http_client = Arc::new(
@@ -201,30 +198,18 @@ impl JupiterClient {
 
     // -- Builders ------------------------------------------------------------
 
-    /// Override the max priority fee cap (lamports).
     pub fn with_priority_fee(mut self, max_lamports: u64) -> Self {
         self.config.priority_fee_lamports = max_lamports;
         self
     }
 
-    /// Override the Jupiter priority level ("medium" | "high" | "veryHigh").
     pub fn with_priority_level(mut self, level: &str) -> Self {
         self.config.priority_level = level.to_string();
         self
     }
 
-    /// Override DNS for a specific hostname with a pre-resolved IP address.
-    ///
-    /// Rebuilds the internal reqwest client with `resolve()` so all requests
-    /// to `host` skip system DNS entirely. Use with `resolve_via_doh()` to
-    /// bypass ISP/router DNS filtering without any system configuration.
-    ///
-    /// # Example
-    /// ```ignore
-    /// let ip = resolve_via_doh("quote-api.jup.ag").await?;
-    /// let client = JupiterClient::new(JupiterConfig::default())?
-    ///     .with_resolved_host("quote-api.jup.ag", ip)?;
-    /// ```
+    /// Override DNS for a specific hostname with a pre-resolved IP.
+    /// Use with `resolve_via_doh()` to bypass ISP/router DNS filtering.
     pub fn with_resolved_host(self, host: &str, ip: IpAddr) -> Result<Self> {
         let addr = SocketAddr::new(ip, 443);
         let http_client = Arc::new(
@@ -240,17 +225,14 @@ impl JupiterClient {
 
     // -- Quote helpers -------------------------------------------------------
 
-    /// Get a quote for SOL -> USDC.
     pub async fn get_quote_sol_to_usdc(&self, amount_lamports: u64) -> Result<JupiterQuoteResponse> {
         self.get_quote(SOL_MINT, USDC_MINT, amount_lamports, self.config.slippage_bps).await
     }
 
-    /// Get a quote for USDC -> SOL.
     pub async fn get_quote_usdc_to_sol(&self, amount_usdc_micro: u64) -> Result<JupiterQuoteResponse> {
         self.get_quote(USDC_MINT, SOL_MINT, amount_usdc_micro, self.config.slippage_bps).await
     }
 
-    /// Get a quote for any token pair.
     pub async fn get_quote(
         &self,
         input_mint: &str,
@@ -306,13 +288,6 @@ impl JupiterClient {
 
     // -- Swap Transaction ----------------------------------------------------
 
-    /// Fetch the full signed VersionedTransaction for a quote.
-    ///
-    /// # IMPORTANT - Do NOT decompose into Vec<Instruction>
-    /// Jupiter V0 transactions use Address Lookup Tables (ALTs).
-    /// Decomposing into Vec<Instruction> silently drops ALTs, causing
-    /// on-chain failures. Always pass the VersionedTransaction intact
-    /// to executor.execute_versioned().
     pub async fn get_swap_transaction(
         &self,
         quote: &JupiterQuoteResponse,
@@ -365,10 +340,6 @@ impl JupiterClient {
         Ok((versioned_tx, last_valid))
     }
 
-    /// All-in-one: quote -> VersionedTransaction in a single call.
-    ///
-    /// Returns `(VersionedTransaction, last_valid_block_height, quote)`.
-    /// Use executor.execute_versioned() to sign and submit.
     pub async fn prepare_swap(
         &self,
         input_mint: &str,
@@ -392,17 +363,14 @@ impl JupiterClient {
         }
     }
 
-    /// Parse the output amount from a quote response.
     pub fn parse_output_amount(quote: &JupiterQuoteResponse) -> Result<u64> {
         quote.out_amount.parse::<u64>().context("Failed to parse output amount")
     }
 
-    /// Parse price impact as a float percentage.
     pub fn parse_price_impact(quote: &JupiterQuoteResponse) -> Result<f64> {
         quote.price_impact_pct.parse::<f64>().context("Failed to parse price impact")
     }
 
-    /// Returns true if the quote's price impact is within the acceptable threshold.
     pub fn is_price_impact_acceptable(quote: &JupiterQuoteResponse, max_pct: f64) -> bool {
         Self::parse_price_impact(quote).map(|i| i <= max_pct).unwrap_or(false)
     }
@@ -415,22 +383,47 @@ impl JupiterClient {
 // DNS-over-HTTPS FALLBACK
 // =============================================================================
 
-/// Resolve a hostname to an IP via Cloudflare DNS-over-HTTPS.
+/// Resolve a hostname to an IP via DNS-over-HTTPS.
 ///
-/// Contacts `1.1.1.1` directly (no DNS needed - it is an IP), so this works
-/// even when system DNS is broken, filtered, or blocking crypto/DeFi domains.
-///
-/// Returns the first A-record IP, or an error if DoH is unreachable or the
-/// hostname has no A records.
+/// Tries Cloudflare (1.1.1.1) then Google (8.8.8.8) in sequence.
+/// Both are contacted by IP so no system DNS is needed.
+/// Follows CNAME chains up to 5 hops deep.
 ///
 /// # Usage
 /// ```ignore
 /// let ip = resolve_via_doh("quote-api.jup.ag").await?;
-/// let jupiter = JupiterClient::new(config)?.with_resolved_host("quote-api.jup.ag", ip)?;
+/// let client = JupiterClient::new(config)?.with_resolved_host("quote-api.jup.ag", ip)?;
 /// ```
 pub async fn resolve_via_doh(hostname: &str) -> Result<IpAddr> {
+    // Both servers are referenced by IP - no system DNS needed to reach them.
+    let providers = ["1.1.1.1", "8.8.8.8"];
+
+    for server in &providers {
+        match resolve_via_doh_provider(hostname, server).await {
+            Ok(ip) => {
+                info!("[DoH] {} -> {} (via {})", hostname, ip, server);
+                return Ok(ip);
+            }
+            Err(e) => {
+                debug!("[DoH] {} failed for {}: {}", server, hostname, e);
+            }
+        }
+    }
+
+    bail!("All DoH providers (1.1.1.1, 8.8.8.8) failed to resolve '{}'", hostname)
+}
+
+/// Query a single DoH provider, following CNAME chains to find the final A record.
+async fn resolve_via_doh_provider(hostname: &str, server: &str) -> Result<IpAddr> {
+    // DNS record types
+    const TYPE_A: u16     = 1;
+    const TYPE_CNAME: u16 = 5;
+    const MAX_CNAME_HOPS: usize = 5;
+
     #[derive(Deserialize)]
     struct DohAnswer {
+        #[serde(rename = "type")]
+        record_type: u16,
         data: String,
     }
     #[derive(Deserialize)]
@@ -444,32 +437,46 @@ pub async fn resolve_via_doh(hostname: &str) -> Result<IpAddr> {
         .build()
         .context("Failed to build DoH client")?;
 
-    let url = format!("https://1.1.1.1/dns-query?name={}&type=A", hostname);
+    let mut target = hostname.to_string();
 
-    let response = client
-        .get(&url)
-        .header("Accept", "application/dns-json")
-        .send()
-        .await
-        .map_err(|e| anyhow::anyhow!("Cloudflare DoH unreachable: {}", e))?;
+    for hop in 0..MAX_CNAME_HOPS {
+        let url = format!("https://{}/dns-query?name={}&type=A", server, target);
 
-    let doh: DohResponse = response
-        .json()
-        .await
-        .context("Failed to parse DoH JSON response")?;
+        let response = client
+            .get(&url)
+            .header("Accept", "application/dns-json")
+            .send()
+            .await
+            .map_err(|e| anyhow::anyhow!("DoH request to {} failed: {}", server, e))?;
 
-    let ip_str = doh
-        .answer
-        .and_then(|answers| {
-            // Skip any CNAME records (they contain hostnames, not IPs)
-            answers.into_iter().find(|a| a.data.parse::<IpAddr>().is_ok())
-        })
-        .map(|a| a.data)
-        .with_context(|| format!("No A records found for {} in DoH response", hostname))?;
+        let doh: DohResponse = response
+            .json()
+            .await
+            .with_context(|| format!("Failed to parse DoH response from {}", server))?;
 
-    ip_str
-        .parse::<IpAddr>()
-        .with_context(|| format!("Failed to parse IP '{}' from DoH response", ip_str))
+        let answers = doh.answer.unwrap_or_default();
+
+        // Prefer direct A record
+        if let Some(a) = answers.iter().find(|r| r.record_type == TYPE_A) {
+            return a.data
+                .trim_end_matches('.')
+                .parse::<IpAddr>()
+                .with_context(|| format!("Invalid IP in DoH response: '{}'", a.data));
+        }
+
+        // Follow CNAME to next hop
+        if let Some(cname) = answers.iter().find(|r| r.record_type == TYPE_CNAME) {
+            let next = cname.data.trim_end_matches('.').to_string();
+            debug!("[DoH] CNAME hop {}: {} -> {}", hop + 1, target, next);
+            target = next;
+            continue;
+        }
+
+        // Neither A nor CNAME - bail for this provider
+        bail!("No A or CNAME records for '{}' from {}", target, server);
+    }
+
+    bail!("Too many CNAME hops resolving '{}' via {}", hostname, server)
 }
 
 // =============================================================================
@@ -528,17 +535,27 @@ mod tests {
     fn test_with_resolved_host_builds_ok() {
         use std::net::Ipv4Addr;
         let ip = IpAddr::V4(Ipv4Addr::new(104, 26, 12, 35));
-        let client = JupiterClient::new(JupiterConfig::default())
+        let result = JupiterClient::new(JupiterConfig::default())
             .unwrap()
             .with_resolved_host("quote-api.jup.ag", ip);
-        assert!(client.is_ok());
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    #[ignore] // Requires live network
+    async fn test_doh_resolves_jup_ag() {
+        let result = resolve_via_doh("quote-api.jup.ag").await;
+        match result {
+            Ok(ip) => println!("[test] quote-api.jup.ag -> {}", ip),
+            Err(e) => println!("[test] DoH unavailable (ok in CI): {}", e),
+        }
     }
 
     #[tokio::test]
     #[ignore] // Requires live network
     async fn test_get_quote_live() {
         let client = JupiterClient::new(JupiterConfig::default()).unwrap();
-        let result = client.get_quote_sol_to_usdc(100_000_000).await; // 0.1 SOL
+        let result = client.get_quote_sol_to_usdc(100_000_000).await;
         if let Ok(quote) = result {
             println!("Quote: {} -> {}", quote.in_amount, quote.out_amount);
             assert!(quote.out_amount.parse::<u64>().unwrap() > 0);
