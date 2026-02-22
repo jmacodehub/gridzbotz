@@ -5,15 +5,16 @@
 //!   [1] Keystore load + pubkey check
 //!   [2] Live SOL/USD price via Pyth Hermes
 //!   [3] Jupiter V6 quote → VersionedTransaction (ALTs preserved)
+//!       Uses Cloudflare DoH to bypass system DNS filtering if needed.
 //!   [4] Keystore sign (fee-payer identity verified)
 //!   [5] Submit to mainnet  ← only with --submit flag
 //!
 //! USAGE:
 //!   # Dry run — zero risk, proves stack works up to signing:
-//!   cargo run --bin smoke_test -- --keypair ~/.config/solana/id.json --rpc <MAINNET_RPC>
+//!   cargo run --bin smoke_test -- --keypair ~/.config/solana/id.json
 //!
 //!   # Live — sends ONE 0.001 SOL → USDC swap on mainnet (~$0.08):
-//!   cargo run --bin smoke_test -- --keypair ~/.config/solana/id.json --rpc <MAINNET_RPC> --submit
+//!   cargo run --bin smoke_test -- --keypair ~/.config/solana/id.json --submit
 //!
 //! ⚠️  Jupiter V6 is mainnet-only — devnet has no liquidity pools.
 //! ⚠️  Use your MAINNET keypair, not the devnet one.
@@ -27,16 +28,12 @@ use log::info;
 use solana_grid_bot::{
     security::keystore::{KeystoreConfig, SecureKeystore},
     trading::{
-        jupiter_client::{JupiterClient, JupiterConfig, SOL_MINT, USDC_MINT},
+        jupiter_client::{JupiterClient, JupiterConfig, SOL_MINT, USDC_MINT, resolve_via_doh},
         price_feed::PriceFeed,
     },
 };
 use solana_client::nonblocking::rpc_client::RpcClient;
 use tokio::time::{sleep, Duration};
-
-// ─────────────────────────────────────────────────────────────────────────────
-// CLI ARGS
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[derive(Parser, Debug)]
 #[clap(name = "smoke_test")]
@@ -46,7 +43,7 @@ struct Args {
     #[clap(short, long, default_value = "~/.config/solana/id.json")]
     keypair: String,
 
-    /// Mainnet RPC URL — use Chainstack or another fast endpoint
+    /// Mainnet RPC URL
     #[clap(short, long, default_value = "https://api.mainnet-beta.solana.com")]
     rpc: String,
 
@@ -54,10 +51,6 @@ struct Args {
     #[clap(long)]
     submit: bool,
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// MAIN
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -89,7 +82,6 @@ async fn main() -> Result<()> {
     print!("  [1/5] Loading keystore.............. ");
     let keystore = SecureKeystore::from_file(KeystoreConfig {
         keypair_path: args.keypair.clone(),
-        // Conservative limits — smoke test should never exceed these
         max_transaction_amount_usdc: Some(1.0),
         max_daily_trades: Some(5),
         max_daily_volume_usdc: Some(5.0),
@@ -99,12 +91,10 @@ async fn main() -> Result<()> {
     // ── [2] Live SOL price ───────────────────────────────────────────────────
     print!("  [2/5] Fetching live SOL/USD......... ");
     let feed = PriceFeed::new(20);
-    // PriceFeed::start() returns Result<(), Box<dyn Error+Send+Sync>>.
-    // anyhow::Context cannot wrap that type directly — use map_err instead.
     feed.start()
         .await
         .map_err(|e| anyhow::anyhow!("Failed to start Pyth price feed: {}", e))?;
-    sleep(Duration::from_millis(1500)).await; // let first poll arrive
+    sleep(Duration::from_millis(1500)).await;
     let sol_price = feed.latest_price().await;
     if sol_price <= 0.0 {
         anyhow::bail!("Price feed returned invalid price: {}", sol_price);
@@ -113,10 +103,27 @@ async fn main() -> Result<()> {
     println!("✅  ${:.4}  (0.001 SOL ≈ ${:.4})", sol_price, trade_value_usd);
     info!("💰 Pyth price confirmed: ${:.4}", sol_price);
 
-    // ── [3] Jupiter quote + VersionedTransaction ─────────────────────────────
+    // ── [3] Jupiter — DoH-first DNS, then quote + VersionedTransaction ──────────
     print!("  [3/5] Jupiter quote + build tx...... ");
-    let jupiter = JupiterClient::new(JupiterConfig::default())?
-        .with_priority_fee(10_000); // max 0.00001 SOL priority fee
+
+    // Try Cloudflare DoH to resolve quote-api.jup.ag.
+    // 1.1.1.1 is reached by IP — no system DNS needed — so this works
+    // even when your ISP or router is filtering crypto/DeFi domains.
+    let jupiter_base = JupiterClient::new(JupiterConfig::default())?
+        .with_priority_fee(10_000);
+
+    let jupiter = match resolve_via_doh("quote-api.jup.ag").await {
+        Ok(ip) => {
+            info!("🌐 DoH resolved quote-api.jup.ag → {} (system DNS bypassed)", ip);
+            jupiter_base
+                .with_resolved_host("quote-api.jup.ag", ip)
+                .context("Failed to apply DNS override to Jupiter client")?
+        }
+        Err(e) => {
+            info!("🌐 DoH unavailable ({}), falling back to system DNS", e);
+            jupiter_base
+        }
+    };
 
     let lamports: u64 = 1_000_000; // 0.001 SOL
     let user_pubkey = *keystore.pubkey();
@@ -124,7 +131,7 @@ async fn main() -> Result<()> {
     let (mut vtx, last_valid, quote) = jupiter
         .prepare_swap(SOL_MINT, USDC_MINT, lamports, user_pubkey)
         .await
-        .context("Jupiter API call failed — is mainnet RPC reachable?")?;
+        .context("Jupiter quote failed")?;
 
     let out_usdc = quote.out_amount.parse::<u64>().unwrap_or(0) as f64 / 1_000_000.0;
     let impact   = quote.price_impact_pct.parse::<f64>().unwrap_or(0.0);
@@ -168,7 +175,6 @@ async fn main() -> Result<()> {
         .map_err(|e| anyhow::anyhow!("Transaction rejected — check balance and RPC health: {}", e))?;
     println!("✅  CONFIRMED");
 
-    // Record the trade in keystore counters
     keystore.record_transaction(trade_value_usd).await;
     let (daily_trades, daily_vol) = keystore.get_daily_stats().await;
 

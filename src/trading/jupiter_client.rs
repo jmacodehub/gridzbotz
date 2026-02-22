@@ -1,16 +1,18 @@
 //! ═══════════════════════════════════════════════════════════════════════════
-//! 🪐 JUPITER CLIENT - DEX Aggregator Integration V5.1 (Consolidated)
-//! ═══════════════════════════════════════════════════════════════════════════
+//! 🪐 JUPITER CLIENT - DEX Aggregator Integration V5.2 (Consolidated)
 //!
 //! ✅ Full VersionedTransaction swap — Address Lookup Tables (ALTs) preserved
 //! ✅ Dynamic priority fees via Jupiter "high" level (smarter than raw lamports)
 //! ✅ prepare_swap() all-in-one convenience (quote + tx in single call)
 //! ✅ with_priority_fee() / with_priority_level() builder pattern
+//! ✅ with_resolved_host() — bypass system DNS with a pre-resolved IP
+//! ✅ resolve_via_doh() — resolve hostnames via Cloudflare DoH (no system DNS)
 //! ✅ Price impact safety guard (warns at > 1%)
 //! ✅ Convenience helpers: get_quote_sol_to_usdc / get_quote_usdc_to_sol
 //! ✅ Utility: parse_output_amount, parse_price_impact, is_price_impact_acceptable
 //!
-//! February 2026 - V5.1 Consolidated (replaces jupiter_swap.rs) 🚀
+//! February 2026 - V5.1 Consolidated (replaces jupiter_swap.rs)
+//! February 2026 - V5.2 Added DoH DNS fallback for restricted networks 🚀
 //! ═══════════════════════════════════════════════════════════════════════════
 
 use anyhow::{bail, Context, Result};
@@ -21,6 +23,7 @@ use solana_sdk::{
     pubkey::Pubkey,
     transaction::VersionedTransaction,
 };
+use std::net::{IpAddr, SocketAddr};
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -101,7 +104,7 @@ pub struct SwapInfo {
     pub fee_mint: String,
 }
 
-// ── Dynamic Priority Fee (Jupiter API — smarter than raw microlamports) ──────
+// ── Dynamic Priority Fee (Jupiter API — smarter than raw microlamports) ──────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -180,7 +183,7 @@ pub struct JupiterClient {
 impl JupiterClient {
     /// Create a new JupiterClient from a full config.
     pub fn new(config: JupiterConfig) -> Result<Self> {
-        info!("🪐 Jupiter Client V5.1 | slippage: {} BPS | priority: {} (max {} lamports)",
+        info!("\u1fa90 Jupiter Client V5.2 | slippage: {} BPS | priority: {} (max {} lamports)",
             config.slippage_bps, config.priority_level, config.priority_fee_lamports);
 
         let http_client = Arc::new(
@@ -196,7 +199,7 @@ impl JupiterClient {
         Ok(Self { config, http_client, sol_mint, usdc_mint })
     }
 
-    // ── Builders ─────────────────────────────────────────────────────────────
+    // ── Builders ─────────────────────────────────────────────────────────────────────
 
     /// Override the max priority fee cap (lamports).
     pub fn with_priority_fee(mut self, max_lamports: u64) -> Self {
@@ -210,7 +213,32 @@ impl JupiterClient {
         self
     }
 
-    // ── Quote helpers ─────────────────────────────────────────────────────────
+    /// Override DNS for a specific hostname with a pre-resolved IP address.
+    ///
+    /// Rebuilds the internal reqwest client with `resolve()` so all requests
+    /// to `host` skip system DNS entirely. Use with `resolve_via_doh()` to
+    /// bypass ISP/router DNS filtering without any system configuration.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let ip = resolve_via_doh("quote-api.jup.ag").await?;
+    /// let client = JupiterClient::new(JupiterConfig::default())?
+    ///     .with_resolved_host("quote-api.jup.ag", ip)?;
+    /// ```
+    pub fn with_resolved_host(self, host: &str, ip: IpAddr) -> Result<Self> {
+        let addr = SocketAddr::new(ip, 443);
+        let http_client = Arc::new(
+            HttpClient::builder()
+                .timeout(Duration::from_secs(self.config.timeout_secs))
+                .resolve(host, addr)
+                .build()
+                .context("Failed to rebuild HTTP client with resolved host")?
+        );
+        info!("\u1fa90 DNS override: {} → {} (system DNS bypassed)", host, ip);
+        Ok(Self { http_client, ..self })
+    }
+
+    // ── Quote helpers ───────────────────────────────────────────────────────────────
 
     /// Get a quote for SOL → USDC.
     pub async fn get_quote_sol_to_usdc(&self, amount_lamports: u64) -> Result<JupiterQuoteResponse> {
@@ -240,7 +268,7 @@ impl JupiterClient {
             as_legacy_transaction: Some(false),
         };
 
-        debug!("🔍 Quote: {} {} → {}", amount, input_mint, output_mint);
+        debug!("\ud83d\udd0d Quote: {} {} \u2192 {}", amount, input_mint, output_mint);
 
         let response = self.http_client
             .get(&url)
@@ -264,19 +292,19 @@ impl JupiterClient {
         let out_amt = quote.out_amount.parse::<u64>().unwrap_or(0);
         let impact  = quote.price_impact_pct.parse::<f64>().unwrap_or(0.0);
 
-        info!("✅ Quote: {} → {} | Impact: {:.4}%",
+        info!("\u2705 Quote: {} \u2192 {} | Impact: {:.4}%",
             Self::fmt_amount(in_amt, input_mint),
             Self::fmt_amount(out_amt, output_mint),
             impact);
 
         if impact > 1.0 {
-            warn!("⚠️  HIGH PRICE IMPACT: {:.2}%! Consider smaller trade size.", impact);
+            warn!("\u26a0\ufe0f  HIGH PRICE IMPACT: {:.2}%! Consider smaller trade size.", impact);
         }
 
         Ok(quote)
     }
 
-    // ── 🔥 Swap Transaction ───────────────────────────────────────────────────
+    // ── 🔥 Swap Transaction ─────────────────────────────────────────────────────────────
 
     /// Fetch the full signed VersionedTransaction for a quote.
     ///
@@ -290,7 +318,7 @@ impl JupiterClient {
         quote: &JupiterQuoteResponse,
         user_pubkey: Pubkey,
     ) -> Result<(VersionedTransaction, u64)> {
-        debug!("🔨 Building swap transaction for {}", user_pubkey);
+        debug!("\ud83d\udd28 Building swap transaction for {}", user_pubkey);
 
         let swap_request = JupiterSwapRequest {
             quote_response: quote.clone(),
@@ -332,7 +360,7 @@ impl JupiterClient {
             .context("Failed to deserialize VersionedTransaction")?;
 
         let last_valid = swap_response.last_valid_block_height.unwrap_or(0);
-        info!("✅ Swap tx built (valid until block {})", last_valid);
+        info!("\u2705 Swap tx built (valid until block {})", last_valid);
 
         Ok((versioned_tx, last_valid))
     }
@@ -348,13 +376,13 @@ impl JupiterClient {
         amount: u64,
         user_pubkey: Pubkey,
     ) -> Result<(VersionedTransaction, u64, JupiterQuoteResponse)> {
-        info!("🚀 prepare_swap: {} {} → {}", amount, input_mint, output_mint);
+        info!("\ud83d\ude80 prepare_swap: {} {} \u2192 {}", amount, input_mint, output_mint);
         let quote = self.get_quote(input_mint, output_mint, amount, self.config.slippage_bps).await?;
         let (tx, last_valid) = self.get_swap_transaction(&quote, user_pubkey).await?;
         Ok((tx, last_valid, quote))
     }
 
-    // ── Utilities ─────────────────────────────────────────────────────────────
+    // ── Utilities ────────────────────────────────────────────────────────────────────
 
     fn fmt_amount(amount: u64, mint: &str) -> String {
         match mint {
@@ -381,6 +409,67 @@ impl JupiterClient {
 
     pub fn sol_mint(&self)  -> &Pubkey { &self.sol_mint }
     pub fn usdc_mint(&self) -> &Pubkey { &self.usdc_mint }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 🌐 DNS-over-HTTPS FALLBACK
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Resolve a hostname to an IP via Cloudflare DNS-over-HTTPS.
+///
+/// Contacts `1.1.1.1` directly (no DNS needed — it's an IP), so this works
+/// even when system DNS is broken, filtered, or blocking crypto/DeFi domains.
+///
+/// Returns the first A-record IP, or an error if DoH is unreachable or the
+/// hostname has no A records.
+///
+/// # Usage
+/// ```ignore
+/// let ip = resolve_via_doh("quote-api.jup.ag").await?;
+/// let jupiter = JupiterClient::new(config)?.with_resolved_host("quote-api.jup.ag", ip)?;
+/// ```
+pub async fn resolve_via_doh(hostname: &str) -> Result<IpAddr> {
+    #[derive(Deserialize)]
+    struct DohAnswer {
+        data: String,
+    }
+    #[derive(Deserialize)]
+    struct DohResponse {
+        #[serde(rename = "Answer")]
+        answer: Option<Vec<DohAnswer>>,
+    }
+
+    let client = HttpClient::builder()
+        .timeout(Duration::from_secs(5))
+        .build()
+        .context("Failed to build DoH client")?;
+
+    let url = format!("https://1.1.1.1/dns-query?name={}&type=A", hostname);
+
+    let response = client
+        .get(&url)
+        .header("Accept", "application/dns-json")
+        .send()
+        .await
+        .map_err(|e| anyhow::anyhow!("Cloudflare DoH unreachable: {}", e))?;
+
+    let doh: DohResponse = response
+        .json()
+        .await
+        .context("Failed to parse DoH JSON response")?;
+
+    let ip_str = doh
+        .answer
+        .and_then(|answers| {
+            // Skip any CNAME records (they contain hostnames, not IPs)
+            answers.into_iter().find(|a| a.data.parse::<IpAddr>().is_ok())
+        })
+        .map(|a| a.data)
+        .with_context(|| format!("No A records found for {} in DoH response", hostname))?;
+
+    ip_str
+        .parse::<IpAddr>()
+        .with_context(|| format!("Failed to parse IP '{}' from DoH response", ip_str))
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -436,13 +525,23 @@ mod tests {
         assert_eq!(client.config.slippage_bps, 100);
     }
 
+    #[test]
+    fn test_with_resolved_host_builds_ok() {
+        use std::net::Ipv4Addr;
+        let ip = IpAddr::V4(Ipv4Addr::new(104, 26, 12, 35));
+        let client = JupiterClient::new(JupiterConfig::default())
+            .unwrap()
+            .with_resolved_host("quote-api.jup.ag", ip);
+        assert!(client.is_ok());
+    }
+
     #[tokio::test]
     #[ignore] // Requires live network
     async fn test_get_quote_live() {
         let client = JupiterClient::new(JupiterConfig::default()).unwrap();
         let result = client.get_quote_sol_to_usdc(100_000_000).await; // 0.1 SOL
         if let Ok(quote) = result {
-            println!("Quote: {} → {}", quote.in_amount, quote.out_amount);
+            println!("Quote: {} \u2192 {}", quote.in_amount, quote.out_amount);
             assert!(quote.out_amount.parse::<u64>().unwrap() > 0);
         } else {
             println!("Skipping (network unavailable)");
