@@ -249,6 +249,7 @@ pub struct GridRebalancer {
     current_spacing: Arc<tokio::sync::RwLock<f64>>,
     
     // V3 ENHANCEMENTS - Order Lifecycle
+    #[allow(dead_code)]
     last_lifecycle_check: Arc<tokio::sync::RwLock<Instant>>,
     trading_paused: Arc<AtomicBool>,
     pause_reason: Arc<tokio::sync::RwLock<String>>,
@@ -383,8 +384,8 @@ impl GridRebalancer {
         
         // Calculate fill deviation from current mid-price
         if let Some(current_price) = *self.current_price.read().await {
-            let deviation_pct = ((fill_price - current_price).abs() / current_price) * 100.0;
-            trace!("📊 Fill deviation from mid: {:.3}%", deviation_pct);
+            let _deviation_pct = ((fill_price - current_price).abs() / current_price) * 100.0;
+            trace!("📊 Fill deviation from mid: {:.3}%", _deviation_pct);
             
             // Future enhancement: Track optimal fill zones
             // - Build heatmap of profitable price levels
