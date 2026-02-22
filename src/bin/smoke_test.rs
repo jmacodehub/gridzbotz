@@ -84,7 +84,7 @@ async fn main() -> Result<()> {
     println!("  Keypair:  {}", args.keypair);
     println!("  RPC:      {}", &args.rpc[..args.rpc.len().min(60)]);
     if let Some(ref ip) = args.jup_ip {
-        println!("  Jup IP:   {} (DNS bypass)", ip);
+        println!("  Jup IP:   {} (DNS bypass active)", ip);
     }
     println!();
 
@@ -120,7 +120,7 @@ async fn main() -> Result<()> {
         .with_priority_fee(10_000);
 
     // DNS resolution priority:
-    //   1. --jup-ip flag (user-supplied, hardcoded bypass)
+    //   1. --jup-ip flag (user-supplied hardcoded IP, most reliable)
     //   2. Cloudflare DoH (1.1.1.1) with CNAME following
     //   3. Google DoH (8.8.8.8) with CNAME following
     //   4. System DNS fallback
@@ -129,9 +129,7 @@ async fn main() -> Result<()> {
             .parse()
             .with_context(|| format!("Invalid --jup-ip value: '{}'", ip_str))?;
         info!("[DNS] Using hardcoded IP from --jup-ip: {}", ip);
-        jupiter_base
-            .with_resolved_host("quote-api.jup.ag", ip)
-            .context("Failed to apply --jup-ip DNS override")?;
+        // Single call - with_resolved_host consumes jupiter_base
         jupiter_base
             .with_resolved_host("quote-api.jup.ag", ip)
             .context("Failed to apply --jup-ip DNS override")?
