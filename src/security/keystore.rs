@@ -6,10 +6,12 @@
 //! ✅ Transaction validation before signing
 //! ✅ Daily trade limits enforcement
 //! ✅ Position size validation
-//! ✅ Secure transaction signing
+//! ✅ Secure legacy transaction signing
+//! ✅ Secure VersionedTransaction signing (V5.1 — for Jupiter swaps)
 //! ✅ Thread-safe atomic counters
 //!
 //! November 2025 | Project Flash V6.0 - Security Layer
+//! February 2026  | V5.1 — Added sign_versioned_transaction()
 //! ═══════════════════════════════════════════════════════════════════════════
 
 use anyhow::{bail, Context, Result};
@@ -18,16 +20,16 @@ use serde::{Deserialize, Serialize};
 use solana_sdk::{
     pubkey::Pubkey,
     signature::{Keypair, Signer},
-    transaction::Transaction,
+    transaction::{Transaction, VersionedTransaction},
 };
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 
-// ─────────────────────────────────────────────────────────────────────────────
+// ───────────────────────────────────────────────────────────────────────────────
 // 🔐 CONFIGURATION
-// ─────────────────────────────────────────────────────────────────────────────
+// ───────────────────────────────────────────────────────────────────────────────
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KeystoreConfig {
     pub keypair_path: String,
@@ -48,33 +50,29 @@ impl Default for KeystoreConfig {
 }
 
 impl KeystoreConfig {
-    /// Validate configuration
     pub fn validate(&self) -> Result<()> {
         if let Some(max_amount) = self.max_transaction_amount_usdc {
             if max_amount <= 0.0 {
                 bail!("max_transaction_amount_usdc must be positive");
             }
         }
-
         if let Some(max_trades) = self.max_daily_trades {
             if max_trades == 0 {
                 bail!("max_daily_trades must be positive");
             }
         }
-
         if let Some(max_volume) = self.max_daily_volume_usdc {
             if max_volume <= 0.0 {
                 bail!("max_daily_volume_usdc must be positive");
             }
         }
-
         Ok(())
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// ───────────────────────────────────────────────────────────────────────────────
 // 🔐 SECURE KEYSTORE
-// ─────────────────────────────────────────────────────────────────────────────
+// ───────────────────────────────────────────────────────────────────────────────
 
 #[derive(Debug)]
 pub struct SecureKeystore {
@@ -89,51 +87,37 @@ pub struct SecureKeystore {
 }
 
 impl SecureKeystore {
-    /// Load keypair from encrypted file
+    /// Load keypair from file (JSON array or raw bytes format)
     pub fn from_file(config: KeystoreConfig) -> Result<Self> {
         info!("🔐 Loading secure keystore from: {}", config.keypair_path);
-
-        // Validate config first
         config.validate()?;
 
-        // Expand ~ to home directory
         let expanded_path = shellexpand::tilde(&config.keypair_path).to_string();
 
-        // Read keypair file
         let keypair_bytes = std::fs::read(&expanded_path)
             .with_context(|| format!("Failed to read keypair file: {}", expanded_path))?;
 
-        // Parse keypair - SDK 3.0 compatible
         let keypair = if keypair_bytes.len() == 64 {
-            // Full keypair (64 bytes: 32 secret + 32 public)
             let mut secret = [0u8; 32];
             secret.copy_from_slice(&keypair_bytes[0..32]);
             Keypair::new_from_array(secret)
         } else if keypair_bytes.len() == 32 {
-            // Just secret key (32 bytes)
             let mut secret = [0u8; 32];
             secret.copy_from_slice(&keypair_bytes);
             Keypair::new_from_array(secret)
         } else {
-            // Try JSON array format
             let secret_key: Vec<u8> = serde_json::from_slice(&keypair_bytes)
                 .context("Failed to parse keypair JSON")?;
-
             if secret_key.len() == 64 {
-                // Full keypair bytes
                 let mut secret = [0u8; 32];
                 secret.copy_from_slice(&secret_key[0..32]);
                 Keypair::new_from_array(secret)
             } else if secret_key.len() == 32 {
-                // Just secret key
                 let mut secret = [0u8; 32];
                 secret.copy_from_slice(&secret_key);
                 Keypair::new_from_array(secret)
             } else {
-                bail!(
-                    "Invalid keypair file format: expected 32 or 64 bytes, got {}",
-                    secret_key.len()
-                );
+                bail!("Invalid keypair file format: expected 32 or 64 bytes, got {}", secret_key.len());
             }
         };
 
@@ -141,7 +125,6 @@ impl SecureKeystore {
         info!("✅ Keystore loaded successfully");
         info!("   Public key: {}", pubkey);
 
-        // ✅ RETURN THE STRUCT (This was missing!)
         Ok(Self {
             keypair,
             pubkey,
@@ -157,9 +140,9 @@ impl SecureKeystore {
         &self.pubkey
     }
 
-    /// Validate transaction before signing
+    /// Validate a transaction against daily limits before signing
     pub async fn validate_transaction(&self, amount_usdc: f64) -> Result<()> {
-        // Reset daily counters if 24 hours elapsed
+        // Reset daily counters if 24 hours have elapsed
         {
             let mut last_reset = self.last_reset.write().await;
             if last_reset.elapsed() > Duration::from_secs(86400) {
@@ -170,59 +153,62 @@ impl SecureKeystore {
             }
         }
 
-        // Check position size limit
         if let Some(max_amount) = self.config.max_transaction_amount_usdc {
             if amount_usdc > max_amount {
-                bail!(
-                    "Transaction amount ${:.2} exceeds max position size ${:.2}",
-                    amount_usdc,
-                    max_amount
-                );
+                bail!("Transaction amount ${:.2} exceeds max position size ${:.2}",
+                    amount_usdc, max_amount);
             }
         }
 
-        // Check daily trade limit
         if let Some(max_trades) = self.config.max_daily_trades {
             let daily_count = self.daily_tx_count.load(Ordering::SeqCst);
             if daily_count >= max_trades as u64 {
-                bail!(
-                    "Daily trade limit reached: {}/{}",
-                    daily_count,
-                    max_trades
-                );
+                bail!("Daily trade limit reached: {}/{}", daily_count, max_trades);
             }
         }
 
-        // Check daily volume limit
         if let Some(max_volume) = self.config.max_daily_volume_usdc {
             let daily_vol = *self.daily_volume_usdc.read().await;
             if daily_vol + amount_usdc > max_volume {
-                bail!(
-                    "Daily volume limit would be exceeded: ${:.2} + ${:.2} > ${:.2}",
-                    daily_vol,
-                    amount_usdc,
-                    max_volume
-                );
+                bail!("Daily volume limit would be exceeded: ${:.2} + ${:.2} > ${:.2}",
+                    daily_vol, amount_usdc, max_volume);
             }
         }
 
         Ok(())
     }
 
-    /// Sign a transaction
+    /// Sign a legacy Transaction
     pub fn sign_transaction(&self, tx: &mut Transaction) -> Result<()> {
         tx.sign(&[&self.keypair], tx.message.recent_blockhash);
         Ok(())
     }
 
-    /// Record a completed transaction
+    /// Sign a VersionedTransaction (required for Jupiter V0 swaps with ALTs).
+    ///
+    /// Jupiter returns a VersionedTransaction whose message is already fully
+    /// constructed (blockhash set, accounts resolved, ALTs referenced).
+    /// We sign by serializing the message bytes and calling sign_message(),
+    /// then placing the signature at index 0 (the fee payer / user slot).
+    pub fn sign_versioned_transaction(&self, tx: &mut VersionedTransaction) -> Result<()> {
+        let message_bytes = tx.message.serialize();
+        let signature = self.keypair.sign_message(&message_bytes);
+        if tx.signatures.is_empty() {
+            tx.signatures.push(signature);
+        } else {
+            tx.signatures[0] = signature;
+        }
+        Ok(())
+    }
+
+    /// Record a completed transaction against daily limits
     pub async fn record_transaction(&self, amount_usdc: f64) {
         self.daily_tx_count.fetch_add(1, Ordering::SeqCst);
         let mut vol = self.daily_volume_usdc.write().await;
         *vol += amount_usdc;
     }
 
-    /// Get daily statistics
+    /// Get daily statistics (count, volume)
     pub async fn get_daily_stats(&self) -> (u64, f64) {
         let count = self.daily_tx_count.load(Ordering::SeqCst);
         let volume = *self.daily_volume_usdc.read().await;
@@ -236,20 +222,16 @@ impl SecureKeystore {
         if let Some(max_trades) = self.config.max_daily_trades {
             let usage_pct = (count as f64 / max_trades as f64) * 100.0;
             if usage_pct > 80.0 {
-                return Some(format!(
-                    "⚠️  Trade limit: {}/{} ({:.1}%)",
-                    count, max_trades, usage_pct
-                ));
+                return Some(format!("⚠️  Trade limit: {}/{} ({:.1}%)",
+                    count, max_trades, usage_pct));
             }
         }
 
         if let Some(max_volume) = self.config.max_daily_volume_usdc {
             let usage_pct = (volume / max_volume) * 100.0;
             if usage_pct > 80.0 {
-                return Some(format!(
-                    "⚠️  Volume limit: ${:.2}/${:.2} ({:.1}%)",
-                    volume, max_volume, usage_pct
-                ));
+                return Some(format!("⚠️  Volume limit: ${:.2}/${:.2} ({:.1}%)",
+                    volume, max_volume, usage_pct));
             }
         }
 
@@ -257,9 +239,9 @@ impl SecureKeystore {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// ───────────────────────────────────────────────────────────────────────────────
 // ✅ TESTS
-// ─────────────────────────────────────────────────────────────────────────────
+// ───────────────────────────────────────────────────────────────────────────────
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -285,7 +267,6 @@ mod tests {
             max_daily_trades: Some(5),
             max_daily_volume_usdc: Some(500.0),
         };
-
         assert!(config.validate().is_ok());
     }
 }
