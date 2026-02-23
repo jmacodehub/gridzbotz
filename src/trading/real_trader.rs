@@ -1,8 +1,9 @@
 //! ═══════════════════════════════════════════════════════════════════════════
-//! 🔥 REAL TRADER ENGINE V2.0 - MODULAR & BULLETPROOF
+//! 🔥 REAL TRADER ENGINE V2.1 - MODULAR & BULLETPROOF
 //! ═══════════════════════════════════════════════════════════════════════════
 
 use anyhow::{bail, Context, Result};
+use async_trait::async_trait;
 use log::{error, info};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -20,11 +21,12 @@ use super::executor::{TransactionExecutor, ExecutorConfig};
 use super::trade::Trade;
 use super::paper_trader::{Order, OrderSide};
 use super::jupiter_client::{JupiterClient, JupiterConfig, SOL_MINT, USDC_MINT};
+use super::{TradingEngine, TradingResult};
 use solana_sdk::transaction::VersionedTransaction;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ⚙️ CONFIGURATION
-// ────────────────────────────────────────────────────────══════════════════
+// ─────────────────────────────────────────────────────────────────────────────
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RealTradingConfig {
     pub keystore: KeystoreConfig,
@@ -74,6 +76,17 @@ impl RealTradingConfig {
         }
 
         Ok(())
+    }
+
+    /// Bridge the master TOML [execution] block into this engine config.
+    /// Called by gridz_bot.rs when execution_mode = "live" to ensure the
+    /// master TOML's slippage setting reaches the real trading engine.
+    /// Remaining fields use sensible defaults from Default::default().
+    pub fn from_execution_config(exec: &crate::config::ExecutionConfig) -> Self {
+        Self {
+            slippage_bps: Some(exec.max_slippage_bps),
+            ..Default::default()
+        }
     }
 }
 
@@ -169,7 +182,7 @@ impl RealTradingEngine {
         initial_balance_sol: f64,
         initial_sol_price_usd: f64,
     ) -> Result<Self> {
-        info!("🚀 Initializing Real Trading Engine V2.0");
+        info!("🚀 Initializing Real Trading Engine V2.1");
 
         config.validate()?;
 
@@ -402,7 +415,7 @@ impl RealTradingEngine {
 
         println!();
         println!("═══════════════════════════════════════════════════════");
-        println!("  REAL TRADING ENGINE V2.0 - STATUS");
+        println!("  REAL TRADING ENGINE V2.1 - STATUS");
         println!("═══════════════════════════════════════════════════════");
         println!();
         println!("💰 Balances:");
@@ -446,13 +459,88 @@ impl RealTradingEngine {
         println!();
     }
 
-    pub async fn emergency_shutdown(&self, reason: &str) -> Result<()> {
+    /// Trigger an emergency shutdown: sets the atomic flag, trips the
+    /// circuit breaker, and dumps a status snapshot.  Named
+    /// `trigger_emergency_shutdown` to avoid collision with the
+    /// `TradingEngine::emergency_shutdown` trait method below.
+    pub async fn trigger_emergency_shutdown(&self, reason: &str) -> Result<()> {
         error!("🚨 EMERGENCY SHUTDOWN: {}", reason);
         self.emergency_shutdown.store(true, Ordering::SeqCst);
         let mut breaker = self.circuit_breaker.write().await;
         breaker.force_trip(TripReason::MaxDrawdown);
+        drop(breaker);
         self.display_status(0.0).await;
         Ok(())
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 🔌 UNIFIED TRADING ENGINE TRAIT IMPLEMENTATION
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[async_trait]
+impl TradingEngine for RealTradingEngine {
+    /// Maps a grid level-crossing signal to a Jupiter atomic swap.
+    /// `grid_level_id` is logged for observability but not stored —
+    /// Jupiter swaps are atomic and cannot be cancelled by order ID.
+    async fn place_limit_order_with_level(
+        &self,
+        side: OrderSide,
+        price: f64,
+        size: f64,
+        grid_level_id: Option<u64>,
+    ) -> TradingResult<String> {
+        if let Some(level) = grid_level_id {
+            info!("📐 Grid level {} triggered {:?} @ ${:.4}", level, side, price);
+        }
+        self.execute_trade(side, price, size).await
+    }
+
+    /// Jupiter swaps are atomic — there are no pending orders to cancel.
+    /// Returns Ok(()) and logs a warning for observability.
+    async fn cancel_order(&self, order_id: &str) -> TradingResult<()> {
+        log::warn!(
+            "⚠️  cancel_order('{}') on RealTradingEngine — \
+             Jupiter swaps are atomic; nothing to cancel",
+            order_id
+        );
+        Ok(())
+    }
+
+    /// Jupiter swaps are atomic — always returns 0 orders cancelled.
+    async fn cancel_all_orders(&self) -> TradingResult<usize> {
+        log::warn!(
+            "⚠️  cancel_all_orders() on RealTradingEngine — \
+             Jupiter swaps are atomic; 0 orders cancelled"
+        );
+        Ok(0)
+    }
+
+    /// Reconcile expected balances against circuit breaker thresholds.
+    /// Returns empty vec: no pending fills to surface for a real engine.
+    async fn process_price_update(&self, current_price: f64) -> TradingResult<Vec<String>> {
+        self.reconcile_balances(current_price).await?;
+        Ok(vec![])
+    }
+
+    /// Jupiter swaps are atomic — there are never open orders in flight.
+    async fn open_order_count(&self) -> usize {
+        0
+    }
+
+    /// Returns false if either the emergency shutdown flag is set
+    /// or the circuit breaker has tripped.
+    async fn is_trading_allowed(&self) -> bool {
+        if self.emergency_shutdown.load(Ordering::SeqCst) {
+            return false;
+        }
+        self.circuit_breaker.read().await.is_trading_allowed()
+    }
+
+    /// Override the trait default to correctly trip the circuit breaker
+    /// and set the atomic halt flag (not just cancel_all_orders).
+    async fn emergency_shutdown(&self, reason: &str) -> TradingResult<()> {
+        self.trigger_emergency_shutdown(reason).await
     }
 }
 

@@ -1,7 +1,7 @@
 //! ═══════════════════════════════════════════════════════════════════════════
-//! PAPER TRADING ENGINE V3.0 - Risk-Free Strategy Testing
+//! PAPER TRADING ENGINE V3.1 - Risk-Free Strategy Testing
 //! Production-Ready | Enhanced | Optimized | Modular
-//! October 16, 2025
+//! October 16, 2025 — V3.1 February 2026 (TradingEngine trait impl)
 //! ═══════════════════════════════════════════════════════════════════════════
 //!
 //! Features:
@@ -14,13 +14,17 @@
 //! ✅ Slippage and fee simulation
 //! ✅ Thread-safe with async support
 //! ✅ Builder pattern for configuration
+//! ✅ V3.1: impl TradingEngine — satisfies Arc<dyn TradingEngine>
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use serde::{Serialize, Deserialize};
 use anyhow::{Result, bail};
+use async_trait::async_trait;
 use log::{info, debug, warn};
+
+use super::{TradingEngine, TradingResult};
 
 // ═══════════════════════════════════════════════════════════════════════════
 // CONSTANTS
@@ -214,7 +218,7 @@ impl PaperTradingEngine {
     /// * `initial_usdc` - Starting USDC balance
     /// * `initial_sol` - Starting SOL balance
     pub fn new(initial_usdc: f64, initial_sol: f64) -> Self {
-        info!("🎮 Initializing Paper Trading Engine V3.0");
+        info!("🎮 Initializing Paper Trading Engine V3.1");
         
         Self {
             wallet: Arc::new(RwLock::new(VirtualWallet::new(initial_usdc, initial_sol))),
@@ -526,7 +530,61 @@ impl PaperTradingEngine {
     }
 }
 
-// Tests remain the same...
+// ═══════════════════════════════════════════════════════════════════════════
+// UNIFIED TRADING ENGINE TRAIT IMPLEMENTATION (V3.1)
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[async_trait]
+impl TradingEngine for PaperTradingEngine {
+    /// Wraps the inherent place_limit_order(), tagging the returned
+    /// order ID with the grid level for full traceability in logs.
+    async fn place_limit_order_with_level(
+        &self,
+        side: OrderSide,
+        price: f64,
+        size: f64,
+        grid_level_id: Option<u64>,
+    ) -> TradingResult<String> {
+        let order_id = self.place_limit_order(side, price, size).await?;
+        Ok(match grid_level_id {
+            Some(level) => format!("{}-L{}", order_id, level),
+            None => order_id,
+        })
+    }
+
+    /// Delegates to the inherent cancel_order().
+    /// Inherent methods take priority over trait methods in Rust method
+    /// resolution, so this is not recursive.
+    async fn cancel_order(&self, order_id: &str) -> TradingResult<()> {
+        self.cancel_order(order_id).await
+    }
+
+    /// Delegates to the inherent cancel_all_orders().
+    async fn cancel_all_orders(&self) -> TradingResult<usize> {
+        self.cancel_all_orders().await
+    }
+
+    /// Delegates to the inherent process_price_update().
+    /// Runs the paper order book fill simulation and returns filled IDs.
+    async fn process_price_update(&self, current_price: f64) -> TradingResult<Vec<String>> {
+        self.process_price_update(current_price).await
+    }
+
+    /// Delegates to the inherent open_order_count().
+    async fn open_order_count(&self) -> usize {
+        self.open_order_count().await
+    }
+
+    /// Paper mode is always allowed — no circuit breaker.
+    async fn is_trading_allowed(&self) -> bool {
+        true
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// TESTS
+// ═══════════════════════════════════════════════════════════════════════════
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -543,5 +601,25 @@ mod tests {
         let engine = PaperTradingEngine::new(10000.0, 0.0);
         let result = engine.place_limit_order(OrderSide::Buy, 100.0, 10.0).await;
         assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_trading_engine_trait_paper() {
+        let engine = PaperTradingEngine::new(10000.0, 1.0);
+        // is_trading_allowed always true for paper
+        assert!(engine.is_trading_allowed().await);
+        // open_order_count starts at 0
+        assert_eq!(engine.open_order_count().await, 0);
+        // place via trait — should embed level tag
+        let result = engine
+            .place_limit_order_with_level(OrderSide::Buy, 80.0, 0.1, Some(3))
+            .await;
+        assert!(result.is_ok());
+        let order_id = result.unwrap();
+        assert!(order_id.ends_with("-L3"), "Expected level tag in ID: {}", order_id);
+        assert_eq!(engine.open_order_count().await, 1);
+        // cancel via trait
+        assert!(engine.cancel_order(&order_id).await.is_ok());
+        assert_eq!(engine.open_order_count().await, 0);
     }
 }
