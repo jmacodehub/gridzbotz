@@ -530,11 +530,12 @@ impl TradingEngine for RealTradingEngine {
 
     /// Returns false if either the emergency shutdown flag is set
     /// or the circuit breaker has tripped.
+    /// Uses write() because CircuitBreaker::is_trading_allowed takes &mut self.
     async fn is_trading_allowed(&self) -> bool {
         if self.emergency_shutdown.load(Ordering::SeqCst) {
             return false;
         }
-        self.circuit_breaker.read().await.is_trading_allowed()
+        self.circuit_breaker.write().await.is_trading_allowed()
     }
 
     /// Override the trait default to correctly trip the circuit breaker
