@@ -293,13 +293,24 @@ impl PaperTradingEngine {
         Ok(order_id)
     }
     
-    /// Cancel an order
+    /// Cancel an order by ID.
+    ///
+    /// Accepts both plain IDs ("ORDER-000001") and level-tagged IDs
+    /// ("ORDER-000001-L3") produced by place_limit_order_with_level.
+    /// The "-L<N>" suffix is stripped before the HashMap lookup so
+    /// callers do not need to track which format they hold.
     pub async fn cancel_order(&self, order_id: &str) -> Result<()> {
+        // Strip optional "-L<digits>" suffix (e.g. ORDER-000001-L3 -> ORDER-000001)
+        let base_id = order_id
+            .rsplit_once("-L")
+            .filter(|(_, suffix)| !suffix.is_empty() && suffix.chars().all(|c| c.is_ascii_digit()))
+            .map(|(base, _)| base)
+            .unwrap_or(order_id);
+
         let mut orders = self.open_orders.write().await;
-        
-        if let Some(mut order) = orders.remove(order_id) {
+        if let Some(mut order) = orders.remove(base_id) {
             order.status = OrderStatus::Cancelled;
-            debug!("❌ Cancelled order: {}", order_id);
+            debug!("❌ Cancelled order: {}", base_id);
             Ok(())
         } else {
             bail!("Order not found: {}", order_id);
@@ -538,10 +549,6 @@ impl PaperTradingEngine {
 impl TradingEngine for PaperTradingEngine {
     /// Wraps the inherent place_limit_order(), tagging the returned
     /// order ID with the grid level for full traceability in logs.
-    ///
-    /// NOTE: The base order ID (without the "-L<N>" suffix) is what
-    /// is stored as the key in open_orders. Cancel calls must strip
-    /// the suffix before lookup — see cancel_order() below.
     async fn place_limit_order_with_level(
         &self,
         side: OrderSide,
@@ -556,20 +563,11 @@ impl TradingEngine for PaperTradingEngine {
         })
     }
 
-    /// Delegates to the inherent cancel_order(), stripping any "-L<N>"
-    /// grid-level suffix first so the lookup maps to the stored base ID.
-    ///
-    /// Example: "ORDER-000001-L3" -> looks up "ORDER-000001" in open_orders.
-    ///
+    /// Delegates to the inherent cancel_order().
+    /// The inherent method handles both plain and level-tagged IDs.
     /// Inherent methods take priority in Rust method resolution — not recursive.
     async fn cancel_order(&self, order_id: &str) -> TradingResult<()> {
-        // Strip optional "-L<digits>" suffix added by place_limit_order_with_level
-        let base_id = order_id
-            .rsplit_once("-L")
-            .filter(|(_, suffix)| !suffix.is_empty() && suffix.chars().all(|c| c.is_ascii_digit()))
-            .map(|(base, _)| base)
-            .unwrap_or(order_id);
-        self.cancel_order(base_id).await
+        self.cancel_order(order_id).await
     }
 
     /// Delegates to the inherent cancel_all_orders().
@@ -631,7 +629,7 @@ mod tests {
         let order_id = result.unwrap();
         assert!(order_id.ends_with("-L3"), "Expected level tag in ID: {}", order_id);
         assert_eq!(engine.open_order_count().await, 1);
-        // cancel via trait: ORDER-000001-L3 strips to ORDER-000001 for lookup
+        // cancel via inherent (strips -L3 suffix to find base ORDER-000001)
         assert!(engine.cancel_order(&order_id).await.is_ok());
         assert_eq!(engine.open_order_count().await, 0);
     }
