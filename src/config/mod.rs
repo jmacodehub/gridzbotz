@@ -1,7 +1,18 @@
 //! ═══════════════════════════════════════════════════════════════════════════
-//! 🎛️ UNIFIED CONFIGURATION SYSTEM V4.1 - PROJECT FLASH
+//! 🎛️  UNIFIED CONFIGURATION SYSTEM V5.0 - GRIDZBOTZ
 //!
-//! Single source of truth for ALL bot settings with best practices:
+//! Stage 1: Config Gaps Closed — Execution Mode + Multi-Instance Support
+//!
+//! V5.0 ADDITIONS (Stage 1 — Feb 23, 2026):
+//! ✅ execution_mode: "paper" | "live" — one TOML line to flip paper → live
+//! ✅ instance_id: unique bot identifier for multi-instance runs (1-5 bots)
+//! ✅ ExecutionConfig: all live Jupiter/RPC execution knobs exposed to TOML
+//!    - max_trade_sol, priority_fee_microlamports, max_slippage_bps
+//!    - jito_tip_lamports (optional MEV protection)
+//!    - rpc_fallback_urls, confirmation_timeout_secs, max_retries
+//! ✅ BotConfig::is_live() / is_paper() / instance_name() helpers
+//! ✅ ExecutionConfig::slippage_pct() / jito_enabled() helpers
+//! ✅ Execution validation only runs when mode = "live" (safe for paper)
 //!
 //! V4.1 ENHANCEMENTS - RegimeGate Analytics Bridge:
 //! ✅ RegimeGateConfig for analytics module compatibility
@@ -19,13 +30,13 @@
 //! ✅ Zero Hardcoded Values - 100% Configurable
 //!
 //! Architecture:
-//! • `Config` - Main TOML-based configuration
+//! • `Config`        - Main TOML-based configuration
 //! • `ConfigBuilder` - Programmatic builder for tests
 //! • `ConfigPresets` - Pre-configured scenarios (conservative, aggressive, etc.)
 //! • Environment-specific overrides
 //! • Comprehensive validation
 //!
-//! February 7, 2026 - V4.1 ANALYTICS BRIDGE ADDED 🚀
+//! February 23, 2026 - V5.0 STAGE 1: EXECUTION MODE + MULTI-INSTANCE 🚀
 //! ═══════════════════════════════════════════════════════════════════════════
 
 use serde::{Deserialize, Serialize};
@@ -35,7 +46,7 @@ use std::fs;
 use log::{info, warn};
 
 // ═══════════════════════════════════════════════════════════════════════════
-// MAIN CONFIGURATION - The Heart of Project Flash
+// MAIN CONFIGURATION - The Heart of GridzBotz
 // ═══════════════════════════════════════════════════════════════════════════
 
 /// Master Configuration Structure
@@ -58,6 +69,11 @@ pub struct Config {
 
     /// Risk management rules
     pub risk: RiskConfig,
+
+    /// Live execution settings (Jupiter, priority fees, slippage)
+    /// Active when bot.execution_mode = "live"
+    #[serde(default)]
+    pub execution: ExecutionConfig,
 
     /// Price feed configuration
     #[serde(default)]
@@ -94,15 +110,27 @@ pub struct Config {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct BotConfig {
-    /// Bot name (e.g., "GridBot-Master-v3")
+    /// Bot name (e.g., "GridzBot-Live-1")
     pub name: String,
 
-    /// Bot version (e.g., "3.5.0")
+    /// Bot version (e.g., "5.0.0")
     pub version: String,
 
     /// Environment: "testing", "development", "production"
     /// This controls safety features and default behaviors
     pub environment: String,
+
+    /// Execution mode: "paper" | "live"
+    /// Routes to PaperTradingEngine or RealTradingEngine at startup.
+    /// Change to "live" when ready to trade real funds on-chain.
+    #[serde(default = "default_paper_mode")]
+    pub execution_mode: String,
+
+    /// Unique instance identifier for multi-bot runs.
+    /// e.g., "live-aggressive", "test-shadow-A", "bot-conservative-1"
+    /// Used as log prefix and metrics label. Defaults to bot.name if not set.
+    #[serde(default)]
+    pub instance_id: Option<String>,
 }
 
 impl BotConfig {
@@ -116,6 +144,46 @@ impl BotConfig {
 
     pub fn is_development(&self) -> bool {
         self.environment == "development"
+    }
+
+    /// Returns true if this instance is trading live (real Jupiter swaps on-chain)
+    pub fn is_live(&self) -> bool {
+        self.execution_mode == "live"
+    }
+
+    /// Returns true if this instance is in paper/simulation mode
+    pub fn is_paper(&self) -> bool {
+        self.execution_mode != "live"
+    }
+
+    /// Returns the instance name for log prefixes and metrics labels.
+    /// Uses instance_id if set, falls back to bot name.
+    pub fn instance_name(&self) -> &str {
+        self.instance_id.as_deref().unwrap_or(&self.name)
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        if self.name.is_empty() {
+            bail!("Bot name cannot be empty");
+        }
+        if self.version.is_empty() {
+            bail!("Bot version cannot be empty");
+        }
+        let valid_modes = ["paper", "live"];
+        if !valid_modes.contains(&self.execution_mode.as_str()) {
+            bail!(
+                "Invalid execution_mode '{}'. Must be one of: {:?}",
+                self.execution_mode, valid_modes
+            );
+        }
+        if self.execution_mode == "live" && self.environment != "production" {
+            warn!(
+                "⚠️ execution_mode=live but environment={}. \
+                 Set environment=\"production\" for full safety enforcement.",
+                self.environment
+            );
+        }
+        Ok(())
     }
 }
 
@@ -158,6 +226,122 @@ impl NetworkConfig {
         }
 
         Ok(())
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 🆕 V5.0: EXECUTION CONFIGURATION (Stage 1)
+// All live trading execution knobs — now 100% TOML-driven
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Live execution configuration for Jupiter swaps on Solana.
+///
+/// These settings are only active when `bot.execution_mode = "live"`.
+/// In paper mode they are parsed but ignored — safe to include in any config.
+///
+/// # Example (config/master.toml)
+/// ```toml
+/// [execution]
+/// max_trade_sol = 0.5
+/// priority_fee_microlamports = 50_000
+/// max_slippage_bps = 100
+/// jito_tip_lamports = 10_000
+/// confirmation_timeout_secs = 60
+/// max_retries = 3
+/// ```
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ExecutionConfig {
+    /// Maximum SOL amount per single Jupiter swap.
+    /// Hard safety cap — no single trade exceeds this regardless of grid sizing.
+    #[serde(default = "default_max_trade_sol")]
+    pub max_trade_sol: f64,
+
+    /// Priority fee in microlamports added to each transaction.
+    /// Higher = faster inclusion, higher cost.
+    /// 50_000 µlamports ≈ 0.00005 SOL per tx at current base fee.
+    #[serde(default = "default_priority_fee_microlamports")]
+    pub priority_fee_microlamports: u64,
+
+    /// Maximum acceptable slippage in basis points (BPS).
+    /// 100 BPS = 1.0%. Jupiter rejects quotes exceeding this.
+    /// Recommended: 50–150 BPS for liquid SOL/USDC pair.
+    #[serde(default = "default_slippage_bps")]
+    pub max_slippage_bps: u16,
+
+    /// Optional Jito bundle tip in lamports (MEV protection).
+    /// Set to Some(10_000) to enable. None = skip Jito entirely.
+    /// Adds ~0.00001 SOL per trade but protects against sandwich attacks.
+    #[serde(default)]
+    pub jito_tip_lamports: Option<u64>,
+
+    /// Optional RPC fallback URLs (tried in order if primary fails).
+    /// Complements network.rpc_url — no need to duplicate primary here.
+    #[serde(default)]
+    pub rpc_fallback_urls: Option<Vec<String>>,
+
+    /// How long to wait for on-chain confirmation (seconds).
+    /// If not confirmed in time, the tx is treated as failed and retried.
+    #[serde(default = "default_confirm_timeout_secs")]
+    pub confirmation_timeout_secs: u64,
+
+    /// Maximum retry attempts per failed transaction.
+    /// Uses exponential backoff between retries.
+    #[serde(default = "default_max_tx_retries")]
+    pub max_retries: u8,
+}
+
+impl Default for ExecutionConfig {
+    fn default() -> Self {
+        Self {
+            max_trade_sol: default_max_trade_sol(),
+            priority_fee_microlamports: default_priority_fee_microlamports(),
+            max_slippage_bps: default_slippage_bps(),
+            jito_tip_lamports: None,
+            rpc_fallback_urls: None,
+            confirmation_timeout_secs: default_confirm_timeout_secs(),
+            max_retries: default_max_tx_retries(),
+        }
+    }
+}
+
+impl ExecutionConfig {
+    pub fn validate(&self) -> Result<()> {
+        if self.max_trade_sol <= 0.0 {
+            bail!("execution.max_trade_sol must be positive");
+        }
+        if self.max_trade_sol > 100.0 {
+            warn!(
+                "⚠️ execution.max_trade_sol ({:.2}) is very large — \
+                 double-check capital allocation",
+                self.max_trade_sol
+            );
+        }
+        if self.max_slippage_bps == 0 {
+            bail!("execution.max_slippage_bps cannot be 0 — Jupiter requires > 0 BPS");
+        }
+        if self.max_slippage_bps > 500 {
+            warn!(
+                "⚠️ execution.max_slippage_bps ({}) > 5% — very high slippage tolerance!",
+                self.max_slippage_bps
+            );
+        }
+        if self.confirmation_timeout_secs == 0 {
+            bail!("execution.confirmation_timeout_secs must be > 0");
+        }
+        if self.max_retries == 0 {
+            warn!("⚠️ execution.max_retries = 0 — failed txs will NOT be retried");
+        }
+        Ok(())
+    }
+
+    /// Convert BPS slippage to percentage (e.g., 100 BPS → 1.0%)
+    pub fn slippage_pct(&self) -> f64 {
+        self.max_slippage_bps as f64 / 100.0
+    }
+
+    /// Returns true if Jito MEV protection is enabled
+    pub fn jito_enabled(&self) -> bool {
+        self.jito_tip_lamports.is_some()
     }
 }
 
@@ -986,6 +1170,7 @@ pub struct AlertsConfig {
 // DEFAULT VALUE HELPERS
 // ═══════════════════════════════════════════════════════════════════════════
 
+// --- Existing defaults ---
 fn default_true() -> bool { true }
 fn default_confidence() -> f64 { 0.5 }
 fn default_reposition_threshold() -> f64 { 0.5 }
@@ -1010,8 +1195,16 @@ fn default_initial_usdc() -> f64 { 5000.0 }
 fn default_initial_sol() -> f64 { 10.0 }
 fn default_request_timeout() -> u64 { 5000 }
 
+// --- V5.0 Stage 1: Execution defaults ---
+fn default_paper_mode() -> String { "paper".to_string() }
+fn default_max_trade_sol() -> f64 { 0.5 }
+fn default_priority_fee_microlamports() -> u64 { 50_000 }
+fn default_slippage_bps() -> u16 { 100 }
+fn default_confirm_timeout_secs() -> u64 { 60 }
+fn default_max_tx_retries() -> u8 { 3 }
+
 // ═══════════════════════════════════════════════════════════════════════════
-// MAIN CONFIG IMPLEMENTATION - V4.1 PRODUCTION GRADE! 🚀
+// MAIN CONFIG IMPLEMENTATION - V5.0 PRODUCTION GRADE! 🚀
 // ═══════════════════════════════════════════════════════════════════════════
 
 impl Config {
@@ -1067,13 +1260,9 @@ impl Config {
 
     /// Comprehensive validation
     pub fn validate(&self) -> Result<()> {
-        // Bot validation
-        if self.bot.name.is_empty() {
-            bail!("Bot name cannot be empty");
-        }
-        if self.bot.version.is_empty() {
-            bail!("Bot version cannot be empty");
-        }
+        // Bot validation (includes execution_mode check)
+        self.bot.validate()
+            .context("Bot config validation failed")?;
 
         // Network validation
         self.network.validate()
@@ -1091,6 +1280,22 @@ impl Config {
         self.risk.validate()
             .context("Risk config validation failed")?;
 
+        // Execution validation — only required when mode = "live"
+        if self.bot.is_live() {
+            info!("🔴 LIVE MODE DETECTED — validating execution config");
+            self.execution.validate()
+                .context("Execution config validation failed")?;
+
+            // Extra safety: live mode requires production environment
+            if self.network.cluster != "mainnet-beta" {
+                warn!(
+                    "⚠️ execution_mode=live but cluster={}. \
+                     Are you sure you want to trade live on {}?",
+                    self.network.cluster, self.network.cluster
+                );
+            }
+        }
+
         // Paper trading validation
         self.paper_trading.validate()
             .context("Paper trading config validation failed")?;
@@ -1104,11 +1309,34 @@ impl Config {
         let border = "═".repeat(78);
 
         println!("\n{}", border);
-        println!("  🤖 PROJECT FLASH V4.1 - CONFIGURATION");
+        println!("  🤖 GRIDZBOTZ V5.0 - CONFIGURATION");
         println!("{}\n", border);
 
         println!("📋 BOT: {} v{} [{}]",
             self.bot.name, self.bot.version, self.bot.environment);
+        println!("   Instance:         {}", self.bot.instance_name());
+
+        println!("\n⚡ EXECUTION:");
+        let mode_emoji = if self.bot.is_live() { "🔴 LIVE" } else { "🟡 PAPER" };
+        println!("   Mode:             {}", mode_emoji);
+        if self.bot.is_live() {
+            println!("   Max Trade:        {:.3} SOL", self.execution.max_trade_sol);
+            println!("   Priority Fee:     {} µlamports", self.execution.priority_fee_microlamports);
+            println!("   Slippage:         {} BPS ({:.1}%)",
+                self.execution.max_slippage_bps, self.execution.slippage_pct());
+            println!("   Jito MEV:         {}",
+                if self.execution.jito_enabled() {
+                    format!("✅ {} lamports",
+                        self.execution.jito_tip_lamports.unwrap_or(0))
+                } else {
+                    "❌ disabled".to_string()
+                });
+            println!("   Confirm Timeout:  {}s | Retries: {}",
+                self.execution.confirmation_timeout_secs, self.execution.max_retries);
+        } else {
+            println!("   Paper Balance:    ${:.0} USDC + {:.1} SOL",
+                self.paper_trading.initial_usdc, self.paper_trading.initial_sol);
+        }
 
         println!("\n📈 TRADING:");
         println!("   Grid:             {} levels @ {:.3}%",
@@ -1169,9 +1397,11 @@ impl ConfigBuilder {
         Self {
             config: Config {
                 bot: BotConfig {
-                    name: "GridBot-Builder".to_string(),
-                    version: "4.1.0".to_string(),
+                    name: "GridzBot-Builder".to_string(),
+                    version: "5.0.0".to_string(),
                     environment: "testing".to_string(),
+                    execution_mode: "paper".to_string(),
+                    instance_id: None,
                 },
                 network: NetworkConfig {
                     cluster: "devnet".to_string(),
@@ -1222,6 +1452,7 @@ impl ConfigBuilder {
                     circuit_breaker_threshold_pct: 8.0,
                     circuit_breaker_cooldown_secs: 300,
                 },
+                execution: ExecutionConfig::default(),
                 pyth: PythConfig::default(),
                 performance: PerformanceConfig::default(),
                 logging: LoggingConfig::default(),
@@ -1235,6 +1466,18 @@ impl ConfigBuilder {
 
     pub fn environment(mut self, env: &str) -> Self {
         self.config.bot.environment = env.to_string();
+        self
+    }
+
+    /// Set execution mode: "paper" or "live"
+    pub fn execution_mode(mut self, mode: &str) -> Self {
+        self.config.bot.execution_mode = mode.to_string();
+        self
+    }
+
+    /// Set instance ID for multi-bot runs
+    pub fn instance_id(mut self, id: &str) -> Self {
+        self.config.bot.instance_id = Some(id.to_string());
         self
     }
 

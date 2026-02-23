@@ -1,17 +1,35 @@
 # ═══════════════════════════════════════════════════════════════
-#  🏆 MASTER V3.1 - BULLETPROOF MODULAR CONFIGURATION
-#  Production-grade: Flexible, Validated, Environment-aware
+#  🏆 MASTER V5.0 - GRIDZBOTZ — STAGE 1: CONFIG GAPS CLOSED
+#
+#  ✅ execution_mode: flip "paper" → "live" to go live on-chain
+#  ✅ instance_id: unique label for multi-bot log/metrics
+#  ✅ [execution]: all Jupiter/RPC live trading knobs in TOML
+#
+#  Multi-bot dry-run example:
+#  cargo run --bin grid_bot -- --config config/optimized/conservative-v4.1.toml
+#  cargo run --bin grid_bot -- --config config/optimized/multi-v5-ai.toml
 # ═══════════════════════════════════════════════════════════════
 
-test_name = "Master V3.1 - Production Grade Modular"
+test_name = "Master V5.0 - Stage 1 Config Gaps Closed"
 
 # ═══════════════════════════════════════════════════════════════
 #  🤖 BOT CORE
 # ═══════════════════════════════════════════════════════════════
 [bot]
-name = "GridBot-Master-v3.1"
-version = "3.1.0"
+name = "GridzBot-Master"
+version = "5.0.0"
 environment = "testing"              # testing | development | production
+
+# 🔑 EXECUTION MODE — The most important knob:
+# "paper" → PaperTradingEngine (simulation, no real funds)
+# "live"  → RealTradingEngine  (real Jupiter swaps on-chain)
+# Change to "live" + environment="production" when ready to go live!
+execution_mode = "paper"
+
+# Unique instance name — shows up in all logs and metrics.
+# Use different IDs when running multiple bots simultaneously.
+# e.g., "live-aggressive", "paper-shadow", "conservative-1"
+instance_id = "master-paper-1"
 
 # ═══════════════════════════════════════════════════════════════
 #  🌐 NETWORK
@@ -20,6 +38,43 @@ environment = "testing"              # testing | development | production
 cluster = "devnet"
 rpc_url = "https://api.devnet.solana.com"
 commitment = "confirmed"
+
+# For mainnet live trading, use:
+# cluster = "mainnet-beta"
+# rpc_url = "${CHAINSTACK_RPC_URL}"    # Set via .env file
+
+# ═══════════════════════════════════════════════════════════════
+#  ⚡ EXECUTION (Live Trading Knobs)
+#  Only active when execution_mode = "live"
+#  Safe to leave in any config — ignored in paper mode
+# ═══════════════════════════════════════════════════════════════
+[execution]
+# Hard cap per single Jupiter swap (SOL)
+# Protects against runaway position sizing bugs
+max_trade_sol = 0.5
+
+# Priority fee in microlamports (added to each tx for faster inclusion)
+# 50_000 µlamports ≈ 0.00005 SOL at current base fee
+# Increase during high network congestion
+priority_fee_microlamports = 50000
+
+# Max acceptable slippage in BPS (100 = 1.0%)
+# Jupiter rejects quotes exceeding this
+# SOL/USDC is liquid — 50-150 BPS is typical
+max_slippage_bps = 100
+
+# Optional Jito MEV protection tip (lamports)
+# Uncomment to enable sandwich attack protection
+# jito_tip_lamports = 10000
+
+# Optional RPC fallback URLs (tried if primary fails)
+# rpc_fallback_urls = ["https://api.mainnet-beta.solana.com"]
+
+# How long to wait for on-chain confirmation before treating as failed
+confirmation_timeout_secs = 60
+
+# Retry attempts per failed transaction (exponential backoff)
+max_retries = 3
 
 # ═══════════════════════════════════════════════════════════════
 #  💰 PAPER TRADING (Multiple duration options!)
@@ -32,13 +87,13 @@ initial_sol = 10.0
 # Method 1: Hours (integer only)
 test_duration_hours = 1
 
-# Method 2: Minutes (more flexible) - Uncomment to use
+# Method 2: Minutes (more flexible) — Uncomment to use
 # test_duration_minutes = 5
 
-# Method 3: Seconds (precise control) - Uncomment to use
+# Method 3: Seconds (precise control) — Uncomment to use
 # test_duration_seconds = 300
 
-# Method 4: Exact cycles (expert mode) - Uncomment to use
+# Method 4: Exact cycles (expert mode) — Uncomment to use
 # test_cycles = 3000
 
 # ═══════════════════════════════════════════════════════════════
@@ -68,7 +123,7 @@ order_max_age_minutes = 10
 order_refresh_interval_minutes = 5
 min_orders_to_maintain = 8
 
-# 🔥 REGIME GATE - PROPERLY CONFIGURED!
+# 🔥 REGIME GATE — PROPERLY CONFIGURED!
 # Set enable_regime_gate = false for testing/demos
 # Set to true for production with min_volatility_to_trade = 0.3
 enable_regime_gate = false           # 🔥 DISABLED for demos
@@ -139,7 +194,7 @@ feed_ids = ["0xef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d"
 update_interval_ms = 500
 
 # ═══════════════════════════════════════════════════════════════
-#  ⚙️ PERFORMANCE
+#  ⚙️  PERFORMANCE
 # ═══════════════════════════════════════════════════════════════
 [performance]
 cycle_interval_ms = 100
@@ -150,7 +205,7 @@ startup_delay_ms = 1000
 # ═══════════════════════════════════════════════════════════════
 [logging]
 level = "info"
-file_path = "logs/master_v3.1.log"
+file_path = "logs/master_v5.0.log"
 enable_file_logging = true
 
 # ═══════════════════════════════════════════════════════════════
