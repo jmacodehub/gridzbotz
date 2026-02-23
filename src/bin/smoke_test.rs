@@ -8,14 +8,18 @@
 //!   [4] Keystore sign (fee-payer identity verified)
 //!   [5] Submit to mainnet  <- only with --submit flag
 //!
-//! SETUP:
-//!   export JUPITER_API_KEY=your_key_from_portal.jup.ag
+//! SETUP - create a .env file at project root:
+//!   cp .env.example .env
+//!   # then fill in JUPITER_API_KEY and RPC_URL
 //!
-//! USAGE - Dry run (zero risk):
+//! USAGE - Dry run (zero risk, reads .env automatically):
 //!   cargo run --bin smoke_test -- --keypair ~/.config/solana/id.json
 //!
 //! Live submit (0.001 SOL -> USDC, ~$0.08):
 //!   cargo run --bin smoke_test -- --keypair ... --submit
+//!
+//! Override RPC inline (ignores .env RPC_URL):
+//!   cargo run --bin smoke_test -- --keypair ... --rpc https://... --submit
 //!
 //! February 2026 | Project Flash V6.0
 //! =============================================================================
@@ -42,8 +46,8 @@ struct Args {
     #[clap(short, long, default_value = "~/.config/solana/id.json")]
     keypair: String,
 
-    /// Mainnet RPC URL
-    #[clap(short, long, default_value = "https://api.mainnet-beta.solana.com")]
+    /// Mainnet RPC URL. Reads RPC_URL from .env if not specified.
+    #[clap(short, long, env = "RPC_URL", default_value = "https://api.mainnet-beta.solana.com")]
     rpc: String,
 
     /// Jupiter API key (overrides JUPITER_API_KEY env var).
@@ -63,6 +67,9 @@ struct Args {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Load .env file from project root (silently ok if missing)
+    dotenv::dotenv().ok();
+
     env_logger::Builder::from_default_env()
         .filter_level(log::LevelFilter::Info)
         .format_timestamp_millis()
@@ -84,7 +91,13 @@ async fn main() -> Result<()> {
         }
     );
     println!("  Keypair:  {}", args.keypair);
-    println!("  RPC:      {}", &args.rpc[..args.rpc.len().min(60)]);
+    // Mask the RPC key in output (show first 40 chars only)
+    let rpc_display = if args.rpc.len() > 40 {
+        format!("{}...[key]", &args.rpc[..40])
+    } else {
+        args.rpc.clone()
+    };
+    println!("  RPC:      {}", rpc_display);
     println!("  Jup API:  {} | auth: {}",
         JupiterConfig::default().api_url,
         if args.jup_key.is_some() { "key configured" } else { "NO KEY - set JUPITER_API_KEY" }
@@ -209,7 +222,7 @@ async fn main() -> Result<()> {
 
     println!();
     println!("  ╔═══════════════════════════════════════════════════════════╗");
-    println!("  ║  FIRST REAL GRIDZBOTZ SWAP -- MAINNET CONFIRMED!         ║");
+    println!("  ║  🎉 FIRST REAL GRIDZBOTZ SWAP — MAINNET CONFIRMED! 🎉    ║");
     println!("  ╚═══════════════════════════════════════════════════════════╝");
     println!();
     println!("  Signature:    {}", sig);
