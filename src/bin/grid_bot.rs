@@ -39,8 +39,11 @@ use tokio::time::{sleep, Duration, Instant};
 /// Calculates N evenly-spaced price levels between `lower` and `upper`.
 /// On each `tick(price)`, returns a Buy/Sell/Hold signal based on
 /// whether price crossed a grid level since the last tick.
+///
+/// GridEngine is the single source of truth for order sizing —
+/// order_size_sol is embedded in every Buy/Sell signal it emits.
 struct GridEngine {
-    level_prices: Vec<f64>,  // e.g. [$60, $70, $80, ..., $120]
+    level_prices: Vec<f64>,
     order_size_sol: f64,
     last_level: Option<usize>,
     trades_signaled: u64,
@@ -49,9 +52,9 @@ struct GridEngine {
 #[derive(Debug)]
 enum GridSignal {
     /// Price crossed DOWN through a level — buy SOL (it got cheaper)
-    Buy { level: usize, level_price: f64 },
+    Buy { level: usize, level_price: f64, order_size_sol: f64 },
     /// Price crossed UP through a level — sell SOL (it got more expensive)
-    Sell { level: usize, level_price: f64 },
+    Sell { level: usize, level_price: f64, order_size_sol: f64 },
     Hold,
 }
 
@@ -73,12 +76,7 @@ impl GridEngine {
             info!("   Level {:>2}: ${:.4}", i, p);
         }
 
-        Self {
-            level_prices,
-            order_size_sol,
-            last_level: None,
-            trades_signaled: 0,
-        }
+        Self { level_prices, order_size_sol, last_level: None, trades_signaled: 0 }
     }
 
     /// Index of the highest level at or below `price`.
@@ -98,6 +96,7 @@ impl GridEngine {
                 GridSignal::Buy {
                     level: curr,
                     level_price: self.level_prices[curr],
+                    order_size_sol: self.order_size_sol,
                 }
             }
             (Some(prev), Some(curr)) if curr > prev => {
@@ -105,6 +104,7 @@ impl GridEngine {
                 GridSignal::Sell {
                     level: curr,
                     level_price: self.level_prices[curr],
+                    order_size_sol: self.order_size_sol,
                 }
             }
             _ => GridSignal::Hold,
@@ -228,7 +228,6 @@ async fn try_swap(
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Load .env from project root silently
     dotenv::dotenv().ok();
 
     env_logger::Builder::from_default_env()
@@ -257,7 +256,7 @@ async fn main() -> Result<()> {
         sleep(Duration::from_secs(3)).await;
     }
 
-    // ── Keystore ────────────────────────────────────────────────────────
+    // ── Keystore ──────────────────────────────────────────────────────
     let keystore = SecureKeystore::from_file(KeystoreConfig {
         keypair_path: args.keypair.clone(),
         max_transaction_amount_usdc: Some(500.0),
@@ -267,7 +266,7 @@ async fn main() -> Result<()> {
     let user_pubkey = *keystore.pubkey();
     info!("🔐 Wallet: {}", user_pubkey);
 
-    // ── Price Feed ─────────────────────────────────────────────────────
+    // ── Price Feed ────────────────────────────────────────────────────
     let feed = PriceFeed::new(20);
     feed.start().await.map_err(|e| anyhow::anyhow!("Price feed failed: {}", e))?;
     sleep(Duration::from_millis(1500)).await;
@@ -277,7 +276,7 @@ async fn main() -> Result<()> {
     }
     info!("📡 Pyth feed live: SOL = ${:.4}", initial_price);
 
-    // ── Jupiter ────────────────────────────────────────────────────────
+    // ── Jupiter ───────────────────────────────────────────────────────
     let mut jup_config = JupiterConfig::default();
     if let Some(ref key) = args.jup_key {
         jup_config.api_key = Some(key.clone());
@@ -295,36 +294,31 @@ async fn main() -> Result<()> {
         }
     };
 
-    // ── RPC ────────────────────────────────────────────────────────────
+    // ── RPC ───────────────────────────────────────────────────────────
     let rpc = RpcClient::new(args.rpc.clone());
 
-    // ── Grid Engine ────────────────────────────────────────────────────
+    // ── Grid Engine ───────────────────────────────────────────────────
     let mut grid = GridEngine::new(args.lower, args.upper, args.levels, args.order_size);
-
-    // Prime with initial price — no signal fired on first tick
-    grid.tick(initial_price);
+    grid.tick(initial_price); // prime — no signal on first tick
     info!("✅ Grid primed at ${:.4}", initial_price);
 
-    // ── Check wallet has funds for USDC→SOL buys ───────────────────────
     if !args.dry_run {
-        info!("💡 Note: BUY orders require USDC in your wallet. SELL orders require SOL.");
-        info!("   Wallet: {}", user_pubkey);
+        info!("💡 BUY orders spend USDC. SELL orders spend SOL. Ensure both are funded.");
     }
 
-    // ── Trading Loop ────────────────────────────────────────────────────
+    // ── Trading Loop ──────────────────────────────────────────────────
     info!("🚀 Grid loop started — Ctrl+C to stop gracefully");
     println!();
 
     let mut tick: u64 = 0;
-    let mut last_trade = Instant::now() - Duration::from_secs(60); // allow trade immediately
+    let mut last_trade = Instant::now() - Duration::from_secs(60);
 
     loop {
         tokio::select! {
             _ = tokio::signal::ctrl_c() => {
                 info!("");
                 info!("⛔ Shutting down gracefully...");
-                info!("📊 Session summary: {} signals generated in {} ticks",
-                      grid.trades_signaled(), tick);
+                info!("📊 Session summary: {} signals in {} ticks", grid.trades_signaled(), tick);
                 break;
             }
 
@@ -333,36 +327,35 @@ async fn main() -> Result<()> {
 
                 let price = feed.latest_price().await;
                 if price <= 0.0 {
-                    warn!("Tick {}: invalid price from feed — skipping", tick);
+                    warn!("Tick {}: invalid price — skipping", tick);
                     continue;
                 }
 
                 // Heartbeat every 30s
                 if tick % 30 == 0 {
-                    let cooldown_remaining = Duration::from_secs(5)
-                        .saturating_sub(last_trade.elapsed());
-                    let status = if cooldown_remaining.is_zero() { "READY".to_string() }
-                        else { format!("cooldown {}s", cooldown_remaining.as_secs()) };
+                    let status = if last_trade.elapsed() >= Duration::from_secs(5) {
+                        "READY".to_string()
+                    } else {
+                        format!("cooldown {}s", Duration::from_secs(5)
+                            .saturating_sub(last_trade.elapsed()).as_secs())
+                    };
                     info!("💓 Tick {:>5} | SOL ${:.4} | Signals: {:>3} | {}",
                           tick, price, grid.trades_signaled(), status);
                 }
 
                 let signal = grid.tick(price);
-
-                // Minimum 5s cooldown between live swaps to prevent spam
                 let in_cooldown = last_trade.elapsed() < Duration::from_secs(5);
 
                 match signal {
-                    // ── BUY: price crossed DOWN → buy SOL with USDC ────
-                    GridSignal::Buy { level, level_price } => {
-                        // Convert SOL order size to USDC amount (6 decimals)
-                        let usdc_amount = (args.order_size * price * 1_000_000.0) as u64;
+                    // ── BUY: price crossed DOWN → buy SOL with USDC ──
+                    GridSignal::Buy { level, level_price, order_size_sol } => {
+                        let usdc_amount = (order_size_sol * price * 1_000_000.0) as u64;
                         info!("🟢 BUY  | Level {:>2} (${:.2}) | SOL ${:.4} | {:.4} USDC → SOL",
-                              level, level_price, price, args.order_size * price);
+                              level, level_price, price, order_size_sol * price);
 
                         if args.dry_run {
                             info!("   [DRY RUN] Would swap {} µUSDC → ~{} SOL",
-                                  usdc_amount, args.order_size);
+                                  usdc_amount, order_size_sol);
                         } else if in_cooldown {
                             warn!("   ⏳ Cooldown active — signal noted, swap skipped");
                         } else {
@@ -380,11 +373,11 @@ async fn main() -> Result<()> {
                         }
                     }
 
-                    // ── SELL: price crossed UP → sell SOL for USDC ─────
-                    GridSignal::Sell { level, level_price } => {
-                        let lamports = (args.order_size * 1_000_000_000.0) as u64;
+                    // ── SELL: price crossed UP → sell SOL for USDC ───
+                    GridSignal::Sell { level, level_price, order_size_sol } => {
+                        let lamports = (order_size_sol * 1_000_000_000.0) as u64;
                         info!("🔴 SELL | Level {:>2} (${:.2}) | SOL ${:.4} | {:.4} SOL → USDC",
-                              level, level_price, price, args.order_size);
+                              level, level_price, price, order_size_sol);
 
                         if args.dry_run {
                             info!("   [DRY RUN] Would swap {} lamports SOL → USDC", lamports);
@@ -405,9 +398,7 @@ async fn main() -> Result<()> {
                         }
                     }
 
-                    GridSignal::Hold => {
-                        // Price within same level — expected most of the time
-                    }
+                    GridSignal::Hold => {}
                 }
             }
         }
@@ -441,40 +432,37 @@ mod tests {
     #[test]
     fn test_first_tick_is_hold() {
         let mut grid = make_grid();
-        let sig = grid.tick(78.0);
-        assert!(matches!(sig, GridSignal::Hold), "first tick must always be Hold (priming)");
+        assert!(matches!(grid.tick(78.0), GridSignal::Hold));
     }
 
     #[test]
     fn test_buy_on_downward_crossing() {
         let mut grid = make_grid();
-        grid.tick(85.0); // prime at level 2 (between $80-$90)
+        grid.tick(85.0); // prime between $80-$90
         let sig = grid.tick(65.0); // drop below $70 → BUY
-        assert!(matches!(sig, GridSignal::Buy { .. }), "expected Buy signal");
+        assert!(matches!(sig, GridSignal::Buy { .. }));
     }
 
     #[test]
     fn test_sell_on_upward_crossing() {
         let mut grid = make_grid();
-        grid.tick(65.0); // prime at level 0 (between $60-$70)
+        grid.tick(65.0); // prime between $60-$70
         let sig = grid.tick(85.0); // rise above $80 → SELL
-        assert!(matches!(sig, GridSignal::Sell { .. }), "expected Sell signal");
+        assert!(matches!(sig, GridSignal::Sell { .. }));
     }
 
     #[test]
     fn test_hold_within_same_level() {
         let mut grid = make_grid();
-        grid.tick(82.0); // prime at level 2
-        let sig = grid.tick(87.0); // still between $80-$90 → Hold
-        assert!(matches!(sig, GridSignal::Hold));
+        grid.tick(82.0);
+        assert!(matches!(grid.tick(87.0), GridSignal::Hold));
     }
 
     #[test]
     fn test_price_below_all_levels() {
         let mut grid = make_grid();
-        grid.tick(78.0); // prime at level 1
-        let sig = grid.tick(55.0); // below $60 — no valid level index
-        assert!(matches!(sig, GridSignal::Hold));
+        grid.tick(78.0);
+        assert!(matches!(grid.tick(55.0), GridSignal::Hold));
     }
 
     #[test]
@@ -484,5 +472,17 @@ mod tests {
         grid.tick(65.0); // BUY
         grid.tick(85.0); // SELL
         assert_eq!(grid.trades_signaled(), 2);
+    }
+
+    #[test]
+    fn test_order_size_in_signal() {
+        let mut grid = GridEngine::new(60.0, 120.0, 7, 0.05);
+        grid.tick(85.0);
+        match grid.tick(65.0) {
+            GridSignal::Buy { order_size_sol, .. } => {
+                assert!((order_size_sol - 0.05).abs() < 0.0001);
+            }
+            _ => panic!("expected Buy signal"),
+        }
     }
 }
