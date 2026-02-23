@@ -256,15 +256,18 @@ mod tests {
     /// Canonical test config — must stay in sync with the Config struct.
     /// When new fields are added to Config / BotConfig / etc., add them here
     /// with a sensible default so circuit breaker tests keep compiling.
+    ///
+    /// BotConfig field types (from config/mod.rs):
+    ///   execution_mode: String  ("paper" | "live") — NOT an enum
+    ///   instance_id:    Option<String>             — NOT plain String
     fn test_config() -> Config {
         Config {
             bot: BotConfig {
                 name: "Test".to_string(),
                 version: "1.0".to_string(),
                 environment: "test".to_string(),
-                // Stage 1: execution_mode + instance_id added to BotConfig
-                execution_mode: ExecutionMode::Paper,
-                instance_id: "test-bot".to_string(),
+                execution_mode: "paper".to_string(),
+                instance_id: None,
             },
             network: NetworkConfig {
                 cluster: "devnet".to_string(),
@@ -306,7 +309,6 @@ mod tests {
                 enable_smart_position_sizing: false,
             },
             strategies: StrategiesConfig::default(),
-            // Stage 1: ExecutionConfig added to master Config
             execution: ExecutionConfig::default(),
             risk: RiskConfig {
                 max_position_size_pct: 80.0,
