@@ -121,7 +121,7 @@ impl VirtualWallet {
         balances.insert("USDC".to_string(), initial_usdc);
         balances.insert("SOL".to_string(), initial_sol);
         
-        info!("\u{1f4b0} Virtual wallet initialized: ${:.2} USDC, {:.4} SOL", 
+        info!("💰 Virtual wallet initialized: ${:.2} USDC, {:.4} SOL", 
               initial_usdc, initial_sol);
         
         Self {
@@ -218,7 +218,7 @@ impl PaperTradingEngine {
     /// * `initial_usdc` - Starting USDC balance
     /// * `initial_sol` - Starting SOL balance
     pub fn new(initial_usdc: f64, initial_sol: f64) -> Self {
-        info!("\u{1f3ae} Initializing Paper Trading Engine V3.1");
+        info!("🎮 Initializing Paper Trading Engine V3.1");
         
         Self {
             wallet: Arc::new(RwLock::new(VirtualWallet::new(initial_usdc, initial_sol))),
@@ -235,7 +235,7 @@ impl PaperTradingEngine {
     pub fn with_fees(mut self, maker_fee: f64, taker_fee: f64) -> Self {
         self.maker_fee = maker_fee;
         self.taker_fee = taker_fee;
-        info!("\u{1f4b8} Custom fees: Maker {:.4}%, Taker {:.4}%", 
+        info!("💸 Custom fees: Maker {:.4}%, Taker {:.4}%", 
               maker_fee * 100.0, taker_fee * 100.0);
         self
     }
@@ -243,7 +243,7 @@ impl PaperTradingEngine {
     /// Create engine with custom slippage
     pub fn with_slippage(mut self, slippage: f64) -> Self {
         self.slippage = slippage;
-        info!("\u{1f4c9} Custom slippage: {:.4}%", slippage * 100.0);
+        info!("📉 Custom slippage: {:.4}%", slippage * 100.0);
         self
     }
     
@@ -286,20 +286,20 @@ impl PaperTradingEngine {
         let mut orders = self.open_orders.write().await;
         orders.insert(order_id.clone(), order.clone());
         
-        debug!("\u{1f4dd} {:?} limit order placed: {:.4} SOL @ ${:.4} (ID: {})",
+        debug!("📝 {:?} limit order placed: {:.4} SOL @ ${:.4} (ID: {})",
             side, size, price, order_id
         );
         
         Ok(order_id)
     }
     
-    /// Cancel an order by its base ID (without any level tag)
+    /// Cancel an order
     pub async fn cancel_order(&self, order_id: &str) -> Result<()> {
         let mut orders = self.open_orders.write().await;
         
         if let Some(mut order) = orders.remove(order_id) {
             order.status = OrderStatus::Cancelled;
-            debug!("\u274c Cancelled order: {}", order_id);
+            debug!("❌ Cancelled order: {}", order_id);
             Ok(())
         } else {
             bail!("Order not found: {}", order_id);
@@ -312,7 +312,7 @@ impl PaperTradingEngine {
         let count = orders.len();
         orders.clear();
         if count > 0 {
-            info!("\u274c Cancelled {} orders", count);
+            info!("❌ Cancelled {} orders", count);
         }
         Ok(count)
     }
@@ -380,7 +380,7 @@ impl PaperTradingEngine {
                     
                     filled_orders.push(order_id.clone());
                     
-                    debug!("\u2705 {:?} order filled: {:.4} SOL @ ${:.4} (fee: ${:.4})",
+                    debug!("✅ {:?} order filled: {:.4} SOL @ ${:.4} (fee: ${:.4})",
                         order.side, order.size, execution_price, fee
                     );
                 } else {
@@ -499,14 +499,14 @@ impl PaperTradingEngine {
         let open_orders = self.open_orders.read().await;
         let trade_count = self.trade_history.read().await.len();
         
-        println!("\n\u256c\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u256e");
-        println!("\u2551   \u{1f4ca} PAPER TRADING STATUS             \u2551");
-        println!("\u255a\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255d");
+        println!("\n╔═══════════════════════════════════════╗");
+        println!("║   📊 PAPER TRADING STATUS             ║");
+        println!("╚═══════════════════════════════════════╝");
         
-        println!("\n\u{1f4b0} Wallet:");
+        println!("\n💰 Wallet:");
         println!("  USDC: ${:.2}", wallet.get_balance("USDC"));
         println!("  SOL:  {:.4} SOL (${:.2})", wallet.get_balance("SOL"), wallet.get_balance("SOL") * current_price);
-        println!("  \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500");
+        println!("  ─────────────────────────");
         println!("  Total Value: ${:.2}", wallet.total_value_usdc(current_price));
         println!("  P&L: ${:.2}", wallet.pnl_usdc(current_price));
         println!("  ROI: {:.2}%", wallet.roi(current_price));
@@ -515,7 +515,7 @@ impl PaperTradingEngine {
         
         let stats = self.get_performance_stats().await;
         
-        println!("\n\u{1f4c8} Performance:");
+        println!("\n📈 Performance:");
         println!("  Total Trades: {} ({} pairs)", trade_count, stats.winning_trades + stats.losing_trades);
         println!("  Win Rate: {:.2}%", stats.win_rate);
         println!("  Total P&L: ${:.2}", stats.total_pnl);
@@ -525,8 +525,8 @@ impl PaperTradingEngine {
             println!("  Profit Factor: {:.2}", stats.profit_factor);
         }
         
-        println!("\n\u{1f4dd} Open Orders: {}", open_orders.len());
-        println!("\n\u{1f4b5} Current SOL Price: ${:.4}", current_price);
+        println!("\n📝 Open Orders: {}", open_orders.len());
+        println!("\n💵 Current SOL Price: ${:.4}", current_price);
     }
 }
 
@@ -559,7 +559,7 @@ impl TradingEngine for PaperTradingEngine {
     /// Delegates to the inherent cancel_order(), stripping any "-L<N>"
     /// grid-level suffix first so the lookup maps to the stored base ID.
     ///
-    /// Example: "ORDER-000001-L3" → looks up "ORDER-000001" in open_orders.
+    /// Example: "ORDER-000001-L3" -> looks up "ORDER-000001" in open_orders.
     ///
     /// Inherent methods take priority in Rust method resolution — not recursive.
     async fn cancel_order(&self, order_id: &str) -> TradingResult<()> {
@@ -631,7 +631,7 @@ mod tests {
         let order_id = result.unwrap();
         assert!(order_id.ends_with("-L3"), "Expected level tag in ID: {}", order_id);
         assert_eq!(engine.open_order_count().await, 1);
-        // cancel via trait: ORDER-000001-L3 → strips → ORDER-000001 → found
+        // cancel via trait: ORDER-000001-L3 strips to ORDER-000001 for lookup
         assert!(engine.cancel_order(&order_id).await.is_ok());
         assert_eq!(engine.open_order_count().await, 0);
     }
