@@ -322,6 +322,8 @@ mod tests {
                 enable_smart_position_sizing: false,
             },
             strategies: StrategiesConfig::default(),
+            // Stage 1: ExecutionConfig added to master Config — use default in tests
+            execution: ExecutionConfig::default(),
             risk: RiskConfig {
                 max_position_size_pct: 80.0,
                 max_drawdown_pct: 10.0,
