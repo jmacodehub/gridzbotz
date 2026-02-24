@@ -1,21 +1,21 @@
-//! \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
-//! \ud83d\ude80 PROJECT FLASH V3.5 \u2013 Production Grid Trading Bot
-//! 
+//! ═══════════════════════════════════════════════════════════════════════════
+//! 🚀 PROJECT FLASH V3.5 – Production Grid Trading Bot
+//!
 //! V3.5 ENHANCEMENTS - Production-Grade Architecture:
-//! \u2705 100% Config-Driven (No Hardcoded Values!)
-//! \u2705 Flexible Duration Support (hours, minutes, seconds, cycles)
-//! \u2705 CLI Arguments Support (--config, --duration-minutes, etc.)
-//! \u2705 Comprehensive Error Handling & Recovery
-//! \u2705 Graceful Shutdown with Cleanup
-//! \u2705 Performance Monitoring & Diagnostics
-//! \u2705 Multi-Environment Support (testing, dev, production)
-//! 
+//! ✅ 100% Config-Driven (No Hardcoded Values!)
+//! ✅ Flexible Duration Support (hours, minutes, seconds, cycles)
+//! ✅ CLI Arguments Support (--config, --duration-minutes, etc.)
+//! ✅ Comprehensive Error Handling & Recovery
+//! ✅ Graceful Shutdown with Cleanup
+//! ✅ Performance Monitoring & Diagnostics
+//! ✅ Multi-Environment Support (testing, dev, production)
+//!
 //! Stage 3 / Step 1 (Feb 2026):
-//! \u2705 Engine built here and injected into GridBot::new()
-//! \u2705 Swap PaperTradingEngine for RealTradingEngine by changing one line
-//! 
-//! October 17, 2025 - MASTER V3.5 LFG! \ud83d\udd25
-//! \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+//! ✅ Engine built here and injected into GridBot::new()
+//! ✅ Swap PaperTradingEngine for RealTradingEngine by changing one line
+//!
+//! October 17, 2025 - MASTER V3.5 LFG! 🔥
+//! ═══════════════════════════════════════════════════════════════════════════
 
 use solana_grid_bot::init;
 use solana_grid_bot::config::Config;
@@ -34,9 +34,9 @@ use std::sync::Arc;
 use anyhow::Result;
 use clap::Parser;
 
-// \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+// ═══════════════════════════════════════════════════════════════════════════
 // COMMAND LINE ARGUMENTS
-// \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+// ═══════════════════════════════════════════════════════════════════════════
 
 #[derive(Parser, Debug)]
 #[clap(name = "Project Flash V3.5")]
@@ -69,9 +69,9 @@ struct Args {
     trace: bool,
 }
 
-// \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+// ═══════════════════════════════════════════════════════════════════════════
 // SESSION METRICS - Comprehensive Performance Tracking
-// \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+// ═══════════════════════════════════════════════════════════════════════════
 
 struct SessionMetrics {
     start_time: Instant,
@@ -146,31 +146,31 @@ impl SessionMetrics {
     }
 
     fn display_summary(&self, total_cycles: u32) {
-        let border = "\u2550".repeat(60);
+        let border = "═".repeat(60);
 
         println!("\n{}", border);
-        println!("  \ud83d\udcca SESSION PERFORMANCE SUMMARY");
+        println!("  📊 SESSION PERFORMANCE SUMMARY");
         println!("{}", border);
-        println!("\n\u23f1\ufe0f  TIMING:");
+        println!("\n⏱️  TIMING:");
         println!("   Runtime:          {:.2}s", self.elapsed_secs());
         println!("   Total Cycles:     {}", total_cycles);
         println!("   Successful:       {} ({:.1}%)",
                  self.successful_cycles, self.success_rate());
         println!("   Failed:           {}", self.failed_cycles);
 
-        println!("\n\u26a1 CYCLE PERFORMANCE:");
+        println!("\n⚡ CYCLE PERFORMANCE:");
         println!("   Average:          {:.2}ms", self.avg_cycle_time());
         println!("   Min:              {}ms", self.min_cycle_time());
         println!("   Max:              {}ms", self.max_cycle_time());
         println!("   Slow Cycles:      {}", self.slow_cycles);
         println!("   Throughput:       {:.1} cycles/sec", self.cycles_per_second());
 
-        println!("\n\ud83c\udfaf TRADING ACTIVITY:");
+        println!("\n🎯 TRADING ACTIVITY:");
         println!("   Grid Repositions: {}", self.repositions);
         println!("   Price Updates:    {}", self.price_updates);
         println!("   Regime Blocks:    {}", self.regime_gate_blocks);
 
-        println!("\n\u26a0\ufe0f  ERRORS:");
+        println!("\n⚠️  ERRORS:");
         println!("   Total Errors:     {}", self.errors);
         println!("   Failed Fetches:   {}", self.failed_price_fetches);
 
@@ -178,16 +178,16 @@ impl SessionMetrics {
     }
 }
 
-// \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+// ═══════════════════════════════════════════════════════════════════════════
 // BANNER & DISPLAY
-// \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+// ═══════════════════════════════════════════════════════════════════════════
 
 fn print_banner(config: &Config) {
-    let border = "\u2550".repeat(75);
+    let border = "═".repeat(75);
 
     println!("\n{}", border);
-    println!("     \ud83d\ude80 PROJECT FLASH V3.5 - PRODUCTION GRID TRADING BOT");
-    println!("     \u26a1 Hybrid Feeds \u2022 10Hz Cycles \u2022 Real-Time Analytics");
+    println!("     🚀 PROJECT FLASH V3.5 - PRODUCTION GRID TRADING BOT");
+    println!("     ⚡ Hybrid Feeds • 10Hz Cycles • Real-Time Analytics");
     println!("{}", border);
     println!("\n   Environment: {} | Version: {}",
              config.bot.environment.to_uppercase(),
@@ -195,32 +195,32 @@ fn print_banner(config: &Config) {
     println!("{}\n", border);
 }
 
-// \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+// ═══════════════════════════════════════════════════════════════════════════
 // CONFIGURATION LOADING WITH CLI OVERRIDES
-// \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+// ═══════════════════════════════════════════════════════════════════════════
 
 fn load_configuration(args: &Args) -> Result<Config> {
-    info!("\ud83d\udd27 Loading configuration...");
-    info!("\ud83d\udcc4 Loading from file: {}", args.config.display());
+    info!("🔧 Loading configuration...");
+    info!("📄 Loading from file: {}", args.config.display());
 
     let mut config = Config::from_file(&args.config)?;
 
     let mut override_count = 0;
 
     if let Some(cycles) = args.cycles {
-        info!("\ud83d\udd04 CLI Override: cycles = {}", cycles);
+        info!("🔄 CLI Override: cycles = {}", cycles);
         config.paper_trading.test_cycles = Some(cycles);
         config.paper_trading.test_duration_minutes = None;
         config.paper_trading.test_duration_hours = None;
         override_count += 1;
     } else if let Some(minutes) = args.duration_minutes {
-        info!("\u23f1\ufe0f  CLI Override: duration = {} minutes", minutes);
+        info!("⏱️  CLI Override: duration = {} minutes", minutes);
         config.paper_trading.test_duration_minutes = Some(minutes);
         config.paper_trading.test_duration_hours = None;
         config.paper_trading.test_cycles = None;
         override_count += 1;
     } else if let Some(hours) = args.duration_hours {
-        info!("\u23f1\ufe0f  CLI Override: duration = {} hours", hours);
+        info!("⏱️  CLI Override: duration = {} hours", hours);
         config.paper_trading.test_duration_hours = Some(hours);
         config.paper_trading.test_duration_minutes = None;
         config.paper_trading.test_cycles = None;
@@ -228,9 +228,9 @@ fn load_configuration(args: &Args) -> Result<Config> {
     }
 
     if override_count > 0 {
-        info!("\u2705 Applied {} CLI override(s)", override_count);
+        info!("✅ Applied {} CLI override(s)", override_count);
     } else {
-        info!("\u2705 Using config file settings (no CLI overrides)");
+        info!("✅ Using config file settings (no CLI overrides)");
     }
 
     config.validate()?;
@@ -238,14 +238,14 @@ fn load_configuration(args: &Args) -> Result<Config> {
     Ok(config)
 }
 
-// \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+// ═══════════════════════════════════════════════════════════════════════════
 // COMPONENT INITIALIZATION (Modular & Robust)
-// \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+// ═══════════════════════════════════════════════════════════════════════════
 
 async fn initialize_components(config: &Config) -> Result<(GridBot, PriceFeed)> {
-    info!("\ud83d\udd27 Initializing core components...");
+    info!("🔧 Initializing core components...");
 
-    info!("\ud83e\udd16 Initializing GridBot...");
+    info!("🤖 Initializing GridBot...");
 
     // Stage 3 Step 1: build engine here, inject into GridBot.
     // To switch to live trading, swap PaperTradingEngine for RealTradingEngine.
@@ -259,22 +259,22 @@ async fn initialize_components(config: &Config) -> Result<(GridBot, PriceFeed)> 
             .with_fees(0.0002, 0.0004)
             .with_slippage(0.0005)
     );
-    info!("\u2705 Paper trading engine built: ${:.2} USDC + {:.4} SOL", initial_usdc, initial_sol);
+    info!("✅ Paper trading engine built: ${:.2} USDC + {:.4} SOL", initial_usdc, initial_sol);
 
     let mut bot = GridBot::new(config.clone(), engine)?;
     bot.initialize().await?;
-    info!("\u2705 GridBot ready");
+    info!("✅ GridBot ready");
 
-    info!("\ud83d\ude80 Initializing V3.5 Hybrid Price Feed...");
+    info!("🚀 Initializing V3.5 Hybrid Price Feed...");
     let price_history_size = config.trading.volatility_window as usize;
     let feed = PriceFeed::new(price_history_size);
 
     feed.start().await
         .map_err(|e| anyhow::anyhow!("Failed to start price feed: {:?}", e))?;
-    info!("\u2705 Price feed started");
+    info!("✅ Price feed started");
 
     let startup_delay = config.performance.startup_delay_ms;
-    info!("\u23f3 Warming up price feed ({} ms)...", startup_delay);
+    info!("⏳ Warming up price feed ({} ms)...", startup_delay);
     sleep(Duration::from_millis(startup_delay)).await;
 
     let initial_price = feed.latest_price().await;
@@ -283,15 +283,15 @@ async fn initialize_components(config: &Config) -> Result<(GridBot, PriceFeed)> 
     }
 
     let mode = feed.get_mode().await;
-    info!("\ud83d\udcb0 Initial SOL/USD: ${:.4}", initial_price);
-    info!("\ud83d\udce1 Feed Mode: {:?}", mode);
+    info!("💰 Initial SOL/USD: ${:.4}", initial_price);
+    info!("📡 Feed Mode: {:?}", mode);
 
     Ok((bot, feed))
 }
 
-// \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+// ═══════════════════════════════════════════════════════════════════════════
 // MAIN TRADING LOOP (Production-Grade)
-// \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+// ═══════════════════════════════════════════════════════════════════════════
 
 async fn run_trading_loop(
     config: &Config,
@@ -309,7 +309,7 @@ async fn run_trading_loop(
     let stats_interval      = config.metrics.stats_interval as u32;
     let slow_cycle_threshold = cycle_interval * 2;
 
-    info!("\ud83d\udd25 STARTING TRADING LOOP");
+    info!("🔥 STARTING TRADING LOOP");
     info!("   Total Cycles:     {}", total_cycles);
     info!("   Cycle Interval:   {}ms ({}Hz)", cycle_interval, 1000 / cycle_interval);
     info!("   Duration:         {:.1} minutes",
@@ -321,7 +321,7 @@ async fn run_trading_loop(
 
     for cycle in 1..=total_cycles {
         if shutdown.load(Ordering::Relaxed) {
-            warn!("\ud83d\uded1 Graceful shutdown at cycle {}/{}", cycle, total_cycles);
+            warn!("🛑 Graceful shutdown at cycle {}/{}", cycle, total_cycles);
             break;
         }
 
@@ -352,11 +352,11 @@ async fn run_trading_loop(
             match bot.reposition_grid(price, last_price).await {
                 Ok(_) => {
                     metrics.repositions += 1;
-                    println!("\ud83d\udd04 Rebalanced");
+                    println!("🔄 Rebalanced");
                 }
                 Err(e) => {
                     metrics.errors += 1;
-                    println!("\u26a0\ufe0f  Failed");
+                    println!("⚠️  Failed");
                     error!("Reposition error: {}", e);
                 }
             }
@@ -364,9 +364,9 @@ async fn run_trading_loop(
             let stats = bot.get_stats().await;
             if stats.trading_paused {
                 metrics.regime_gate_blocks += 1;
-                println!("\ud83d\udeab Paused (regime gate)");
+                println!("🚫 Paused (regime gate)");
             } else {
-                println!("\u2713 Grid stable");
+                println!("✓ Grid stable");
             }
         }
 
@@ -381,12 +381,12 @@ async fn run_trading_loop(
         metrics.record_cycle(cycle_time, slow_cycle_threshold);
 
         if cycle_time > slow_cycle_threshold {
-            warn!("\u23f1\ufe0f  Slow cycle #{}: {}ms (threshold: {}ms)",
+            warn!("⏱️  Slow cycle #{}: {}ms (threshold: {}ms)",
                   cycle, cycle_time, slow_cycle_threshold);
         }
 
         if config.metrics.enable_metrics && cycle % stats_interval == 0 {
-            info!("\ud83d\udcca {} | Avg: {:.1}ms | Repos: {} | Blocks: {}",
+            info!("📊 {} | Avg: {:.1}ms | Repos: {} | Blocks: {}",
                   cycle, metrics.avg_cycle_time(), metrics.repositions,
                   metrics.regime_gate_blocks);
         }
@@ -403,12 +403,12 @@ async fn run_trading_loop(
     Ok(metrics)
 }
 
-// \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+// ═══════════════════════════════════════════════════════════════════════════
 // SHUTDOWN & CLEANUP (Graceful)
-// \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+// ═══════════════════════════════════════════════════════════════════════════
 
 async fn shutdown_components(bot: &mut GridBot, feed: &PriceFeed) -> Result<()> {
-    info!("\ud83e\uddf9 Cleaning up components...");
+    info!("🧹 Cleaning up components...");
 
     info!("Price feed cleanup complete");
 
@@ -416,29 +416,29 @@ async fn shutdown_components(bot: &mut GridBot, feed: &PriceFeed) -> Result<()> 
     bot.display_status(final_price).await;
     bot.display_strategy_performance().await;
 
-    info!("\u2705 Cleanup complete");
+    info!("✅ Cleanup complete");
     Ok(())
 }
 
-// \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+// ═══════════════════════════════════════════════════════════════════════════
 // HELPER FUNCTIONS
-// \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+// ═══════════════════════════════════════════════════════════════════════════
 
 fn classify_trend(price_change: f64) -> &'static str {
     if price_change.abs() < 0.005 {
-        "\u27a1\ufe0f"
+        "➡️"
     } else if price_change > 0.1 {
-        "\ud83d\ude80"
+        "🚀"
     } else if price_change > 0.05 {
-        "\ud83d\udcc8"
+        "📈"
     } else if price_change > 0.0 {
-        "\ud83d\udcc8"
+        "📈"
     } else if price_change < -0.1 {
-        "\ud83d\udca5"
+        "💥"
     } else if price_change < -0.05 {
-        "\ud83d\udcc9"
+        "📉"
     } else {
-        "\ud83d\udcc9"
+        "📉"
     }
 }
 
@@ -456,12 +456,12 @@ fn setup_logging(args: &Args) {
         .format_timestamp_millis()
         .init();
 
-    info!("\ud83d\udd0a Logging initialized at {:?} level", log_level);
+    info!("🔊 Logging initialized at {:?} level", log_level);
 }
 
-// \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
-// MAIN ENTRY POINT - V3.5 Production Grade! \ud83d\ude80
-// \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+// ═══════════════════════════════════════════════════════════════════════════
+// MAIN ENTRY POINT - V3.5 Production Grade! 🚀
+// ═══════════════════════════════════════════════════════════════════════════
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -483,7 +483,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     tokio::spawn(async move {
         match tokio::signal::ctrl_c().await {
             Ok(()) => {
-                warn!("\ud83d\uded1 Ctrl+C received - initiating graceful shutdown");
+                warn!("🛑 Ctrl+C received - initiating graceful shutdown");
                 shutdown_clone.store(true, Ordering::Relaxed);
             }
             Err(e) => {
@@ -504,7 +504,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             metrics.display_summary(total_cycles);
 
             let feed_metrics = feed.get_metrics().await;
-            info!("\ud83d\udce1 Feed Statistics:");
+            info!("📡 Feed Statistics:");
             info!("   Mode:             {:?}", feed_metrics.mode);
             info!("   Total Updates:    {}", feed_metrics.total_updates);
             let total_failures = feed_metrics.http_failures + feed_metrics.ws_failures;
@@ -515,13 +515,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
             };
             info!("   Success Rate:     {:.1}%", success_rate);
 
-            info!("\ud83c\udf19 Session complete | Runtime: {:.2}s | Avg: {:.2}ms",
+            info!("🌙 Session complete | Runtime: {:.2}s | Avg: {:.2}ms",
                   metrics.elapsed_secs(), metrics.avg_cycle_time());
 
-            println!("\n\u2705 Trading session completed successfully!\n");
+            println!("\n✅ Trading session completed successfully!\n");
         }
         Err(e) => {
-            error!("\u274c Trading loop failed: {}", e);
+            error!("❌ Trading loop failed: {}", e);
             return Err(e.into());
         }
     }
@@ -535,10 +535,10 @@ mod tests {
 
     #[test]
     fn test_trend_classification() {
-        assert_eq!(classify_trend(0.001), "\u27a1\ufe0f");
-        assert_eq!(classify_trend(0.15),  "\ud83d\ude80");
-        assert_eq!(classify_trend(0.06),  "\ud83d\udcc8");
-        assert_eq!(classify_trend(-0.15), "\ud83d\udca5");
-        assert_eq!(classify_trend(-0.06), "\ud83d\udcc9");
+        assert_eq!(classify_trend(0.001), "➡️");
+        assert_eq!(classify_trend(0.15),  "🚀");
+        assert_eq!(classify_trend(0.06),  "📈");
+        assert_eq!(classify_trend(-0.15), "💥");
+        assert_eq!(classify_trend(-0.06), "📉");
     }
 }
