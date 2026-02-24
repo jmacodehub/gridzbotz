@@ -19,6 +19,11 @@
 //! ✅ executor.execute_versioned() wired for Jupiter swaps
 //! ✅ keystore.sign_versioned_transaction() added
 //!
+//! Stage 3 / Step 1 (Feb 2026):
+//! ✅ EngineStats struct added — portfolio snapshot without concrete types
+//! ✅ TradingEngine::get_engine_stats() default method added (object-safe)
+//! ✅ PaperTradingEngine overrides get_engine_stats() with real wallet data
+//!
 //! February 2026 - V5.1 JUPITER CONSOLIDATED! 🚀
 //! ═════════════════════════════════════════════════════════════════════════
 
@@ -209,6 +214,18 @@ pub struct EngineHealthStatus {
     pub message: String,
 }
 
+/// Portfolio & performance snapshot — engine-agnostic stats for dashboards and GridBot.
+/// Both PaperTradingEngine and RealTradingEngine implement get_engine_stats().
+/// RealTradingEngine returns sensible defaults until Step 2 wires live balance queries.
+#[derive(Debug, Clone, Default)]
+pub struct EngineStats {
+    pub total_value_usdc: f64,
+    pub pnl_usdc:         f64,
+    pub roi_percent:      f64,
+    pub win_rate:         f64,
+    pub total_fees:       f64,
+}
+
 /// Unified trading engine interface for paper and live trading
 #[async_trait]
 pub trait TradingEngine: Send + Sync {
@@ -258,6 +275,12 @@ pub trait TradingEngine: Send + Sync {
         log::error!("🚨 EMERGENCY SHUTDOWN - {}", _reason);
         self.cancel_all_orders().await?;
         Ok(())
+    }
+
+    /// Portfolio + performance snapshot without requiring concrete engine types.
+    /// Override in each engine; default returns zeroes (keeps the trait object-safe).
+    async fn get_engine_stats(&self, _current_price: f64) -> EngineStats {
+        EngineStats::default()
     }
 }
 
@@ -312,6 +335,7 @@ pub mod prelude {
         TradingResult,
         OrderPlacementResult,
         EngineHealthStatus,
+        EngineStats,
 
         // Real Trading
         RealTradingConfig,
@@ -357,5 +381,13 @@ mod tests {
         let _: Option<EnhancedMetrics>   = None;
         let _: Option<AdaptiveOptimizer> = None;
         let _: Option<JupiterClient>     = None;
+    }
+
+    #[test]
+    fn test_engine_stats_default() {
+        let stats = EngineStats::default();
+        assert_eq!(stats.total_value_usdc, 0.0);
+        assert_eq!(stats.pnl_usdc, 0.0);
+        assert_eq!(stats.win_rate, 0.0);
     }
 }
