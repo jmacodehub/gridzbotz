@@ -24,6 +24,11 @@
 //! ✅ TradingEngine::get_engine_stats() default method added (object-safe)
 //! ✅ PaperTradingEngine overrides get_engine_stats() with real wallet data
 //!
+//! Stage 3 / Step 2 (Feb 2026):
+//! ✅ FillEvent struct — rich fill data replaces bare Vec<String>
+//! ✅ process_price_update returns Vec<FillEvent> — no more string-sniff hacks
+//! ✅ FillEvent::parse_level_id() — auto-parses '-L<N>' suffix from order IDs
+//!
 //! February 2026 - V5.1 JUPITER CONSOLIDATED! 🚀
 //! ═════════════════════════════════════════════════════════════════════════
 
@@ -164,7 +169,79 @@ pub use pyth_http::feed_ids as live_feed_ids;
 pub use http_feed_ids as live_feed_ids;
 
 // ═══════════════════════════════════════════════════════════════════════════
-// UNIFIED TRADING ENGINE TRAIT (V4.1) 🚀
+// FILL EVENT — Rich fill data emitted by process_price_update
+// Stage 3 / Step 2: Replaces bare Vec<String> so callers never need to
+// sniff order ID strings to determine side or level.
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// All data known at fill time — side, price, size, fee, level, PnL, timestamp.
+///
+/// Emitted by `TradingEngine::process_price_update()` for every filled order.
+/// `grid_level_id` is automatically parsed from the "-L<N>" suffix that
+/// `place_limit_order_with_level()` appends to every order ID.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FillEvent {
+    /// Order ID as returned by `place_limit_order_with_level()`.
+    /// May carry a "-L<N>" grid level suffix (e.g. "ORDER-000006-L3").
+    pub order_id: String,
+    /// Which side filled.
+    pub side: OrderSide,
+    /// Actual execution price (post-slippage for paper; on-chain price for live).
+    pub price: f64,
+    /// SOL quantity filled.
+    pub size: f64,
+    /// Fee paid in USDC.
+    pub fee: f64,
+    /// Grid level that owned this order — auto-parsed from the "-L<N>" suffix.
+    /// `None` for orders placed without a level tag.
+    pub grid_level_id: Option<u64>,
+    /// Realized PnL for this fill in USDC.
+    /// `None` until a sell is paired with its originating buy.
+    pub pnl: Option<f64>,
+    /// Unix timestamp (seconds) of the fill.
+    pub timestamp: i64,
+}
+
+impl FillEvent {
+    /// Parse the grid level ID from the "-L<N>" suffix written by
+    /// `place_limit_order_with_level()`. Returns `None` for untagged orders
+    /// or suffixes that are not pure ASCII digits.
+    ///
+    /// # Examples
+    /// ```
+    /// use solana_grid_bot::trading::FillEvent;
+    /// assert_eq!(FillEvent::parse_level_id("ORDER-000006-L3"),   Some(3));
+    /// assert_eq!(FillEvent::parse_level_id("ORDER-000006-L42"),  Some(42));
+    /// assert_eq!(FillEvent::parse_level_id("ORDER-000006"),      None);
+    /// assert_eq!(FillEvent::parse_level_id("ORDER-000006-Labc"), None);
+    /// ```
+    pub fn parse_level_id(order_id: &str) -> Option<u64> {
+        order_id
+            .rsplit_once("-L")
+            .and_then(|(_, suffix)| {
+                if suffix.is_empty() { return None; }
+                suffix.parse::<u64>().ok()
+            })
+    }
+
+    /// Construct a `FillEvent`. `grid_level_id` is automatically parsed
+    /// from the "-L<N>" suffix in `order_id` — no need to pass it explicitly.
+    pub fn new(
+        order_id: String,
+        side: OrderSide,
+        price: f64,
+        size: f64,
+        fee: f64,
+        pnl: Option<f64>,
+        timestamp: i64,
+    ) -> Self {
+        let grid_level_id = Self::parse_level_id(&order_id);
+        Self { order_id, side, price, size, fee, grid_level_id, pnl, timestamp }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// UNIFIED TRADING ENGINE TRAIT (V4.1 → V5.2) 🚀
 // ═══════════════════════════════════════════════════════════════════════════
 
 /// Result type for trading operations
@@ -226,7 +303,11 @@ pub struct EngineStats {
     pub total_fees:       f64,
 }
 
-/// Unified trading engine interface for paper and live trading
+/// Unified trading engine interface for paper and live trading.
+///
+/// Stage 3 / Step 2: `process_price_update` now returns `Vec<FillEvent>`
+/// instead of `Vec<String>`. Each fill carries side, price, size, fee,
+/// grid_level_id, pnl, and timestamp — no string-sniffing by callers.
 #[async_trait]
 pub trait TradingEngine: Send + Sync {
     async fn place_limit_order_with_level(
@@ -239,7 +320,11 @@ pub trait TradingEngine: Send + Sync {
 
     async fn cancel_order(&self, order_id: &str) -> TradingResult<()>;
     async fn cancel_all_orders(&self) -> TradingResult<usize>;
-    async fn process_price_update(&self, current_price: f64) -> TradingResult<Vec<String>>;
+
+    /// Scan for newly filled orders at `current_price`.
+    /// Returns one `FillEvent` per filled order with full execution context.
+    async fn process_price_update(&self, current_price: f64) -> TradingResult<Vec<FillEvent>>;
+
     async fn open_order_count(&self) -> usize;
     async fn is_trading_allowed(&self) -> bool;
 
@@ -313,6 +398,9 @@ pub mod prelude {
         OrderStatus,
         OrderType,
         Order,
+
+        // Fill Events (Stage 3 / Step 2)
+        FillEvent,
 
         // Grid State Machine
         GridStateTracker,
@@ -389,5 +477,54 @@ mod tests {
         assert_eq!(stats.total_value_usdc, 0.0);
         assert_eq!(stats.pnl_usdc, 0.0);
         assert_eq!(stats.win_rate, 0.0);
+    }
+
+    // ── FillEvent tests (Stage 3 / Step 2) ──────────────────────────────
+
+    #[test]
+    fn test_fill_event_parse_level_id_tagged() {
+        assert_eq!(FillEvent::parse_level_id("ORDER-000006-L3"),  Some(3));
+        assert_eq!(FillEvent::parse_level_id("ORDER-000006-L42"), Some(42));
+        assert_eq!(FillEvent::parse_level_id("ORDER-000001-L0"),  Some(0));
+    }
+
+    #[test]
+    fn test_fill_event_parse_level_id_untagged() {
+        assert_eq!(FillEvent::parse_level_id("ORDER-000006"),      None);
+        assert_eq!(FillEvent::parse_level_id("ORDER-000006-Labc"), None); // non-numeric
+        assert_eq!(FillEvent::parse_level_id("ORDER-000006-L"),    None); // empty suffix
+        assert_eq!(FillEvent::parse_level_id(""),                   None);
+    }
+
+    #[test]
+    fn test_fill_event_new_auto_parses_level() {
+        let fill = FillEvent::new(
+            "ORDER-000007-L5".to_string(),
+            OrderSide::Buy,
+            150.0,
+            0.1,
+            0.003,
+            None,
+            1_700_000_000,
+        );
+        assert_eq!(fill.grid_level_id, Some(5));
+        assert_eq!(fill.side, OrderSide::Buy);
+        assert_eq!(fill.price, 150.0);
+        assert_eq!(fill.size, 0.1);
+    }
+
+    #[test]
+    fn test_fill_event_new_no_level() {
+        let fill = FillEvent::new(
+            "ORDER-000008".to_string(),
+            OrderSide::Sell,
+            200.0,
+            0.2,
+            0.006,
+            Some(1.23),
+            1_700_000_001,
+        );
+        assert_eq!(fill.grid_level_id, None);
+        assert_eq!(fill.pnl, Some(1.23));
     }
 }
