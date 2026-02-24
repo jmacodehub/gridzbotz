@@ -67,6 +67,11 @@ pub enum OrderType {
 /// An order in the paper trading system
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Order {
+    /// The canonical order ID.  For orders placed via
+    /// `place_limit_order_with_level`, this is the TAGGED form
+    /// (`ORDER-000001-L5`), not the bare HashMap key (`ORDER-000001`).
+    /// This means `FillEvent::new(order.id.clone(), ...)` correctly
+    /// parses `grid_level_id` from the suffix.
     pub id: String,
     pub side: OrderSide,
     pub order_type: OrderType,
@@ -243,7 +248,11 @@ impl PaperTradingEngine {
         self
     }
 
-    /// Place a limit order
+    /// Place a limit order, storing it in the open-orders map.
+    ///
+    /// Returns the BASE order id (e.g., "ORDER-000001") — no level suffix.
+    /// Callers that need a level-tagged id should use
+    /// `place_limit_order_with_level` on the `TradingEngine` trait instead.
     pub async fn place_limit_order(
         &self,
         side: OrderSide,
@@ -276,7 +285,6 @@ impl PaperTradingEngine {
         drop(wallet);
 
         let order = Order::new(order_id.clone(), side, OrderType::Limit, price, size);
-
         self.open_orders.write().await.insert(order_id.clone(), order);
 
         debug!("[Order] {:?} placed: {:.4} SOL @ ${:.4} (ID: {})",
@@ -321,10 +329,11 @@ impl PaperTradingEngine {
 
     /// Process price update and execute matching orders.
     ///
-    /// V3.2 (Stage 3 / Step 2): now returns `Vec<FillEvent>` with full
-    /// execution context instead of a bare `Vec<String>`. The `side`,
-    /// `price`, `size`, `fee`, `grid_level_id`, and `timestamp` are all
-    /// taken directly from the `Order` struct -- no string sniffing.
+    /// V3.2 (Stage 3 / Step 2): returns `Vec<FillEvent>` with full
+    /// execution context.  Uses `order.id` (which carries the "-L<N>" tag
+    /// when placed via `place_limit_order_with_level`) so that
+    /// `FillEvent::new` can parse `grid_level_id` without string-sniffing
+    /// by callers.
     pub async fn process_price_update(&self, current_price: f64) -> Result<Vec<FillEvent>> {
         let mut filled_events = Vec::new();
         let mut orders  = self.open_orders.write().await;
@@ -372,7 +381,6 @@ impl PaperTradingEngine {
 
                     let fill_ts = order.filled_at.unwrap();
 
-                    // Persist to trade history
                     history.push_back(Trade {
                         order_id:  order_id.clone(),
                         side:      order.side,
@@ -386,15 +394,16 @@ impl PaperTradingEngine {
                         history.pop_front();
                     }
 
-                    // Stage 3 / Step 2: emit rich FillEvent -- side/price/size taken
-                    // directly from the Order struct, no string-sniffing by callers.
+                    // Stage 3 / Step 2: use order.id (which holds the "-L<N>" tagged
+                    // id when placed via place_limit_order_with_level) so that
+                    // FillEvent::new can parse grid_level_id from the suffix.
                     filled_events.push(FillEvent::new(
-                        order_id.clone(),
+                        order.id.clone(), // <-- tagged id, NOT the bare HashMap key
                         order.side,
                         execution_price,
                         order.size,
                         fee,
-                        None, // PnL: computed later when a sell is paired with its buy
+                        None,
                         fill_ts,
                     ));
 
@@ -562,8 +571,14 @@ impl PaperTradingEngine {
 
 #[async_trait]
 impl TradingEngine for PaperTradingEngine {
-    /// Wraps the inherent `place_limit_order()`, tagging the returned order ID
-    /// with the grid level suffix ("-L<N>") for full downstream traceability.
+    /// Places a limit order and tags the returned id with the grid level suffix
+    /// ("-L<N>").  Crucially, also WRITES the tagged id back into the stored
+    /// `Order.id` so that `process_price_update` emits a `FillEvent` whose
+    /// `order_id` carries the suffix, allowing `FillEvent::new` to parse
+    /// `grid_level_id` without any string-sniffing by callers.
+    ///
+    /// HashMap KEY remains the base id so `cancel_order` suffix-stripping
+    /// continues to work unchanged.
     async fn place_limit_order_with_level(
         &self,
         side: OrderSide,
@@ -571,11 +586,25 @@ impl TradingEngine for PaperTradingEngine {
         size: f64,
         grid_level_id: Option<u64>,
     ) -> TradingResult<String> {
-        let order_id = self.place_limit_order(side, price, size).await?;
-        Ok(match grid_level_id {
-            Some(level) => format!("{}-L{}", order_id, level),
-            None        => order_id,
-        })
+        let base_id = self.place_limit_order(side, price, size).await?;
+
+        let level = match grid_level_id {
+            None        => return Ok(base_id),
+            Some(level) => level,
+        };
+
+        let tagged = format!("{}-L{}", base_id, level);
+
+        // Write the tagged id into the stored Order so process_price_update
+        // sees it when constructing FillEvent.  HashMap KEY stays as base_id.
+        {
+            let mut orders = self.open_orders.write().await;
+            if let Some(order) = orders.get_mut(&base_id) {
+                order.id = tagged.clone();
+            }
+        }
+
+        Ok(tagged)
     }
 
     /// Delegates to the inherent `cancel_order()`.
@@ -590,7 +619,6 @@ impl TradingEngine for PaperTradingEngine {
     }
 
     /// Delegates to the inherent `process_price_update()`.
-    /// Returns `Vec<FillEvent>` with full execution context per fill.
     async fn process_price_update(&self, current_price: f64) -> TradingResult<Vec<FillEvent>> {
         self.process_price_update(current_price).await
     }
@@ -685,7 +713,7 @@ mod tests {
         assert_eq!(fills.len(), 1);
 
         let fill = &fills[0];
-        assert_eq!(fill.side, OrderSide::Buy);
+        assert_eq!(fill.side,          OrderSide::Buy);
         assert_eq!(fill.grid_level_id, Some(2));
         assert!(fill.size > 0.0);
     }
