@@ -24,7 +24,7 @@ use anyhow::{Result, bail};
 use async_trait::async_trait;
 use log::{info, debug, warn};
 
-use super::{TradingEngine, TradingResult};
+use super::{TradingEngine, TradingResult, EngineStats};
 
 // ═══════════════════════════════════════════════════════════════════════════
 // CONSTANTS
@@ -590,6 +590,19 @@ impl TradingEngine for PaperTradingEngine {
     async fn is_trading_allowed(&self) -> bool {
         true
     }
+
+    /// Overrides the default to return real wallet + performance data.
+    async fn get_engine_stats(&self, current_price: f64) -> EngineStats {
+        let wallet = self.get_wallet().await;
+        let perf   = self.get_performance_stats().await;
+        EngineStats {
+            total_value_usdc: wallet.total_value_usdc(current_price),
+            pnl_usdc:         wallet.pnl_usdc(current_price),
+            roi_percent:      wallet.roi(current_price),
+            win_rate:         perf.win_rate,
+            total_fees:       perf.total_fees,
+        }
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -632,5 +645,18 @@ mod tests {
         // cancel via inherent (strips -L3 suffix to find base ORDER-000001)
         assert!(engine.cancel_order(&order_id).await.is_ok());
         assert_eq!(engine.open_order_count().await, 0);
+    }
+
+    #[tokio::test]
+    async fn test_engine_stats_paper() {
+        let engine = PaperTradingEngine::new(10_000.0, 1.0);
+        let stats = engine.get_engine_stats(200.0).await;
+        // 10_000 USDC + 1 SOL @ $200 = $10_200 total
+        assert!((stats.total_value_usdc - 10_200.0).abs() < 0.01,
+            "Expected ~$10_200, got ${:.2}", stats.total_value_usdc);
+        // No trades yet — pnl and win_rate should be zero
+        assert_eq!(stats.pnl_usdc, 0.0);
+        assert_eq!(stats.win_rate, 0.0);
+        assert_eq!(stats.total_fees, 0.0);
     }
 }
