@@ -1,10 +1,11 @@
 //! =============================================================================
-//! PAPER TRADING ENGINE V3.4 - Risk-Free Strategy Testing
+//! PAPER TRADING ENGINE V3.5 - Risk-Free Strategy Testing
 //! Production-Ready | Enhanced | Optimized | Modular
 //! October 16, 2025 -- V3.1 February 2026 (TradingEngine trait impl)
 //! V3.2 February 2026 (FillEvent -- Stage 3 / Step 2)
 //! V3.3 February 2026 (Realised P&L per grid level -- Stage 3 / Step 3A)
 //! V3.4 February 2026 (Fill persistence -- Stage 3 / Step 3B)
+//! V3.5 February 2026 (Wire grid_spacing into CSV -- Stage 3 / Step 3C)
 //! =============================================================================
 //!
 //! Features:
@@ -21,6 +22,7 @@
 //! - V3.2: process_price_update returns Vec<FillEvent> (Stage 3 Step 2)
 //! - V3.3: FillEvent.pnl populated on paired sell fills (Stage 3 Step 3A)
 //! - V3.4: Optional FillLogger appends every fill to CSV (Stage 3 Step 3B)
+//! - V3.5: grid_spacing wired into CSV rows (Stage 3 Step 3C)
 
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
@@ -40,7 +42,7 @@ use super::fill_logger::FillLogger;
 
 const DEFAULT_MAKER_FEE: f64 = 0.0002;  // 0.02% OpenBook maker fee
 const DEFAULT_TAKER_FEE: f64 = 0.0004;  // 0.04% OpenBook taker fee
-const DEFAULT_SLIPPAGE: f64 = 0.0005;   // 0.05% default slippage
+const DEFAULT_SLIPPAGE: f64  = 0.0005;  // 0.05% default slippage
 const MAX_TRADE_HISTORY: usize = 10000;
 
 // =============================================================================
@@ -161,8 +163,8 @@ impl VirtualWallet {
     }
 
     pub fn roi(&self, sol_price: f64) -> f64 {
-        let current  = self.total_value_usdc(sol_price);
-        let initial  = self.initial_balance_usdc + (self.initial_balance_sol * sol_price);
+        let current = self.total_value_usdc(sol_price);
+        let initial = self.initial_balance_usdc + (self.initial_balance_sol * sol_price);
         if initial == 0.0 { return 0.0; }
         ((current - initial) / initial) * 100.0
     }
@@ -212,15 +214,18 @@ pub struct PaperTradingEngine {
     level_pnl: Arc<RwLock<HashMap<u64, f64>>>,
 
     // Step 3B: optional CSV logger.  None = logging disabled (default).
-    // Enable with .with_fill_logging(dir).  Never panics on write error.
     fill_logger: Option<Arc<FillLogger>>,
+
+    // Step 3C: grid spacing in USD between adjacent levels.
+    // Written to every CSV row for ML feature extraction.
+    // Set via .with_grid_spacing(step).
+    grid_spacing: Option<f64>,
 }
 
 impl PaperTradingEngine {
     /// Create a new paper trading engine with default settings.
-    /// Fill logging is disabled by default — call `.with_fill_logging()` to enable.
     pub fn new(initial_usdc: f64, initial_sol: f64) -> Self {
-        log::info!("[PaperEngine] Initializing V3.4");
+        log::info!("[PaperEngine] Initializing V3.5");
         Self {
             wallet:        Arc::new(RwLock::new(VirtualWallet::new(initial_usdc, initial_sol))),
             open_orders:   Arc::new(RwLock::new(HashMap::new())),
@@ -232,6 +237,7 @@ impl PaperTradingEngine {
             buy_fills:     Arc::new(RwLock::new(HashMap::new())),
             level_pnl:     Arc::new(RwLock::new(HashMap::new())),
             fill_logger:   None,
+            grid_spacing:  None,
         }
     }
 
@@ -239,22 +245,28 @@ impl PaperTradingEngine {
     ///
     /// Every `FillEvent` will be appended to `{dir}/fills_YYYYMMDD.csv`.
     /// The directory is created if it does not exist.  Write errors are
-    /// logged as warnings and never propagate — fills are never blocked.
+    /// logged as warnings and never propagate.
     ///
-    /// Typical usage:
-    /// ```ignore
-    /// let engine = PaperTradingEngine::new(10_000.0, 0.0)
-    ///     .with_fill_logging("fills");
-    /// ```
+    /// Call `.with_grid_spacing()` after this to populate the `spacing`
+    /// column in every CSV row.
     pub fn with_fill_logging(mut self, dir: impl Into<PathBuf>) -> Self {
         match FillLogger::new(dir) {
-            Ok(logger) => {
-                self.fill_logger = Some(Arc::new(logger));
-            }
-            Err(e) => {
-                warn!("[PaperEngine] Could not initialise fill logger: {}", e);
-            }
+            Ok(logger) => { self.fill_logger = Some(Arc::new(logger)); }
+            Err(e)     => { warn!("[PaperEngine] Could not initialise fill logger: {}", e); }
         }
+        self
+    }
+
+    /// Set the grid spacing (USD between adjacent price levels).
+    ///
+    /// Typically computed as `(upper - lower) / (num_levels - 1)` in the
+    /// caller (e.g. `grid_bot.rs` or `gridz_bot.rs`).
+    ///
+    /// Written to the `spacing` column of every fill CSV row so the ML
+    /// dataset captures the grid regime each trade occurred in.
+    pub fn with_grid_spacing(mut self, step: f64) -> Self {
+        self.grid_spacing = Some(step);
+        log::info!("[PaperEngine] Grid spacing set to ${:.4} per level", step);
         self
     }
 
@@ -336,10 +348,8 @@ impl PaperTradingEngine {
 
     /// Process price update and execute matching orders.
     ///
-    /// V3.4 additions on top of V3.3:
-    /// - Appends every `FillEvent` to the CSV logger (if enabled).
-    /// - `total_pnl` passed to logger = sum of all completed level cycles.
-    /// - `spacing` is `None` here; grid_bot can wire it in a future step.
+    /// V3.5: passes `self.grid_spacing` into `logger.append()` so the
+    /// `spacing` column in the CSV is populated on every fill.
     pub async fn process_price_update(&self, current_price: f64) -> Result<Vec<FillEvent>> {
         let mut filled_events = Vec::new();
         let mut orders    = self.open_orders.write().await;
@@ -402,7 +412,7 @@ impl PaperTradingEngine {
                         history.pop_front();
                     }
 
-                    // Build FillEvent (pnl = None until paired sell is detected below)
+                    // Build FillEvent
                     let mut fill = FillEvent::new(
                         order.id.clone(),
                         order.side,
@@ -434,16 +444,16 @@ impl PaperTradingEngine {
                         }
                     }
 
-                    // Step 3B: persist to CSV (warn on error, never block fills)
+                    // Step 3B/3C: persist fill to CSV with grid spacing
                     if let Some(logger) = &self.fill_logger {
                         let total_pnl = level_pnl.values().sum::<f64>();
-                        if let Err(e) = logger.append(&fill, None, total_pnl) {
+                        if let Err(e) = logger.append(&fill, self.grid_spacing, total_pnl) {
                             warn!("[FillLogger] Failed to write fill {}: {}", fill.order_id, e);
                         }
                     }
 
-                    debug!("[Fill] {:?} {:.4} SOL @ ${:.4} fee=${:.4} pnl={:?}",
-                        order.side, order.size, execution_price, fee, fill.pnl);
+                    debug!("[Fill] {:?} {:.4} SOL @ ${:.4} fee=${:.4} pnl={:?} spacing={:?}",
+                        order.side, order.size, execution_price, fee, fill.pnl, self.grid_spacing);
 
                     filled_events.push(fill);
                 } else {
@@ -545,18 +555,18 @@ impl PaperTradingEngine {
             wallet.get_balance("SOL"),
             wallet.get_balance("SOL") * current_price);
         println!("  -------------------------");
-        println!("  Total: ${:.2}",  wallet.total_value_usdc(current_price));
-        println!("  P&L  : ${:.2}",  wallet.pnl_usdc(current_price));
-        println!("  ROI  : {:.2}%",  wallet.roi(current_price));
+        println!("  Total: ${:.2}", wallet.total_value_usdc(current_price));
+        println!("  P&L  : ${:.2}", wallet.pnl_usdc(current_price));
+        println!("  ROI  : {:.2}%", wallet.roi(current_price));
         drop(wallet);
 
         let stats = self.get_performance_stats().await;
         println!("\nPerformance:");
         println!("  Total Trades  : {} ({} pairs)",
             trade_count, stats.winning_trades + stats.losing_trades);
-        println!("  Win Rate      : {:.2}%",  stats.win_rate);
-        println!("  Total P&L     : ${:.2}",  stats.total_pnl);
-        println!("  Total Fees    : ${:.2}",  stats.total_fees);
+        println!("  Win Rate      : {:.2}%", stats.win_rate);
+        println!("  Total P&L     : ${:.2}", stats.total_pnl);
+        println!("  Total Fees    : ${:.2}", stats.total_fees);
         if stats.winning_trades + stats.losing_trades > 0 {
             println!("  Profit Factor : {:.2}", stats.profit_factor);
         }
@@ -576,9 +586,14 @@ impl PaperTradingEngine {
         }
         drop(level_snapshot);
 
-        // Step 3B: show active log file path if logging is enabled
+        // Step 3B/3C: show log file path + spacing
         if let Some(logger) = &self.fill_logger {
-            println!("\nFill Log   : {}", logger.path().display());
+            print!("\nFill Log   : {}", logger.path().display());
+            if let Some(s) = self.grid_spacing {
+                println!(" (spacing ${:.4})", s);
+            } else {
+                println!();
+            }
         }
 
         println!("\nOpen Orders: {}", open_orders.len());
@@ -599,7 +614,7 @@ impl PaperTradingEngine {
 }
 
 // =============================================================================
-// UNIFIED TRADING ENGINE TRAIT IMPLEMENTATION (V3.4)
+// UNIFIED TRADING ENGINE TRAIT IMPLEMENTATION (V3.5)
 // =============================================================================
 
 #[async_trait]
@@ -740,8 +755,8 @@ mod tests {
         assert_eq!(sell_fills.len(), 1);
 
         let pnl = sell_fills[0].pnl.unwrap();
-        assert!(pnl > 0.0,   "pnl should be positive: sell@110 > buy@100, got {}", pnl);
-        assert!(pnl < 10.1,  "pnl should be near $10 minus fees, got {}", pnl);
+        assert!(pnl > 0.0,  "pnl should be positive: sell@110 > buy@100, got {}", pnl);
+        assert!(pnl < 10.1, "pnl should be near $10 minus fees, got {}", pnl);
 
         let level_map = engine.get_per_level_pnl().await;
         assert!(level_map.contains_key(&1));
@@ -778,11 +793,10 @@ mod tests {
         engine.place_limit_order_with_level(OrderSide::Buy, 100.0, 0.5, Some(1)).await.unwrap();
         engine.process_price_update(99.0).await.unwrap();
 
-        // A CSV file must now exist in the log dir
         let entries: Vec<_> = std::fs::read_dir(&dir).unwrap().collect();
         assert_eq!(entries.len(), 1, "Exactly one CSV file should exist");
 
-        let path = entries[0].as_ref().unwrap().path();
+        let path    = entries[0].as_ref().unwrap().path();
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(content.contains("timestamp,order_id,side"), "CSV header missing");
         assert!(content.contains("Buy"), "Buy fill must appear in CSV");
@@ -792,10 +806,39 @@ mod tests {
 
     #[tokio::test]
     async fn test_fill_logging_disabled_by_default() {
-        // No with_fill_logging() call — should compile and run without any file I/O
         let engine = PaperTradingEngine::new(10_000.0, 0.0);
         engine.place_limit_order_with_level(OrderSide::Buy, 100.0, 0.5, Some(1)).await.unwrap();
         let fills = engine.process_price_update(99.0).await.unwrap();
         assert_eq!(fills.len(), 1, "Fills still emitted even without logger");
+    }
+
+    // -- Step 3C: grid spacing in CSV -----------------------------------------
+
+    #[tokio::test]
+    async fn test_fill_logging_records_spacing() {
+        let dir = std::env::temp_dir().join("gridzbotz_paper_trader_spacing_test");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        // spacing = (120 - 60) / (10 - 1) = $6.666...
+        let spacing = (120.0_f64 - 60.0) / 9.0;
+        let engine = PaperTradingEngine::new(10_000.0, 0.0)
+            .with_fill_logging(&dir)
+            .with_grid_spacing(spacing);
+
+        engine.place_limit_order_with_level(OrderSide::Buy, 100.0, 0.5, Some(3)).await.unwrap();
+        engine.process_price_update(99.0).await.unwrap();
+
+        let entries: Vec<_> = std::fs::read_dir(&dir).unwrap().collect();
+        let path    = entries[0].as_ref().unwrap().path();
+        let content = std::fs::read_to_string(&path).unwrap();
+
+        // The spacing value (6.666...) must appear in the data row
+        assert!(
+            content.contains("6.666"),
+            "Spacing value must appear in CSV row, got:\n{}",
+            content
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
