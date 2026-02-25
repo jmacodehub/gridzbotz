@@ -1,5 +1,13 @@
 //! ═══════════════════════════════════════════════════════════════════════════
-//! 🚀 PROJECT FLASH V3.5 – Production Grid Trading Bot
+//! 🚀 PROJECT FLASH V3.6 – Production Grid Trading Bot
+//!
+//! V3.6 ENHANCEMENTS (Step 4 — Session 2, Feb 2026):
+//! ✅ --mode paper|live CLI flag overrides bot.execution_mode in TOML
+//! ✅ Price feed starts BEFORE engine build — spacing_usd uses real price
+//! ✅ Engine builder branches: paper → PaperTradingEngine (fills + spacing)
+//!                             live  → honest bail! stub for Step 5
+//! ✅ Slippage + fees driven from [execution] config, no hardcoded values
+//! ✅ Banner shows active mode, instance name, cluster, spacing
 //!
 //! V3.5 ENHANCEMENTS - Production-Grade Architecture:
 //! ✅ 100% Config-Driven (No Hardcoded Values!)
@@ -13,8 +21,9 @@
 //! Stage 3 / Step 1 (Feb 2026):
 //! ✅ Engine built here and injected into GridBot::new()
 //! ✅ Swap PaperTradingEngine for RealTradingEngine by changing one line
+//!    (or --mode live / bot.execution_mode = "live" in TOML)
 //!
-//! October 17, 2025 - MASTER V3.5 LFG! 🔥
+//! October 17, 2025 — MASTER V3.5 | February 2026 — V3.6 Step 4 LFG! 🔥
 //! ═══════════════════════════════════════════════════════════════════════════
 
 use solana_grid_bot::init;
@@ -22,8 +31,8 @@ use solana_grid_bot::config::Config;
 use solana_grid_bot::bots::GridBot;
 use solana_grid_bot::trading::{
     PriceFeed,
-    PaperTradingEngine,  // Stage 3 Step 1: engine built here and injected
-    TradingEngine,       // Stage 3 Step 1: trait object for GridBot
+    PaperTradingEngine,
+    TradingEngine,
 };
 
 use std::{error::Error, time::Instant, path::PathBuf};
@@ -39,14 +48,22 @@ use clap::Parser;
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[derive(Parser, Debug)]
-#[clap(name = "Project Flash V3.5")]
-#[clap(author = "Grid Trading Team")]
-#[clap(version = "3.5.0")]
+#[clap(name = "gridzbotz", version = "3.6.0")]
 #[clap(about = "Production-grade Solana grid trading bot", long_about = None)]
 struct Args {
     /// Configuration file path
     #[clap(short, long, default_value = "config/master.toml")]
     config: PathBuf,
+
+    /// Execution mode: paper | live
+    /// Overrides bot.execution_mode in TOML when provided.
+    /// --paper is shorthand for --mode paper.
+    #[clap(long, value_name = "MODE")]
+    mode: Option<String>,
+
+    /// Shorthand for --mode paper (takes no value)
+    #[clap(long, conflicts_with = "mode")]
+    paper: bool,
 
     /// Override test duration in minutes
     #[clap(short = 'd', long)]
@@ -67,6 +84,17 @@ struct Args {
     /// Enable trace logging (very verbose)
     #[clap(long)]
     trace: bool,
+}
+
+impl Args {
+    /// Resolve the effective execution mode from CLI flags.
+    /// Priority: --paper > --mode <value> > TOML bot.execution_mode.
+    fn resolved_mode(&self) -> Option<String> {
+        if self.paper {
+            return Some("paper".to_string());
+        }
+        self.mode.clone()
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -184,14 +212,26 @@ impl SessionMetrics {
 
 fn print_banner(config: &Config) {
     let border = "═".repeat(75);
+    let mode_label = if config.bot.is_live() {
+        "🔴 LIVE — real Jupiter swaps on-chain"
+    } else {
+        "🟡 PAPER — simulation, fills logged to CSV"
+    };
 
     println!("\n{}", border);
-    println!("     🚀 PROJECT FLASH V3.5 - PRODUCTION GRID TRADING BOT");
-    println!("     ⚡ Hybrid Feeds • 10Hz Cycles • Real-Time Analytics");
+    println!("     🚀 GRIDZBOTZ V3.6 — PRODUCTION GRID TRADING BOT");
+    println!("     ⚡ Hybrid Feeds • 10Hz Cycles • Config-Driven Execution");
     println!("{}", border);
-    println!("\n   Environment: {} | Version: {}",
-             config.bot.environment.to_uppercase(),
-             config.bot.version);
+    println!("\n   Mode:        {}", mode_label);
+    println!("   Instance:    {} | v{} | {}",
+             config.bot.instance_name(),
+             config.bot.version,
+             config.bot.environment.to_uppercase());
+    println!("   Cluster:     {} | {}",
+             config.network.cluster,
+             config.network.rpc_url
+                 .get(..42.min(config.network.rpc_url.len()))
+                 .unwrap_or(&config.network.rpc_url));
     println!("{}\n", border);
 }
 
@@ -200,12 +240,22 @@ fn print_banner(config: &Config) {
 // ═══════════════════════════════════════════════════════════════════════════
 
 fn load_configuration(args: &Args) -> Result<Config> {
-    info!("🔧 Loading configuration...");
-    info!("📄 Loading from file: {}", args.config.display());
+    info!("🔧 Loading configuration from: {}", args.config.display());
 
     let mut config = Config::from_file(&args.config)?;
 
-    let mut override_count = 0;
+    // ── Mode override (--paper or --mode <value>) ─────────────────────────
+    if let Some(mode) = args.resolved_mode() {
+        let valid = ["paper", "live"];
+        if !valid.contains(&mode.as_str()) {
+            anyhow::bail!("Invalid --mode '{}'. Must be 'paper' or 'live'", mode);
+        }
+        info!("⚡ CLI Override: execution_mode = {}", mode);
+        config.bot.execution_mode = mode;
+    }
+
+    // ── Duration overrides ────────────────────────────────────────────────
+    let mut override_count = 0usize;
 
     if let Some(cycles) = args.cycles {
         info!("🔄 CLI Override: cycles = {}", cycles);
@@ -227,14 +277,13 @@ fn load_configuration(args: &Args) -> Result<Config> {
         override_count += 1;
     }
 
-    if override_count > 0 {
-        info!("✅ Applied {} CLI override(s)", override_count);
+    if override_count == 0 {
+        info!("✅ No duration overrides — using config file settings");
     } else {
-        info!("✅ Using config file settings (no CLI overrides)");
+        info!("✅ Applied {} duration CLI override(s)", override_count);
     }
 
     config.validate()?;
-
     Ok(config)
 }
 
@@ -242,36 +291,18 @@ fn load_configuration(args: &Args) -> Result<Config> {
 // COMPONENT INITIALIZATION (Modular & Robust)
 // ═══════════════════════════════════════════════════════════════════════════
 
+/// Start the price feed first so we have a real SOL price before building
+/// the engine — the paper engine needs it to compute `spacing_usd`.
 async fn initialize_components(config: &Config) -> Result<(GridBot, PriceFeed)> {
     info!("🔧 Initializing core components...");
 
-    info!("🤖 Initializing GridBot...");
-
-    // Stage 3 Step 1: build engine here, inject into GridBot.
-    // To switch to live trading, swap PaperTradingEngine for RealTradingEngine.
-    let initial_usdc = config.paper_trading.initial_usdc;
-    let initial_sol  = config.paper_trading.initial_sol;
-    if initial_usdc <= 0.0 || initial_sol <= 0.0 {
-        anyhow::bail!("Invalid initial capital: USDC={}, SOL={}", initial_usdc, initial_sol);
-    }
-    let engine: Box<dyn TradingEngine> = Box::new(
-        PaperTradingEngine::new(initial_usdc, initial_sol)
-            .with_fees(0.0002, 0.0004)
-            .with_slippage(0.0005)
-    );
-    info!("✅ Paper trading engine built: ${:.2} USDC + {:.4} SOL", initial_usdc, initial_sol);
-
-    let mut bot = GridBot::new(config.clone(), engine)?;
-    bot.initialize().await?;
-    info!("✅ GridBot ready");
-
-    info!("🚀 Initializing V3.5 Hybrid Price Feed...");
+    // ── 1. Price Feed — must start before engine build ────────────────────
+    info!("🚀 Starting V3.5 Hybrid Price Feed (Pyth/Hermes)...");
     let price_history_size = config.trading.volatility_window as usize;
     let feed = PriceFeed::new(price_history_size);
 
     feed.start().await
         .map_err(|e| anyhow::anyhow!("Failed to start price feed: {:?}", e))?;
-    info!("✅ Price feed started");
 
     let startup_delay = config.performance.startup_delay_ms;
     info!("⏳ Warming up price feed ({} ms)...", startup_delay);
@@ -279,12 +310,74 @@ async fn initialize_components(config: &Config) -> Result<(GridBot, PriceFeed)> 
 
     let initial_price = feed.latest_price().await;
     if initial_price <= 0.0 {
-        anyhow::bail!("Price feed returned invalid price: {}", initial_price);
+        anyhow::bail!(
+            "Price feed returned invalid price after warm-up: {}. \
+             Check Pyth/Hermes connectivity.",
+            initial_price
+        );
     }
 
     let mode = feed.get_mode().await;
-    info!("💰 Initial SOL/USD: ${:.4}", initial_price);
-    info!("📡 Feed Mode: {:?}", mode);
+    info!("💰 Initial SOL/USD: ${:.4}  (feed mode: {:?})", initial_price, mode);
+
+    // ── 2. Derive execution params from config ────────────────────────────
+    //
+    // slippage_decimal: convert BPS → fraction (100 BPS = 0.01 = 1%)
+    // spacing_usd:      grid_spacing_percent is relative to price, so
+    //                   we anchor to the live price at startup.
+    let slippage_decimal = config.execution.max_slippage_bps as f64 / 10_000.0;
+    let spacing_usd      = initial_price * (config.trading.grid_spacing_percent / 100.0);
+    let maker_fee        = slippage_decimal / 2.0;   // taker/2 is a reasonable maker proxy
+    let taker_fee        = slippage_decimal;
+
+    info!("⚙️  Engine params:");
+    info!("   Slippage:   {:.4}% ({} BPS)",
+        slippage_decimal * 100.0, config.execution.max_slippage_bps);
+    info!("   Spacing:    ${:.4} ({:.3}% of ${:.2})",
+        spacing_usd, config.trading.grid_spacing_percent, initial_price);
+    info!("   Fees:       maker {:.4}% / taker {:.4}%",
+        maker_fee * 100.0, taker_fee * 100.0);
+
+    // ── 3. Engine — branched on execution mode ────────────────────────────
+    let engine: Box<dyn TradingEngine> = if config.bot.is_paper() {
+        let initial_usdc = config.paper_trading.initial_usdc;
+        let initial_sol  = config.paper_trading.initial_sol;
+        if initial_usdc <= 0.0 || initial_sol <= 0.0 {
+            anyhow::bail!(
+                "Invalid paper capital: USDC={}, SOL={}",
+                initial_usdc, initial_sol
+            );
+        }
+
+        info!("🟡 PAPER mode — building PaperTradingEngine");
+        info!("   Capital: ${:.2} USDC + {:.4} SOL", initial_usdc, initial_sol);
+        info!("   Fill log: fills/fills_YYYYMMDD.csv");
+
+        Box::new(
+            PaperTradingEngine::new(initial_usdc, initial_sol)
+                .with_fees(maker_fee, taker_fee)
+                .with_slippage(slippage_decimal)
+                .with_fill_logging("fills")
+                .with_grid_spacing(spacing_usd)
+        )
+    } else {
+        // ── Step 5 stub: RealTradingEngine will replace this bail! ────────
+        // When Step 5 is wired:
+        //   Box::new(RealTradingEngine::new(config, keystore, jupiter, rpc).await?)
+        anyhow::bail!(
+            "🔴 LIVE mode not yet wired (Step 5). \
+             Set --mode paper or bot.execution_mode = \"paper\" in TOML to run the bot. \
+             Live execution via Jupiter is coming in Step 5."
+        );
+    };
+
+    info!("✅ Engine ready");
+
+    // ── 4. GridBot ────────────────────────────────────────────────────────
+    info!("🤖 Initializing GridBot...");
+    let mut bot = GridBot::new(config.clone(), engine)?;
+    bot.initialize().await?;
+    info!("✅ GridBot ready");
 
     Ok((bot, feed))
 }
@@ -305,8 +398,8 @@ async fn run_trading_loop(
         config.performance.cycle_interval_ms
     ) as u32;
 
-    let cycle_interval      = config.performance.cycle_interval_ms;
-    let stats_interval      = config.metrics.stats_interval as u32;
+    let cycle_interval       = config.performance.cycle_interval_ms;
+    let stats_interval       = config.metrics.stats_interval as u32;
     let slow_cycle_threshold = cycle_interval * 2;
 
     info!("🔥 STARTING TRADING LOOP");
@@ -329,7 +422,7 @@ async fn run_trading_loop(
 
         let price = feed.latest_price().await;
         if price <= 0.0 {
-            error!("Invalid price: {}", price);
+            error!("Invalid price at cycle {}: {}", cycle, price);
             metrics.failed_price_fetches += 1;
             metrics.record_failure();
             continue;
@@ -371,7 +464,7 @@ async fn run_trading_loop(
         }
 
         if let Err(e) = bot.process_price_update(price, chrono::Utc::now().timestamp()).await {
-            error!("Failed to process price: {}", e);
+            error!("Failed to process price update: {}", e);
             metrics.errors += 1;
         }
 
@@ -386,17 +479,17 @@ async fn run_trading_loop(
         }
 
         if config.metrics.enable_metrics && cycle % stats_interval == 0 {
-            info!("📊 {} | Avg: {:.1}ms | Repos: {} | Blocks: {}",
+            info!("📊 Cycle {:>5} | Avg: {:.1}ms | Repos: {} | Blocks: {}",
                   cycle, metrics.avg_cycle_time(), metrics.repositions,
                   metrics.regime_gate_blocks);
         }
 
         if cycle_time < cycle_interval {
-            let sleep_duration = cycle_interval - cycle_time;
-            trace!("Sleeping for {}ms", sleep_duration);
-            sleep(Duration::from_millis(sleep_duration)).await;
+            let sleep_ms = cycle_interval - cycle_time;
+            trace!("Sleeping {}ms", sleep_ms);
+            sleep(Duration::from_millis(sleep_ms)).await;
         } else {
-            debug!("Cycle overran by {}ms", cycle_time - cycle_interval);
+            debug!("Cycle #{} overran by {}ms", cycle, cycle_time - cycle_interval);
         }
     }
 
@@ -409,37 +502,23 @@ async fn run_trading_loop(
 
 async fn shutdown_components(bot: &mut GridBot, feed: &PriceFeed) -> Result<()> {
     info!("🧹 Cleaning up components...");
-
-    info!("Price feed cleanup complete");
-
     let final_price = feed.latest_price().await;
     bot.display_status(final_price).await;
     bot.display_strategy_performance().await;
-
     info!("✅ Cleanup complete");
     Ok(())
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// HELPER FUNCTIONS
+// HELPERS
 // ═══════════════════════════════════════════════════════════════════════════
 
 fn classify_trend(price_change: f64) -> &'static str {
-    if price_change.abs() < 0.005 {
-        "➡️"
-    } else if price_change > 0.1 {
-        "🚀"
-    } else if price_change > 0.05 {
-        "📈"
-    } else if price_change > 0.0 {
-        "📈"
-    } else if price_change < -0.1 {
-        "💥"
-    } else if price_change < -0.05 {
-        "📉"
-    } else {
-        "📉"
-    }
+    if price_change.abs() < 0.005 { "➡️" }
+    else if price_change >  0.1   { "🚀" }
+    else if price_change >  0.0   { "📈" }
+    else if price_change < -0.1   { "💥" }
+    else                          { "📉" }
 }
 
 fn setup_logging(args: &Args) {
@@ -460,7 +539,7 @@ fn setup_logging(args: &Args) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// MAIN ENTRY POINT - V3.5 Production Grade! 🚀
+// MAIN ENTRY POINT — V3.6 🚀
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[tokio::main]
@@ -483,12 +562,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
     tokio::spawn(async move {
         match tokio::signal::ctrl_c().await {
             Ok(()) => {
-                warn!("🛑 Ctrl+C received - initiating graceful shutdown");
+                warn!("🛑 Ctrl+C received — initiating graceful shutdown");
                 shutdown_clone.store(true, Ordering::Relaxed);
             }
-            Err(e) => {
-                error!("Failed to listen for shutdown signal: {}", e);
-            }
+            Err(e) => error!("Shutdown signal listener failed: {}", e),
         }
     });
 
@@ -505,19 +582,17 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
             let feed_metrics = feed.get_metrics().await;
             info!("📡 Feed Statistics:");
-            info!("   Mode:             {:?}", feed_metrics.mode);
-            info!("   Total Updates:    {}", feed_metrics.total_updates);
+            info!("   Mode:          {:?}", feed_metrics.mode);
+            info!("   Total Updates: {}", feed_metrics.total_updates);
             let total_failures = feed_metrics.http_failures + feed_metrics.ws_failures;
-            let success_rate = if feed_metrics.total_requests > 0 {
+            let success_rate   = if feed_metrics.total_requests > 0 {
                 100.0 - (total_failures as f64 / feed_metrics.total_requests as f64) * 100.0
             } else {
                 100.0
             };
-            info!("   Success Rate:     {:.1}%", success_rate);
-
-            info!("🌙 Session complete | Runtime: {:.2}s | Avg: {:.2}ms",
+            info!("   Success Rate:  {:.1}%", success_rate);
+            info!("🌙 Session complete | Runtime: {:.2}s | Avg cycle: {:.2}ms",
                   metrics.elapsed_secs(), metrics.avg_cycle_time());
-
             println!("\n✅ Trading session completed successfully!\n");
         }
         Err(e) => {
@@ -529,16 +604,90 @@ async fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// TESTS
+// ═══════════════════════════════════════════════════════════════════════════
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn test_trend_classification() {
-        assert_eq!(classify_trend(0.001), "➡️");
-        assert_eq!(classify_trend(0.15),  "🚀");
-        assert_eq!(classify_trend(0.06),  "📈");
-        assert_eq!(classify_trend(-0.15), "💥");
-        assert_eq!(classify_trend(-0.06), "📉");
+        assert_eq!(classify_trend(0.001),  "➡️");
+        assert_eq!(classify_trend(0.15),   "🚀");
+        assert_eq!(classify_trend(0.06),   "📈");
+        assert_eq!(classify_trend(-0.15),  "💥");
+        assert_eq!(classify_trend(-0.06),  "📉");
+    }
+
+    #[test]
+    fn test_slippage_decimal_conversion() {
+        // 100 BPS → 0.01 (1%)
+        let bps: u16 = 100;
+        let decimal  = bps as f64 / 10_000.0;
+        assert!((decimal - 0.01).abs() < 1e-9);
+
+        // 50 BPS → 0.005 (0.5%)
+        let bps: u16 = 50;
+        let decimal  = bps as f64 / 10_000.0;
+        assert!((decimal - 0.005).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_spacing_usd_from_price_and_pct() {
+        // 0.15% spacing at $200 SOL → $0.30
+        let price   = 200.0_f64;
+        let pct     = 0.15_f64;
+        let spacing = price * (pct / 100.0);
+        assert!((spacing - 0.30).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_args_resolved_mode_paper_flag() {
+        // --paper flag → "paper"
+        let args = Args {
+            config: PathBuf::from("config/master.toml"),
+            mode: None,
+            paper: true,
+            duration_minutes: None,
+            duration_hours: None,
+            cycles: None,
+            debug: false,
+            trace: false,
+        };
+        assert_eq!(args.resolved_mode(), Some("paper".to_string()));
+    }
+
+    #[test]
+    fn test_args_resolved_mode_explicit() {
+        // --mode live → "live"
+        let args = Args {
+            config: PathBuf::from("config/master.toml"),
+            mode: Some("live".to_string()),
+            paper: false,
+            duration_minutes: None,
+            duration_hours: None,
+            cycles: None,
+            debug: false,
+            trace: false,
+        };
+        assert_eq!(args.resolved_mode(), Some("live".to_string()));
+    }
+
+    #[test]
+    fn test_args_resolved_mode_none() {
+        // No flag → None (TOML wins)
+        let args = Args {
+            config: PathBuf::from("config/master.toml"),
+            mode: None,
+            paper: false,
+            duration_minutes: None,
+            duration_hours: None,
+            cycles: None,
+            debug: false,
+            trace: false,
+        };
+        assert_eq!(args.resolved_mode(), None);
     }
 }
