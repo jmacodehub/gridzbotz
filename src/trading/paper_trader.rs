@@ -1,8 +1,9 @@
 //! =============================================================================
-//! PAPER TRADING ENGINE V3.2 - Risk-Free Strategy Testing
+//! PAPER TRADING ENGINE V3.3 - Risk-Free Strategy Testing
 //! Production-Ready | Enhanced | Optimized | Modular
 //! October 16, 2025 -- V3.1 February 2026 (TradingEngine trait impl)
 //! V3.2 February 2026 (FillEvent -- Stage 3 / Step 2)
+//! V3.3 February 2026 (Realised P&L per grid level -- Stage 3 / Step 3A)
 //! =============================================================================
 //!
 //! Features:
@@ -17,6 +18,7 @@
 //! - Builder pattern for configuration
 //! - V3.1: impl TradingEngine -- satisfies Arc<dyn TradingEngine>
 //! - V3.2: process_price_update returns Vec<FillEvent> (Stage 3 Step 2)
+//! - V3.3: FillEvent.pnl populated on paired sell fills (Stage 3 Step 3A)
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
@@ -214,12 +216,21 @@ pub struct PaperTradingEngine {
     taker_fee:     f64,
     slippage:      f64,
     next_order_id: Arc<RwLock<u64>>,
+
+    // Step 3A: pending buy fills awaiting a paired sell.
+    // Key = grid_level_id.  Value = (execution_price, fee_paid).
+    // Entry is REMOVED once the paired sell fires so next cycle starts clean.
+    buy_fills: Arc<RwLock<HashMap<u64, (f64, f64)>>>,
+
+    // Step 3A: cumulative realised P&L keyed by grid level.
+    // Monotonically grows; never decremented -- use for session analytics.
+    level_pnl: Arc<RwLock<HashMap<u64, f64>>>,
 }
 
 impl PaperTradingEngine {
     /// Create a new paper trading engine with default settings
     pub fn new(initial_usdc: f64, initial_sol: f64) -> Self {
-        log::info!("[PaperEngine] Initializing V3.2");
+        log::info!("[PaperEngine] Initializing V3.3");
 
         Self {
             wallet:        Arc::new(RwLock::new(VirtualWallet::new(initial_usdc, initial_sol))),
@@ -229,6 +240,8 @@ impl PaperTradingEngine {
             taker_fee:     DEFAULT_TAKER_FEE,
             slippage:      DEFAULT_SLIPPAGE,
             next_order_id: Arc::new(RwLock::new(1)),
+            buy_fills:     Arc::new(RwLock::new(HashMap::new())),
+            level_pnl:     Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -329,16 +342,21 @@ impl PaperTradingEngine {
 
     /// Process price update and execute matching orders.
     ///
-    /// V3.2 (Stage 3 / Step 2): returns `Vec<FillEvent>` with full
-    /// execution context.  Uses `order.id` (which carries the "-L<N>" tag
-    /// when placed via `place_limit_order_with_level`) so that
-    /// `FillEvent::new` can parse `grid_level_id` without string-sniffing
-    /// by callers.
+    /// V3.3 (Stage 3 / Step 3A): `FillEvent.pnl` is now populated for
+    /// sell fills that have a paired buy fill on the same grid level.
+    ///
+    ///   pnl = (sell_price - buy_price) * size - buy_fee - sell_fee
+    ///
+    /// The buy entry is removed from `buy_fills` after pairing so the
+    /// next buy-sell cycle on the same level starts clean.
+    /// Buy fills always carry `pnl = None` (unrealised position).
     pub async fn process_price_update(&self, current_price: f64) -> Result<Vec<FillEvent>> {
         let mut filled_events = Vec::new();
-        let mut orders  = self.open_orders.write().await;
-        let mut wallet  = self.wallet.write().await;
-        let mut history = self.trade_history.write().await;
+        let mut orders    = self.open_orders.write().await;
+        let mut wallet    = self.wallet.write().await;
+        let mut history   = self.trade_history.write().await;
+        let mut buy_fills = self.buy_fills.write().await;
+        let mut level_pnl = self.level_pnl.write().await;
 
         let order_ids: Vec<String> = orders.keys().cloned().collect();
 
@@ -394,21 +412,50 @@ impl PaperTradingEngine {
                         history.pop_front();
                     }
 
-                    // Stage 3 / Step 2: use order.id (which holds the "-L<N>" tagged
-                    // id when placed via place_limit_order_with_level) so that
-                    // FillEvent::new can parse grid_level_id from the suffix.
-                    filled_events.push(FillEvent::new(
-                        order.id.clone(), // <-- tagged id, NOT the bare HashMap key
+                    // Build the FillEvent first (pnl = None).
+                    // grid_level_id is parsed by FillEvent::new from the "-L<N>" suffix.
+                    let mut fill = FillEvent::new(
+                        order.id.clone(),
                         order.side,
                         execution_price,
                         order.size,
                         fee,
                         None,
                         fill_ts,
-                    ));
+                    );
 
-                    debug!("[Fill] {:?} {:.4} SOL @ ${:.4} fee=${:.4}",
-                        order.side, order.size, execution_price, fee);
+                    // Step 3A: populate FillEvent.pnl for paired fills.
+                    match order.side {
+                        OrderSide::Buy => {
+                            // Store buy context so the matching sell can compute pnl.
+                            if let Some(level_id) = fill.grid_level_id {
+                                buy_fills.insert(level_id, (execution_price, fee));
+                            }
+                            // pnl stays None -- position is open (unrealised)
+                        }
+                        OrderSide::Sell => {
+                            if let Some(level_id) = fill.grid_level_id {
+                                // Pair with the pending buy on this level.
+                                if let Some((buy_price, buy_fee)) = buy_fills.remove(&level_id) {
+                                    let pnl = (execution_price - buy_price) * order.size
+                                              - buy_fee
+                                              - fee;
+                                    fill.pnl = Some(pnl);
+                                    // Accumulate into the per-level running total.
+                                    *level_pnl.entry(level_id).or_insert(0.0) += pnl;
+
+                                    debug!("[P&L] Level {}: pnl=${:.4} (buy@{:.4} sell@{:.4})",
+                                        level_id, pnl, buy_price, execution_price);
+                                }
+                                // Sell without a prior buy on this level → pnl stays None.
+                            }
+                        }
+                    }
+
+                    debug!("[Fill] {:?} {:.4} SOL @ ${:.4} fee=${:.4} pnl={:?}",
+                        order.side, order.size, execution_price, fee, fill.pnl);
+
+                    filled_events.push(fill);
                 } else {
                     orders.insert(order_id, order);
                 }
@@ -454,6 +501,15 @@ impl PaperTradingEngine {
     /// Get total number of trades
     pub async fn trade_count(&self) -> usize {
         self.trade_history.read().await.len()
+    }
+
+    /// Step 3A: snapshot of realised P&L per grid level for the current session.
+    ///
+    /// Returns a clone of the `level_pnl` map.  Positive values = profitable
+    /// level; negative values = level is currently losing (fees > spread).
+    /// Levels with no completed sell fills will not appear in the map.
+    pub async fn get_per_level_pnl(&self) -> HashMap<u64, f64> {
+        self.level_pnl.read().await.clone()
     }
 
     /// Calculate performance statistics
@@ -547,7 +603,23 @@ impl PaperTradingEngine {
         if stats.winning_trades + stats.losing_trades > 0 {
             println!("  Profit Factor : {:.2}",  stats.profit_factor);
         }
-        println!("\nOpen Orders: {}",   open_orders.len());
+
+        // Step 3A: per-level P&L table
+        let level_snapshot = self.level_pnl.read().await;
+        if !level_snapshot.is_empty() {
+            println!("\nRealised P&L by Grid Level:");
+            println!("  {:<8} {:>12}  {}", "Level", "P&L (USDC)", "Status");
+            println!("  {}", "-".repeat(32));
+            let mut levels: Vec<(&u64, &f64)> = level_snapshot.iter().collect();
+            levels.sort_by_key(|(k, _)| *k);
+            for (level, pnl) in levels {
+                let status = if *pnl >= 0.0 { "WIN" } else { "LOSS" };
+                println!("  L{:<7} {:>+12.4}  {}", level, pnl, status);
+            }
+        }
+        drop(level_snapshot);
+
+        println!("\nOpen Orders: {}", open_orders.len());
         println!("SOL Price  : ${:.4}", current_price);
     }
 
@@ -566,7 +638,7 @@ impl PaperTradingEngine {
 }
 
 // =============================================================================
-// UNIFIED TRADING ENGINE TRAIT IMPLEMENTATION (V3.2)
+// UNIFIED TRADING ENGINE TRAIT IMPLEMENTATION (V3.3)
 // =============================================================================
 
 #[async_trait]
@@ -729,5 +801,89 @@ mod tests {
         // Price at 105 -- below ask, should NOT fill
         let fills = engine.process_price_update(105.0).await.unwrap();
         assert_eq!(fills.len(), 0, "No fills expected when price has not crossed");
+    }
+
+    // -- Step 3A: P&L tests ---------------------------------------------------
+
+    /// A paired buy then sell on the same level must produce a non-None pnl.
+    /// With slippage=0 and default fees, selling higher than buying => positive pnl.
+    #[tokio::test]
+    async fn test_pnl_computed_on_paired_sell() {
+        // Zero slippage so prices are exact and pnl is predictable
+        let engine = PaperTradingEngine::new(10_000.0, 0.0)
+            .with_slippage(0.0)
+            .with_fees(0.0001, 0.0001);
+
+        // Buy 1.0 SOL at 100.0 on level 1
+        engine
+            .place_limit_order_with_level(OrderSide::Buy, 100.0, 1.0, Some(1))
+            .await
+            .unwrap();
+
+        // Price drops to 99 -> buy fills at 100.0 (slippage=0)
+        let buy_fills = engine.process_price_update(99.0).await.unwrap();
+        assert_eq!(buy_fills.len(), 1);
+        assert_eq!(buy_fills[0].side, OrderSide::Buy);
+        assert!(buy_fills[0].pnl.is_none(), "Buy fills must have pnl = None");
+
+        // Now place a sell at 110 on the same level 1
+        engine
+            .place_limit_order_with_level(OrderSide::Sell, 110.0, 1.0, Some(1))
+            .await
+            .unwrap();
+
+        // Price rises to 111 -> sell fills at 110.0 (slippage=0)
+        let sell_fills = engine.process_price_update(111.0).await.unwrap();
+        assert_eq!(sell_fills.len(), 1);
+        let fill = &sell_fills[0];
+        assert_eq!(fill.side, OrderSide::Sell);
+        assert!(fill.pnl.is_some(), "Paired sell must have pnl populated");
+
+        let pnl = fill.pnl.unwrap();
+        // gross = (110 - 100) * 1.0 = 10.0; fees = 100*0.0001 + 110*0.0001 = 0.021
+        assert!(pnl > 0.0, "pnl should be positive: sell@110 > buy@100, got {}", pnl);
+        assert!(pnl < 10.1, "pnl should be near $10 minus fees, got {}", pnl);
+
+        // get_per_level_pnl should reflect the same value
+        let level_map = engine.get_per_level_pnl().await;
+        assert!(level_map.contains_key(&1), "Level 1 must appear in per_level_pnl");
+        assert!((level_map[&1] - pnl).abs() < 1e-9, "level_pnl should match fill.pnl");
+    }
+
+    /// A sell that fires without a prior buy on the same level should not panic
+    /// and should produce pnl = None (e.g. initial grid sell orders).
+    #[tokio::test]
+    async fn test_pnl_none_for_sell_without_paired_buy() {
+        let engine = PaperTradingEngine::new(10_000.0, 5.0); // start with 5 SOL
+
+        // Sell directly, no prior buy on level 4
+        engine
+            .place_limit_order_with_level(OrderSide::Sell, 100.0, 0.1, Some(4))
+            .await
+            .unwrap();
+
+        let fills = engine.process_price_update(101.0).await.unwrap();
+        assert_eq!(fills.len(), 1);
+        assert_eq!(fills[0].pnl, None,
+            "Sell without paired buy must have pnl = None");
+
+        // level_pnl should be empty (no completed cycle)
+        let level_map = engine.get_per_level_pnl().await;
+        assert!(level_map.is_empty(), "No completed cycles => empty per_level_pnl");
+    }
+
+    /// Buy fills must ALWAYS have pnl = None regardless of price.
+    #[tokio::test]
+    async fn test_pnl_always_none_for_buy_fill() {
+        let engine = PaperTradingEngine::new(10_000.0, 0.0);
+        engine
+            .place_limit_order_with_level(OrderSide::Buy, 100.0, 0.5, Some(9))
+            .await
+            .unwrap();
+
+        let fills = engine.process_price_update(99.0).await.unwrap();
+        assert_eq!(fills.len(), 1);
+        assert_eq!(fills[0].pnl, None,
+            "Buy fills must always have pnl = None (unrealised)");
     }
 }
