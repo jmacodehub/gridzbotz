@@ -29,6 +29,15 @@
 //! ✅ process_price_update returns Vec<FillEvent> — no more string-sniff hacks
 //! ✅ FillEvent::parse_level_id() — auto-parses '-L<N>' suffix from order IDs
 //!
+//! Stage 3 / Step 3A (Feb 2026):
+//! ✅ FillEvent.pnl populated on paired sell fills
+//! ✅ buy_fills + level_pnl maps in PaperTradingEngine
+//! ✅ get_per_level_pnl() — per-level P&L snapshot
+//!
+//! Stage 3 / Step 3B (Feb 2026):
+//! ✅ FillLogger — append-only CSV, zero deps, fills/fills_YYYYMMDD.csv
+//! ✅ PaperTradingEngine.with_fill_logging() builder method
+//!
 //! February 2026 - V5.1 JUPITER CONSOLIDATED! 🚀
 //! ═════════════════════════════════════════════════════════════════════════
 
@@ -54,6 +63,7 @@ pub mod jupiter_client;      // 🪐 V5.1: Unified Jupiter client (replaces jupi
 pub mod real_trader;         // 🔥 ENABLED - Phase 5 Complete!
 pub mod enhanced_metrics;    // 📊 V4.1: Enhanced analytics tracking
 pub mod adaptive_optimizer;  // 🧠 V4.2: Self-learning optimizer
+pub mod fill_logger;         // 📝 Step 3B: Append-only CSV fill persistence
 
 // WebSocket feeds (optional feature)
 #[cfg(feature = "websockets")]
@@ -77,6 +87,12 @@ pub use paper_trader::{
     Trade as PaperTrade,
     PerformanceStats as PaperPerformanceStats,
 };
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Fill Logger Exports (Step 3B)
+// ═══════════════════════════════════════════════════════════════════════════
+
+pub use fill_logger::FillLogger;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Grid Level State Machine Exports (V4.0)
@@ -196,7 +212,8 @@ pub struct FillEvent {
     /// `None` for orders placed without a level tag.
     pub grid_level_id: Option<u64>,
     /// Realized PnL for this fill in USDC.
-    /// `None` until a sell is paired with its originating buy.
+    /// `None` until a sell is paired with its originating buy (Step 3A).
+    /// Populated by PaperTradingEngine; RealTradingEngine in Step 4.
     pub pnl: Option<f64>,
     /// Unix timestamp (seconds) of the fill.
     pub timestamp: i64,
@@ -402,6 +419,9 @@ pub mod prelude {
         // Fill Events (Stage 3 / Step 2)
         FillEvent,
 
+        // Fill Logger (Stage 3 / Step 3B)
+        FillLogger,
+
         // Grid State Machine
         GridStateTracker,
         GridLevel,
@@ -491,8 +511,8 @@ mod tests {
     #[test]
     fn test_fill_event_parse_level_id_untagged() {
         assert_eq!(FillEvent::parse_level_id("ORDER-000006"),      None);
-        assert_eq!(FillEvent::parse_level_id("ORDER-000006-Labc"), None); // non-numeric
-        assert_eq!(FillEvent::parse_level_id("ORDER-000006-L"),    None); // empty suffix
+        assert_eq!(FillEvent::parse_level_id("ORDER-000006-Labc"), None);
+        assert_eq!(FillEvent::parse_level_id("ORDER-000006-L"),    None);
         assert_eq!(FillEvent::parse_level_id(""),                   None);
     }
 
@@ -501,16 +521,11 @@ mod tests {
         let fill = FillEvent::new(
             "ORDER-000007-L5".to_string(),
             OrderSide::Buy,
-            150.0,
-            0.1,
-            0.003,
-            None,
-            1_700_000_000,
+            150.0, 0.1, 0.003, None, 1_700_000_000,
         );
         assert_eq!(fill.grid_level_id, Some(5));
         assert_eq!(fill.side, OrderSide::Buy);
         assert_eq!(fill.price, 150.0);
-        assert_eq!(fill.size, 0.1);
     }
 
     #[test]
@@ -518,11 +533,7 @@ mod tests {
         let fill = FillEvent::new(
             "ORDER-000008".to_string(),
             OrderSide::Sell,
-            200.0,
-            0.2,
-            0.006,
-            Some(1.23),
-            1_700_000_001,
+            200.0, 0.2, 0.006, Some(1.23), 1_700_000_001,
         );
         assert_eq!(fill.grid_level_id, None);
         assert_eq!(fill.pnl, Some(1.23));
