@@ -1,5 +1,5 @@
 //! =============================================================================
-//! GRID BOT V4.3 - ELITE AUTONOMOUS TRADING ORCHESTRATOR
+//! GRID BOT V4.4 - ELITE AUTONOMOUS TRADING ORCHESTRATOR
 //!
 //! V4.3 ENHANCEMENTS - Fill Tracking & Learning:
 //! - GridLevel pairing (buy/sell orders linked)
@@ -24,9 +24,16 @@
 //! - process_price_update returns Vec<FillEvent> -- no string-sniffing
 //! - fill.side used directly; to_lowercase().contains("buy") hack removed
 //! - manager.notify_fill(&fill) wired for every fill
+//!
+//! Stage 3 / Step 5B (Feb 2026):
+//! - last_reposition_price: dedicated anchor for crossing gate
+//! - signal_active: record_signal() reflects real consensus (not hardcoded true)
+//! - is_trading_allowed() guards every reposition attempt
+//! - should_reposition() + reposition_grid() wired into price tick loop
+//! - Signal::Hold respected -- grid held, debug log emitted
 //! =============================================================================
 
-use crate::strategies::{StrategyManager, GridRebalancer, GridRebalancerConfig};
+use crate::strategies::{StrategyManager, GridRebalancer, GridRebalancerConfig, Signal};
 use crate::strategies::shared::analytics::AnalyticsContext;
 use crate::trading::{
     TradingEngine,        // Stage 3 Step 1: engine-agnostic trait
@@ -48,29 +55,35 @@ const OPTIMIZATION_INTERVAL_CYCLES: u64 = 50;  // Every 50 cycles (~5 mins at 10
 // =============================================================================
 
 pub struct GridBot {
-    pub manager:             StrategyManager,
-    engine:                  Box<dyn TradingEngine>,  // Stage 3 Step 1: engine-agnostic; private
-    pub config:              Config,
-    pub grid_state:          GridStateTracker,
-    pub enhanced_metrics:    EnhancedMetrics,
-    pub adaptive_optimizer:  AdaptiveOptimizer,
-    last_price:              Option<f64>,
-    total_cycles:            u64,
-    successful_trades:       u64,
-    grid_repositions:        u64,
-    last_reposition_time:    Option<std::time::Instant>,
-    last_optimization_cycle: u64,
-    grid_initialized:        bool,
-    total_fills_tracked:     u64,
+    pub manager:              StrategyManager,
+    engine:                   Box<dyn TradingEngine>,  // Stage 3 Step 1: engine-agnostic; private
+    pub config:               Config,
+    pub grid_state:           GridStateTracker,
+    pub enhanced_metrics:     EnhancedMetrics,
+    pub adaptive_optimizer:   AdaptiveOptimizer,
+    last_price:               Option<f64>,
+    /// Dedicated anchor for the crossing / reposition gate.
+    /// Updated only when a reposition actually fires — NOT on every tick.
+    /// Prevents anchor drift that would suppress future repositions.
+    last_reposition_price:    Option<f64>,
+    total_cycles:             u64,
+    successful_trades:        u64,
+    grid_repositions:         u64,
+    last_reposition_time:     Option<std::time::Instant>,
+    last_optimization_cycle:  u64,
+    grid_initialized:         bool,
+    total_fills_tracked:      u64,
 }
 
 impl GridBot {
     /// Create a new GridBot with an injected engine.
     /// The caller decides whether to pass a PaperTradingEngine or RealTradingEngine.
     pub fn new(config: Config, engine: Box<dyn TradingEngine>) -> Result<Self> {
-        info!("[GridBot] Initializing V4.3 FILL TRACKING MODE");
+        info!("[GridBot] Initializing V4.4 CROSSING DETECTION MODE");
         info!("[GridBot] Adaptive Intelligence: ENABLED");
-        info!("[GridBot] Fill Tracking: ENABLED");
+        info!("[GridBot] Fill Tracking:         ENABLED");
+        info!("[GridBot] Signal Gate:            ENABLED");
+        info!("[GridBot] Circuit Breaker Gate:   ENABLED");
 
         let analytics_ctx = AnalyticsContext::default();
         let mut manager = StrategyManager::new(analytics_ctx);
@@ -115,14 +128,14 @@ impl GridBot {
 
         info!("[GridBot] Trading engine injected (type decided by caller)");
 
-        let grid_state        = GridStateTracker::new();
-        let enhanced_metrics  = EnhancedMetrics::new();
-        let base_spacing      = config.trading.grid_spacing_percent / 100.0;
-        let base_size         = config.trading.min_order_size;
+        let grid_state         = GridStateTracker::new();
+        let enhanced_metrics   = EnhancedMetrics::new();
+        let base_spacing       = config.trading.grid_spacing_percent / 100.0;
+        let base_size          = config.trading.min_order_size;
         let adaptive_optimizer = AdaptiveOptimizer::new(base_spacing, base_size);
 
         info!("[GridBot] Optimization interval: every {} cycles", OPTIMIZATION_INTERVAL_CYCLES);
-        info!("[GridBot] V4.3 initialization complete");
+        info!("[GridBot] V4.4 initialization complete");
 
         Ok(Self {
             manager,
@@ -132,6 +145,7 @@ impl GridBot {
             enhanced_metrics,
             adaptive_optimizer,
             last_price:              None,
+            last_reposition_price:   None,
             total_cycles:            0,
             successful_trades:       0,
             grid_repositions:        0,
@@ -325,31 +339,70 @@ impl GridBot {
         Ok(())
     }
 
+    /// Main price tick handler — called on every price update from the feed.
+    ///
+    /// Execution order:
+    ///   1. Strategy consensus  → gate: is the market tradeable right now?
+    ///   2. Circuit breaker     → gate: is the engine healthy?
+    ///   3. Crossing detection  → should_reposition? → reposition_grid()
+    ///   4. Fill collection     → engine.process_price_update()
+    ///   5. Portfolio snapshot  → engine.get_engine_stats()
+    ///   6. Adaptive optimizer  → runs every OPTIMIZATION_INTERVAL_CYCLES ticks
     pub async fn process_price_update(&mut self, price: f64, timestamp: i64) -> Result<()> {
-        self.total_cycles  += 1;
-        self.last_price     = Some(price);
-
+        self.total_cycles += 1;
+        self.last_price    = Some(price);
         self.enhanced_metrics.update_price_range(price);
 
         trace!("[GridBot] Price update: ${:.4} (cycle {})", price, self.total_cycles);
 
+        // ── 1. Strategy consensus gate ────────────────────────────────────────
         let signal = self.manager.analyze_all(price, timestamp).await
             .context("Failed to get strategy consensus")?;
 
-        self.enhanced_metrics.record_signal(true);
+        // Record real signal activity — not the old hardcoded `true`.
+        // signal_execution_ratio in EnhancedMetrics is now meaningful.
+        let signal_active = !matches!(signal, Signal::Hold { .. });
+        self.enhanced_metrics.record_signal(signal_active);
 
         trace!("[GridBot] Signal: {}", signal.display());
 
-        // =====================================================================
-        // Stage 3 / Step 2 -- FILL EVENT PROCESSING
-        // process_price_update now returns Vec<FillEvent> instead of Vec<String>.
-        // We iterate fill structs directly -- no string-sniffing needed.
-        // =====================================================================
+        // ── 2. Circuit breaker / engine health gate ───────────────────────────
+        let trading_ok = self.engine.is_trading_allowed().await;
+        if !trading_ok {
+            warn!("[GridBot] Engine halted — circuit breaker or emergency shutdown active");
+        }
+
+        // ── 3. Crossing detection → place / reposition grid ───────────────────
+        // Both gates must pass: engine healthy AND strategy not Hold.
+        if trading_ok && signal_active {
+            // Use the dedicated reposition anchor, NOT last_price.
+            // last_price drifts every tick; last_reposition_price is stable
+            // until a reposition fires, giving the threshold a fair chance.
+            let anchor = self.last_reposition_price.unwrap_or(price);
+
+            if self.should_reposition(price, anchor).await {
+                info!("[GridBot] Crossing detected ${:.4} → ${:.4} | signal={}",
+                      anchor, price, signal.display());
+
+                self.reposition_grid(price, anchor).await
+                    .context("Failed to reposition grid on price crossing")?;
+
+                // Only update anchor AFTER a successful reposition
+                self.last_reposition_price = Some(price);
+            }
+        } else if !signal_active {
+            debug!("[GridBot] Signal HOLD — grid held, no reposition ({})", signal.display());
+        }
+        // If !trading_ok the warn above covers it; no extra log needed here.
+
+        // ── 4. Collect fills emitted by engine ────────────────────────────────
+        // process_price_update on the engine scans the virtual order book
+        // (paper) or polls on-chain state (live) and returns filled orders.
         let filled_orders: Vec<FillEvent> = self.engine.process_price_update(price).await
             .context("Failed to process price update in trading engine")?;
 
         if !filled_orders.is_empty() {
-            info!("[GridBot] {} orders filled at ${:.4}", filled_orders.len(), price);
+            info!("[GridBot] {} fill(s) at ${:.4}", filled_orders.len(), price);
             self.successful_trades += filled_orders.len() as u64;
 
             for fill in &filled_orders {
@@ -380,19 +433,20 @@ impl GridBot {
             }
         }
 
-        // Stage 3 Step 1: get_engine_stats() -- no concrete engine types needed
+        // ── 5. Portfolio snapshot ─────────────────────────────────────────────
         let engine_stats = self.engine.get_engine_stats(price).await;
         self.enhanced_metrics.update_portfolio_value(engine_stats.total_value_usdc);
 
-        // Run adaptive optimization periodically
+        // ── 6. Adaptive optimization every N cycles ───────────────────────────
         if self.total_cycles - self.last_optimization_cycle >= OPTIMIZATION_INTERVAL_CYCLES {
             debug!("[GridBot] Running adaptive optimization cycle...");
             let result = self.adaptive_optimizer.optimize(&self.enhanced_metrics);
 
             if result.any_changes() {
-                info!("[GridBot] Optimization applied: {}", result.reason);
-                info!("  New spacing: {:.3}%",  result.new_spacing * 100.0);
-                info!("  New size:    {:.3} SOL", result.new_position_size);
+                info!("[GridBot] Optimizer: {} | spacing={:.3}% size={:.3} SOL",
+                      result.reason,
+                      result.new_spacing * 100.0,
+                      result.new_position_size);
             }
 
             self.last_optimization_cycle = self.total_cycles;
@@ -416,7 +470,7 @@ impl GridBot {
             roi_percent:             engine_stats.roi_percent,
             win_rate:                engine_stats.win_rate,
             total_fees:              engine_stats.total_fees,
-            trading_paused:          false,
+            trading_paused:          !self.engine.is_trading_allowed().await,
             profitable_trades:       self.enhanced_metrics.profitable_trades,
             unprofitable_trades:     self.enhanced_metrics.unprofitable_trades,
             max_drawdown:            self.enhanced_metrics.max_drawdown,
@@ -434,7 +488,7 @@ impl GridBot {
         let sep   = "=".repeat(60);
 
         println!("\n{}", sep);
-        println!("  GRID BOT V4.3 FILL TRACKING - STATUS REPORT");
+        println!("  GRID BOT V4.4 CROSSING DETECTION - STATUS REPORT");
         println!("{}", sep);
 
         println!("\nBot Performance:");
@@ -443,6 +497,7 @@ impl GridBot {
         println!("  Grid Repositions : {}", stats.grid_repositions);
         println!("  Open Orders      : {}", stats.open_orders);
         println!("  Fills Tracked    : {}", stats.total_fills_tracked);
+        println!("  Trading Paused   : {}", stats.trading_paused);
 
         let grid_levels = self.grid_state.count().await;
         let filled_buys = self.grid_state.get_levels_with_filled_buys().await.len();
@@ -452,6 +507,9 @@ impl GridBot {
         println!("  Active Levels    : {}", grid_levels);
         println!("  Filled Buys      : {}", filled_buys);
         println!("  Realized P&L     : ${:.2}", total_pnl);
+        if let Some(anchor) = self.last_reposition_price {
+            println!("  Reposition Anchor: ${:.4}", anchor);
+        }
 
         println!("\nPortfolio:");
         println!("  Total Value      : ${:.2}", stats.total_value_usdc);
@@ -507,7 +565,7 @@ pub struct BotStats {
 
 impl BotStats {
     pub fn display_summary(&self) {
-        println!("\nBOT STATISTICS SUMMARY V4.3 FILL TRACKING");
+        println!("\nBOT STATISTICS SUMMARY V4.4 CROSSING DETECTION");
         println!("  Cycles           : {}", self.total_cycles);
         println!("  Trades           : {}", self.successful_trades);
         println!("  Repositions      : {}", self.grid_repositions);
@@ -518,6 +576,7 @@ impl BotStats {
         println!("  ROI              : {:.2}%", self.roi_percent);
         println!("  Win Rate         : {:.2}%", self.win_rate);
         println!("  Fees             : ${:.2}", self.total_fees);
+        println!("  Trading Paused   : {}", self.trading_paused);
 
         println!("\nEnhanced Analytics:");
         println!("  Profitable Trades: {}", self.profitable_trades);
@@ -532,9 +591,9 @@ impl BotStats {
         println!("  Optimizations    : {}", self.optimization_count);
 
         if self.trading_paused {
-            println!("  Status           : PAUSED");
+            println!("  Status           : PAUSED (circuit breaker / emergency shutdown)");
         } else {
-            println!("  Status           : V4.3 FILL TRACKING ACTIVE");
+            println!("  Status           : V4.4 CROSSING DETECTION ACTIVE");
         }
     }
 }
