@@ -1,5 +1,5 @@
 //! =============================================================================
-//! GRID BOT V4.4 - ELITE AUTONOMOUS TRADING ORCHESTRATOR
+//! GRID BOT V4.5 - STRATEGY-AS-SOURCE-OF-TRUTH
 //!
 //! V4.3 ENHANCEMENTS - Fill Tracking & Learning:
 //! - GridLevel pairing (buy/sell orders linked)
@@ -34,18 +34,29 @@
 //!
 //! Stage 3 / Step 5D (Feb 2026):
 //! - update_grid_stats() now called after every fill batch, not just on reposition
-//!   → AdaptiveOptimizer always receives live level utilisation data
+//!   -> AdaptiveOptimizer always receives live level utilisation data
+//!
+//! Stage 3 / Step 6 (Feb 2026) - STRATEGY AS SOURCE OF TRUTH:
+//! - process_price_update Step 3 now matches on Signal variant:
+//!     Buy { level_id: None }  -> reposition_grid() (init or anchor drift)
+//!     Buy { level_id: Some }  -> place single order for that level
+//!     Sell { level_id: Some } -> place single order for that level
+//!     Hold                    -> nothing
+//! - Old blunt signal_active gate removed; GridRebalancer owns crossing logic.
+//! - sync_levels_to_strategy(): pushes level snapshots + anchor into strategy
+//!   after every grid placement so GridRebalancer is always up to date.
 //! =============================================================================
 
 use crate::strategies::{StrategyManager, GridRebalancer, GridRebalancerConfig, Signal};
+use crate::strategies::grid_rebalancer::LevelSnapshot;
 use crate::strategies::shared::analytics::AnalyticsContext;
 use crate::trading::{
-    TradingEngine,        // Stage 3 Step 1: engine-agnostic trait
+    TradingEngine,
     OrderSide,
-    FillEvent,            // Stage 3 Step 2: rich fill context from process_price_update
+    FillEvent,
     GridStateTracker,
-    EnhancedMetrics,      // V4.1: Enhanced metrics
-    AdaptiveOptimizer,    // V4.2: Adaptive intelligence
+    EnhancedMetrics,
+    AdaptiveOptimizer,
 };
 use crate::config::Config;
 use anyhow::{Result, Context};
@@ -55,20 +66,20 @@ use log::{info, warn, debug, trace};
 const OPTIMIZATION_INTERVAL_CYCLES: u64 = 50;  // Every 50 cycles (~5 mins at 100ms)
 
 // =============================================================================
-// GRID BOT - ELITE Autonomous Trading Orchestrator
+// GRID BOT - Strategy-as-Source-of-Truth Orchestrator
 // =============================================================================
 
 pub struct GridBot {
     pub manager:              StrategyManager,
-    engine:                   Box<dyn TradingEngine>,  // Stage 3 Step 1: engine-agnostic; private
+    engine:                   Box<dyn TradingEngine>,
     pub config:               Config,
     pub grid_state:           GridStateTracker,
     pub enhanced_metrics:     EnhancedMetrics,
     pub adaptive_optimizer:   AdaptiveOptimizer,
     last_price:               Option<f64>,
-    /// Dedicated anchor for the crossing / reposition gate.
-    /// Updated only when a reposition actually fires — NOT on every tick.
-    /// Prevents anchor drift that would suppress future repositions.
+    /// Kept for potential future use (e.g. emergency reposition override).
+    /// Primary reposition logic now lives in GridRebalancer.analyze().
+    #[allow(dead_code)]
     last_reposition_price:    Option<f64>,
     total_cycles:             u64,
     successful_trades:        u64,
@@ -83,16 +94,20 @@ impl GridBot {
     /// Create a new GridBot with an injected engine.
     /// The caller decides whether to pass a PaperTradingEngine or RealTradingEngine.
     pub fn new(config: Config, engine: Box<dyn TradingEngine>) -> Result<Self> {
-        info!("[GridBot] Initializing V4.4 CROSSING DETECTION MODE");
+        info!("[GridBot] Initializing V4.5 STRATEGY-AS-SOURCE-OF-TRUTH");
         info!("[GridBot] Adaptive Intelligence: ENABLED");
         info!("[GridBot] Fill Tracking:         ENABLED");
-        info!("[GridBot] Signal Gate:            ENABLED");
-        info!("[GridBot] Circuit Breaker Gate:   ENABLED");
+        info!("[GridBot] Level Crossing Gate:   ENABLED (V5.0)");
+        info!("[GridBot] Circuit Breaker Gate:  ENABLED");
 
         let analytics_ctx = AnalyticsContext::default();
         let mut manager   = StrategyManager::new(analytics_ctx);
 
         info!("[GridBot] Creating grid rebalancer from config...");
+
+        // V5.0: wire reposition_threshold_pct from config.trading
+        // Falls back to 0.5% if not set (safe for paper runs)
+        let reposition_threshold_pct = config.trading.reposition_threshold;
 
         let grid_config = GridRebalancerConfig {
             grid_spacing:                    config.trading.grid_spacing_percent / 100.0,
@@ -112,13 +127,14 @@ impl GridBot {
             order_max_age_minutes:           config.trading.order_max_age_minutes,
             order_refresh_interval_minutes:  config.trading.order_refresh_interval_minutes,
             min_orders_to_maintain:          config.trading.min_orders_to_maintain,
+            reposition_threshold_pct,        // V5.0
         };
 
         let grid_rebalancer = GridRebalancer::new(grid_config)
             .context("Failed to create GridRebalancer")?;
 
         manager.add_strategy(grid_rebalancer);
-        info!("[GridBot] Grid rebalancer strategy loaded");
+        info!("[GridBot] Grid rebalancer V5.0 strategy loaded");
 
         if config.strategies.momentum.enabled {
             info!("[GridBot] Momentum strategy enabled (not yet implemented)");
@@ -139,7 +155,8 @@ impl GridBot {
         let adaptive_optimizer = AdaptiveOptimizer::new(base_spacing, base_size);
 
         info!("[GridBot] Optimization interval: every {} cycles", OPTIMIZATION_INTERVAL_CYCLES);
-        info!("[GridBot] V4.4 initialization complete");
+        info!("[GridBot] Reposition threshold:  {:.2}%", reposition_threshold_pct);
+        info!("[GridBot] V4.5 initialization complete");
 
         Ok(Self {
             manager,
@@ -166,38 +183,9 @@ impl GridBot {
         Ok(())
     }
 
-    pub async fn should_reposition(&self, current_price: f64, last_price: f64) -> bool {
-        if !self.grid_initialized {
-            info!("[GridBot] Grid not initialized - will initialize on first cycle");
-            return true;
-        }
-
-        if self.last_price.is_none() {
-            trace!("[GridBot] No last price - skipping reposition check");
-            return false;
-        }
-
-        if let Some(last_reposition) = self.last_reposition_time {
-            let cooldown_secs = self.config.trading.rebalance_cooldown_secs;
-            let elapsed       = last_reposition.elapsed().as_secs();
-            if elapsed < cooldown_secs {
-                trace!("[GridBot] Reposition cooldown: {}s elapsed, {}s required",
-                       elapsed, cooldown_secs);
-                return false;
-            }
-        }
-
-        let price_change_pct = ((current_price - last_price).abs() / last_price) * 100.0;
-        let threshold        = self.config.trading.reposition_threshold;
-        let should           = price_change_pct > threshold;
-
-        if should {
-            debug!("[GridBot] Reposition triggered: {:.3}% > {:.3}% threshold",
-                   price_change_pct, threshold);
-        }
-
-        should
-    }
+    // =========================================================================
+    // GRID PLACEMENT
+    // =========================================================================
 
     pub async fn reposition_grid(&mut self, current_price: f64, last_price: f64) -> Result<()> {
         if !self.grid_initialized {
@@ -210,6 +198,8 @@ impl GridBot {
             let used_levels  = self.grid_state.count().await;
             self.enhanced_metrics.update_grid_stats(total_levels, used_levels);
 
+            // V5.0: sync level snapshot into GridRebalancer after first placement
+            self.sync_levels_to_strategy(current_price).await;
             return Ok(());
         }
 
@@ -236,61 +226,52 @@ impl GridBot {
             if let Some(level) = self.grid_state.get_level(level_id).await {
                 if let Some(buy_id) = &level.buy_order_id {
                     match self.engine.cancel_order(buy_id).await {
-                        Ok(_) => {
-                            debug!("[GridBot] Cancelled buy {} level {}", buy_id, level_id);
-                            cancelled_count += 1;
-                        }
+                        Ok(_)  => { cancelled_count += 1; }
                         Err(e) => warn!("[GridBot] Failed to cancel buy {}: {}", buy_id, e),
                     }
                 }
-
                 if let Some(sell_id) = &level.sell_order_id {
                     match self.engine.cancel_order(sell_id).await {
-                        Ok(_) => {
-                            debug!("[GridBot] Cancelled sell {} level {}", sell_id, level_id);
-                            cancelled_count += 1;
-                        }
+                        Ok(_)  => { cancelled_count += 1; }
                         Err(e) => warn!("[GridBot] Failed to cancel sell {}: {}", sell_id, e),
                     }
                 }
-
                 self.grid_state.mark_cancelled(level_id).await;
             }
         }
 
         if cancelled_count > 0 {
-            info!("[GridBot] Cancelled {} orders from safe levels", cancelled_count);
-        } else {
-            info!("[GridBot] No orders needed cancellation");
+            info!("[GridBot] Cancelled {} orders", cancelled_count);
         }
 
         self.place_grid_orders(current_price).await?;
 
-        self.grid_repositions     += 1;
-        self.last_reposition_time  = Some(std::time::Instant::now());
+        self.grid_repositions    += 1;
+        self.last_reposition_time = Some(std::time::Instant::now());
 
         let total_levels = self.config.trading.grid_levels as usize;
         let used_levels  = self.grid_state.count().await;
         self.enhanced_metrics.update_grid_stats(total_levels, used_levels);
 
-        let reposition_time = reposition_start.elapsed().as_millis();
-        info!("[GridBot] Grid repositioned in {}ms", reposition_time);
+        // V5.0: sync updated level snapshot + new anchor into GridRebalancer
+        self.sync_levels_to_strategy(current_price).await;
+
+        let elapsed = reposition_start.elapsed().as_millis();
+        info!("[GridBot] Grid repositioned in {}ms", elapsed);
 
         Ok(())
     }
 
     async fn place_grid_orders(&mut self, current_price: f64) -> Result<()> {
-        // Use optimized values from adaptive optimizer instead of raw config
         let grid_spacing = self.adaptive_optimizer.current_spacing_percent;
         let order_size   = self.adaptive_optimizer.current_position_size;
         let num_levels   = self.config.trading.grid_levels;
 
-        debug!("[GridBot] Adaptive params: {} levels @ {:.3}% spacing, {:.3} SOL/order",
+        debug!("[GridBot] Placing {} levels @ {:.3}% spacing, {:.3} SOL/order",
                num_levels, grid_spacing * 100.0, order_size);
 
         let mut orders_placed = 0;
         let mut orders_failed = 0;
-
         let buy_levels  = num_levels / 2;
         let sell_levels = num_levels - buy_levels;
 
@@ -300,13 +281,11 @@ impl GridBot {
 
             let mut level = self.grid_state.create_level(buy_price, sell_price, order_size).await;
 
-            // Stage 3 Step 1: use trait method with level ID tagging
             match self.engine.place_limit_order_with_level(
                 OrderSide::Buy, buy_price, order_size, Some(level.id)
             ).await {
                 Ok(buy_order_id) => {
-                    level.set_buy_order(buy_order_id.clone());
-                    trace!("[GridBot] Buy placed @ ${:.4} (Level {})", buy_price, level.id);
+                    level.set_buy_order(buy_order_id);
                     orders_placed += 1;
                 }
                 Err(e) => {
@@ -320,8 +299,7 @@ impl GridBot {
                 OrderSide::Sell, sell_price, order_size, Some(level.id)
             ).await {
                 Ok(sell_order_id) => {
-                    level.set_sell_order(sell_order_id.clone());
-                    trace!("[GridBot] Sell placed @ ${:.4} (Level {})", sell_price, level.id);
+                    level.set_sell_order(sell_order_id);
                     orders_placed += 1;
                 }
                 Err(e) => {
@@ -336,23 +314,64 @@ impl GridBot {
         info!("[GridBot] Placed {} orders ({} pairs), {} failed",
               orders_placed, buy_levels.min(sell_levels), orders_failed);
 
-        if orders_failed > 0 {
-            warn!("[GridBot] {} orders failed to place", orders_failed);
-        }
-
         Ok(())
     }
 
-    /// Main price tick handler — called on every price update from the feed.
-    ///
-    /// Execution order:
-    ///   1. Strategy consensus  → gate: is the market tradeable right now?
-    ///   2. Circuit breaker     → gate: is the engine healthy?
-    ///   3. Crossing detection  → should_reposition? → reposition_grid()
-    ///   4. Fill collection     → engine.process_price_update()
-    ///   5. Grid stats refresh  → update_grid_stats() [Step 5D: moved here from reposition only]
-    ///   6. Portfolio snapshot  → engine.get_engine_stats()
-    ///   7. Adaptive optimizer  → runs every OPTIMIZATION_INTERVAL_CYCLES ticks
+    // =========================================================================
+    // V5.0 - SYNC LEVEL SNAPSHOTS INTO STRATEGY
+    //
+    // Called after every grid placement / reposition.
+    // Reads price boundaries from GridStateTracker and pushes them into
+    // GridRebalancer via set_grid_levels() + set_anchor().
+    //
+    // This is the wire that makes the strategy the source of truth:
+    // the strategy knows exactly where the current grid lines are, so
+    // crossing detection in analyze() is always accurate.
+    // =========================================================================
+
+    async fn sync_levels_to_strategy(&mut self, anchor_price: f64) {
+        // Collect price-only snapshots from all active levels
+        let snapshots: Vec<LevelSnapshot> = self.grid_state
+            .get_all_levels().await
+            .into_iter()
+            .map(|l| LevelSnapshot {
+                id:         l.id,
+                buy_price:  l.buy_price,
+                sell_price: l.sell_price,
+            })
+            .collect();
+
+        let count = snapshots.len();
+
+        // Push into the GridRebalancer strategy
+        // We use get_grid_rebalancer_mut() from StrategyManager to access it.
+        if let Some(rebalancer) = self.manager.get_grid_rebalancer_mut() {
+            rebalancer.set_grid_levels(snapshots).await;
+            rebalancer.set_anchor(anchor_price).await;
+            debug!("[GridBot] Synced {} level snapshots to strategy (anchor=${:.4})",
+                   count, anchor_price);
+        } else {
+            warn!("[GridBot] Could not sync levels: GridRebalancer not found in manager");
+        }
+    }
+
+    // =========================================================================
+    // MAIN PRICE TICK HANDLER
+    //
+    // Execution order:
+    //   1. Circuit breaker     - is the engine healthy?
+    //   2. Strategy signal     - what does GridRebalancer say this tick?
+    //   3. Act on signal       - dispatch based on signal variant:
+    //        Buy(None)          -> reposition_grid() + sync levels
+    //        Buy(Some(id))      -> place one limit buy for that level
+    //        Sell(Some(id))     -> place one limit sell for that level
+    //        Hold               -> nothing
+    //   4. Fill collection     - engine.process_price_update()
+    //   5. Grid stats refresh  - update_grid_stats()
+    //   6. Portfolio snapshot  - engine.get_engine_stats()
+    //   7. Adaptive optimizer  - runs every OPTIMIZATION_INTERVAL_CYCLES ticks
+    // =========================================================================
+
     pub async fn process_price_update(&mut self, price: f64, timestamp: i64) -> Result<()> {
         self.total_cycles += 1;
         self.last_price    = Some(price);
@@ -360,49 +379,75 @@ impl GridBot {
 
         trace!("[GridBot] Price update: ${:.4} (cycle {})", price, self.total_cycles);
 
-        // ── 1. Strategy consensus gate ────────────────────────────────────────
-        let signal = self.manager.analyze_all(price, timestamp).await
-            .context("Failed to get strategy consensus")?;
+        // ── 1. Circuit breaker / engine health gate ───────────────────────────
+        let trading_ok = self.engine.is_trading_allowed().await;
+        if !trading_ok {
+            warn!("[GridBot] Engine halted — circuit breaker or emergency shutdown active");
+            return Ok(());
+        }
 
-        // Record real signal activity — not the old hardcoded `true`.
-        // signal_execution_ratio in EnhancedMetrics is now meaningful.
+        // ── 2. Strategy signal ────────────────────────────────────────────────
+        // GridRebalancer.analyze() now owns all the crossing/reposition logic.
+        // It returns exactly what action to take this tick.
+        let signal = self.manager.analyze_all(price, timestamp).await
+            .context("Failed to get strategy signal")?;
+
+        // Record signal activity for metrics
         let signal_active = !matches!(signal, Signal::Hold { .. });
         self.enhanced_metrics.record_signal(signal_active);
 
         trace!("[GridBot] Signal: {}", signal.display());
 
-        // ── 2. Circuit breaker / engine health gate ───────────────────────────
-        let trading_ok = self.engine.is_trading_allowed().await;
-        if !trading_ok {
-            warn!("[GridBot] Engine halted — circuit breaker or emergency shutdown active");
-        }
-
-        // ── 3. Crossing detection → place / reposition grid ───────────────────
-        // Both gates must pass: engine healthy AND strategy not Hold.
-        if trading_ok && signal_active {
-            // Use the dedicated reposition anchor, NOT last_price.
-            // last_price drifts every tick; last_reposition_price is stable
-            // until a reposition fires, giving the threshold a fair chance.
-            let anchor = self.last_reposition_price.unwrap_or(price);
-
-            if self.should_reposition(price, anchor).await {
-                info!("[GridBot] Crossing detected ${:.4} → ${:.4} | signal={}",
-                      anchor, price, signal.display());
-
-                self.reposition_grid(price, anchor).await
-                    .context("Failed to reposition grid on price crossing")?;
-
-                // Only update anchor AFTER a successful reposition
-                self.last_reposition_price = Some(price);
+        // ── 3. Act on signal ──────────────────────────────────────────────────
+        match &signal {
+            // Grid-wide action: bootstrap or anchor drift → reposition
+            Signal::Buy { level_id: None, reason, price: sig_price, .. } => {
+                info!("[GridBot] Grid action: '{}' @ ${:.4}", reason, sig_price);
+                let anchor = self.last_reposition_price.unwrap_or(*sig_price);
+                self.reposition_grid(*sig_price, anchor).await
+                    .context("Grid action (reposition) failed")?;
+                self.last_reposition_price = Some(*sig_price);
+                // Note: sync_levels_to_strategy() is called inside reposition_grid()
             }
-        } else if !signal_active {
-            debug!("[GridBot] Signal HOLD — grid held, no reposition ({})", signal.display());
+
+            // Level crossing → place a single limit buy for this level
+            Signal::Buy { level_id: Some(id), price: level_price, size, reason, .. } => {
+                debug!("[GridBot] BUY crossing L{} @ ${:.4} — {}", id, level_price, reason);
+                if let Err(e) = self.engine.place_limit_order_with_level(
+                    OrderSide::Buy, *level_price, *size, Some(*id)
+                ).await {
+                    warn!("[GridBot] BUY L{} order failed: {}", id, e);
+                    // Non-fatal: level may already have an open order
+                }
+            }
+
+            // Level crossing → place a single limit sell for this level
+            Signal::Sell { level_id: Some(id), price: level_price, size, reason, .. } => {
+                debug!("[GridBot] SELL crossing L{} @ ${:.4} — {}", id, level_price, reason);
+                if let Err(e) = self.engine.place_limit_order_with_level(
+                    OrderSide::Sell, *level_price, *size, Some(*id)
+                ).await {
+                    warn!("[GridBot] SELL L{} order failed: {}", id, e);
+                }
+            }
+
+            // Sell { level_id: None } shouldn't happen in this bot but handle safely
+            Signal::Sell { level_id: None, .. } => {
+                debug!("[GridBot] Sell(level_id=None) signal ignored");
+            }
+
+            // No action this tick
+            Signal::Hold { .. } => {
+                trace!("[GridBot] Hold — no grid action this tick");
+            }
+
+            // StrongBuy / StrongSell: not emitted by GridRebalancer, but handle gracefully
+            Signal::StrongBuy { .. } | Signal::StrongSell { .. } => {
+                debug!("[GridBot] StrongBuy/StrongSell signal — no handler yet");
+            }
         }
-        // If !trading_ok the warn above covers it; no extra log needed here.
 
         // ── 4. Collect fills emitted by engine ────────────────────────────────
-        // process_price_update on the engine scans the virtual order book
-        // (paper) or polls on-chain state (live) and returns filled orders.
         let filled_orders: Vec<FillEvent> = self.engine.process_price_update(price).await
             .context("Failed to process price update in trading engine")?;
 
@@ -432,17 +477,11 @@ impl GridBot {
                        self.total_cycles);
 
                 self.enhanced_metrics.record_trade(is_buy, pnl, timestamp);
-
-                // Stage 3 / Step 2: notify StrategyManager with full fill context
                 self.manager.notify_fill(fill).await;
             }
         }
 
-        // ── 5. Grid stats refresh (Step 5D) ───────────────────────────────────
-        // Moved from reposition_grid-only to every tick so the AdaptiveOptimizer
-        // always has live level utilisation data, not stale zero-state data.
-        // This prevents the optimizer from misreading 0/0 efficiency and
-        // self-sabotaging position size on the first optimisation pass.
+        // ── 5. Grid stats refresh ─────────────────────────────────────────────
         if self.grid_initialized {
             let total_levels = self.config.trading.grid_levels as usize;
             let used_levels  = self.grid_state.count().await;
@@ -470,6 +509,10 @@ impl GridBot {
 
         Ok(())
     }
+
+    // =========================================================================
+    // STATS & DISPLAY
+    // =========================================================================
 
     pub async fn get_stats(&self) -> BotStats {
         let current_price = self.last_price.unwrap_or(0.0);
@@ -504,7 +547,7 @@ impl GridBot {
         let sep   = "=".repeat(60);
 
         println!("\n{}", sep);
-        println!("  GRID BOT V4.4 CROSSING DETECTION - STATUS REPORT");
+        println!("  GRID BOT V4.5 STRATEGY-AS-SOURCE-OF-TRUTH - STATUS");
         println!("{}", sep);
 
         println!("\nBot Performance:");
@@ -523,9 +566,6 @@ impl GridBot {
         println!("  Active Levels    : {}", grid_levels);
         println!("  Filled Buys      : {}", filled_buys);
         println!("  Realized P&L     : ${:.2}", total_pnl);
-        if let Some(anchor) = self.last_reposition_price {
-            println!("  Reposition Anchor: ${:.4}", anchor);
-        }
 
         println!("\nPortfolio:");
         println!("  Total Value      : ${:.2}", stats.total_value_usdc);
@@ -538,7 +578,6 @@ impl GridBot {
 
         println!("\nEnhanced Metrics:");
         self.enhanced_metrics.display();
-
         self.adaptive_optimizer.display();
 
         println!("\nSOL Price: ${:.4}", current_price);
@@ -571,17 +610,15 @@ pub struct BotStats {
     pub max_drawdown:            f64,
     pub signal_execution_ratio:  f64,
     pub grid_efficiency:         f64,
-    // Optimizer fields
     pub current_spacing_percent: f64,
     pub current_position_size:   f64,
     pub optimization_count:      u64,
-    // V4.3: Fill tracking
     pub total_fills_tracked:     u64,
 }
 
 impl BotStats {
     pub fn display_summary(&self) {
-        println!("\nBOT STATISTICS SUMMARY V4.4 CROSSING DETECTION");
+        println!("\nBOT STATISTICS SUMMARY V4.5");
         println!("  Cycles           : {}", self.total_cycles);
         println!("  Trades           : {}", self.successful_trades);
         println!("  Repositions      : {}", self.grid_repositions);
@@ -602,22 +639,8 @@ impl BotStats {
         println!("  Grid Efficiency  : {:.2}%", self.grid_efficiency * 100.0);
 
         println!("\nAdaptive Optimizer:");
-        println!("  Current Spacing  : {:.3}%",  self.current_spacing_percent * 100.0);
+        println!("  Current Spacing  : {:.3}%", self.current_spacing_percent * 100.0);
         println!("  Current Size     : {:.3} SOL", self.current_position_size);
-        println!("  Optimizations    : {}", self.optimization_count);
-
-        if self.trading_paused {
-            println!("  Status           : PAUSED (circuit breaker / emergency shutdown)");
-        } else {
-            println!("  Status           : V4.4 CROSSING DETECTION ACTIVE");
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn test_bot_creation() {
-        assert!(true);
+        println!("  Adjustments      : {}", self.optimization_count);
     }
 }
