@@ -302,7 +302,7 @@ impl GridRebalancer {
         
         info!("🧠 ADAPTIVE LEARNING:");
         info!("   Fill tracking:    ✅");
-        info!("   Smart optimization: ✅");
+        info!("   Level crossing:   ✅ (V5.0)");
         info!("═══════════════════════════════════════════════════════════");
         
         Ok(Self {
