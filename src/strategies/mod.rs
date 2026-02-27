@@ -1,4 +1,4 @@
-// PROJECT FLASH V5.4 - STRATEGY ENGINE (Fill-Tracking Edition)
+// PROJECT FLASH V5.5 - STRATEGY ENGINE (Level-Crossing Edition)
 // =============================================================================
 //
 // Purpose:
@@ -13,7 +13,10 @@
 //   - Monitor-friendly volatility access for live dashboards.
 //   - V4.0 Grid State Machine compatible (added missing methods)
 //   - GridRebalancer access for fill notifications
-//   - Stage 3 / Step 2: notify_fill() -- FillEvent dispatched from GridBot
+//   - Stage 3 / Step 2:  notify_fill() -- FillEvent dispatched from GridBot
+//   - Stage 3 / Step 6:  Signal::Buy / Sell carry level_id (Option<u64>)
+//                        None  = grid init / full reposition
+//                        Some  = specific grid level crossing detected
 // =============================================================================
 
 use anyhow::Result;
@@ -58,34 +61,48 @@ pub trait Strategy: Send + Sync + 'static {
 
 // =============================================================================
 // SIGNAL STRUCTURE - UNIFIED CROSS-MODULE STANDARD
+//
+// Stage 3 / Step 6 change:
+//   Signal::Buy and Signal::Sell now carry `level_id: Option<u64>`.
+//
+//   Semantics:
+//     level_id = None      →  grid-wide action (init, full reposition)
+//     level_id = Some(id)  →  price crossed the boundary of grid level `id`
+//
+//   All other strategies (RSI, Momentum, …) set level_id = None — the field
+//   is grid-specific and ignored by the ConsensusEngine weighting logic.
 // =============================================================================
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Signal {
     StrongBuy {
-        price: f64,
-        size: f64,
-        reason: String,
+        price:      f64,
+        size:       f64,
+        reason:     String,
         confidence: f64,
     },
     Buy {
-        price: f64,
-        size: f64,
-        reason: String,
+        price:      f64,
+        size:       f64,
+        reason:     String,
         confidence: f64,
+        /// Grid level that was crossed, or None for grid-wide actions.
+        level_id:   Option<u64>,
     },
     Hold {
         reason: Option<String>,
     },
     Sell {
-        price: f64,
-        size: f64,
-        reason: String,
+        price:      f64,
+        size:       f64,
+        reason:     String,
         confidence: f64,
+        /// Grid level that was crossed, or None for grid-wide actions.
+        level_id:   Option<u64>,
     },
     StrongSell {
-        price: f64,
-        size: f64,
-        reason: String,
+        price:      f64,
+        size:       f64,
+        reason:     String,
         confidence: f64,
     },
 }
@@ -127,23 +144,52 @@ impl Signal {
                 "STRONG BUY @ ${:.4} | {} | {:.0}% conf",
                 price, reason, confidence * 100.0
             ),
-            Signal::Buy { price, reason, confidence, .. } => format!(
-                "BUY @ ${:.4} | {} | {:.0}%",
-                price, reason, confidence * 100.0
-            ),
+            Signal::Buy { price, reason, confidence, level_id, .. } => match level_id {
+                Some(id) => format!(
+                    "BUY crossing L{} @ ${:.4} | {} | {:.0}%",
+                    id, price, reason, confidence * 100.0
+                ),
+                None => format!(
+                    "BUY @ ${:.4} | {} | {:.0}%",
+                    price, reason, confidence * 100.0
+                ),
+            },
             Signal::Hold { reason } => format!(
                 "HOLD | {}",
                 reason.clone().unwrap_or_else(|| "Neutral".into())
             ),
-            Signal::Sell { price, reason, confidence, .. } => format!(
-                "SELL @ ${:.4} | {} | {:.0}%",
-                price, reason, confidence * 100.0
-            ),
+            Signal::Sell { price, reason, confidence, level_id, .. } => match level_id {
+                Some(id) => format!(
+                    "SELL crossing L{} @ ${:.4} | {} | {:.0}%",
+                    id, price, reason, confidence * 100.0
+                ),
+                None => format!(
+                    "SELL @ ${:.4} | {} | {:.0}%",
+                    price, reason, confidence * 100.0
+                ),
+            },
             Signal::StrongSell { price, reason, confidence, .. } => format!(
                 "STRONG SELL @ ${:.4} | {} | {:.0}%",
                 price, reason, confidence * 100.0
             ),
         }
+    }
+
+    /// Returns the level_id if this is a level-crossing signal, else None.
+    pub fn crossing_level_id(&self) -> Option<u64> {
+        match self {
+            Signal::Buy  { level_id, .. } => *level_id,
+            Signal::Sell { level_id, .. } => *level_id,
+            _ => None,
+        }
+    }
+
+    /// True if this signal represents a grid-wide action (init / reposition).
+    pub fn is_grid_action(&self) -> bool {
+        matches!(
+            self,
+            Signal::Buy { level_id: None, .. } | Signal::Sell { level_id: None, .. }
+        )
     }
 }
 
@@ -200,7 +246,7 @@ impl std::fmt::Debug for StrategyManager {
 
 impl StrategyManager {
     pub fn new(ctx: AnalyticsContext) -> Self {
-        info!("[StrategyMgr] V5.4 initialized");
+        info!("[StrategyMgr] V5.5 initialized");
         Self {
             strategies: Vec::new(),
             engine:     ConsensusEngine::new(ConsensusMode::default()),
@@ -252,7 +298,7 @@ impl StrategyManager {
     }
 
     pub fn display_stats(&self) {
-        println!("\nStrategy Performance (V5.4):");
+        println!("\nStrategy Performance (V5.5):");
         for (i, strategy) in self.strategies.iter().enumerate() {
             let stats = strategy.stats();
             println!("  Strategy {} ({}): {} signals",
@@ -302,7 +348,7 @@ impl StrategyManager {
     }
 
     // =========================================================================
-    // V5.4 GRID REBALANCER ACCESS
+    // V5.5 GRID REBALANCER ACCESS
     // =========================================================================
 
     /// Get reference to GridRebalancer strategy if present.
@@ -342,7 +388,7 @@ mod tests {
     }
 
     #[test]
-    fn test_signal_strength_v54() {
+    fn test_signal_strength_v55() {
         let strong_buy = Signal::StrongBuy {
             price: 100.0, size: 1.0,
             reason: "test".into(), confidence: 0.9,
@@ -350,12 +396,44 @@ mod tests {
         let buy = Signal::Buy {
             price: 100.0, size: 1.0,
             reason: "test".into(), confidence: 0.7,
+            level_id: None,
         };
         let hold = Signal::Hold { reason: Some("test".into()) };
 
         assert!(strong_buy.strength() > buy.strength());
         assert!(buy.strength() > hold.strength());
         assert_eq!(hold.strength(), 0.0);
+    }
+
+    // Stage 3 / Step 6: level_id helpers
+    #[test]
+    fn test_crossing_level_id_helpers() {
+        let grid_init = Signal::Buy {
+            price: 100.0, size: 0.0,
+            reason: "Grid init".into(), confidence: 1.0,
+            level_id: None,
+        };
+        let crossing = Signal::Buy {
+            price: 99.5, size: 0.1,
+            reason: "Level 3 crossing".into(), confidence: 1.0,
+            level_id: Some(3),
+        };
+
+        assert!(grid_init.is_grid_action());
+        assert!(!crossing.is_grid_action());
+        assert_eq!(grid_init.crossing_level_id(), None);
+        assert_eq!(crossing.crossing_level_id(), Some(3));
+    }
+
+    // Stage 3 / Step 6: display includes level number for crossing signals
+    #[test]
+    fn test_display_shows_level_for_crossing() {
+        let sig = Signal::Buy {
+            price: 85.50, size: 0.1,
+            reason: "buy crossing".into(), confidence: 1.0,
+            level_id: Some(7),
+        };
+        assert!(sig.display().contains("L7"), "expected 'L7' in: {}", sig.display());
     }
 
     // Stage 3 / Step 2: verify notify_fill increments fill_count
