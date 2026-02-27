@@ -31,6 +31,10 @@
 //! - is_trading_allowed() guards every reposition attempt
 //! - should_reposition() + reposition_grid() wired into price tick loop
 //! - Signal::Hold respected -- grid held, debug log emitted
+//!
+//! Stage 3 / Step 5D (Feb 2026):
+//! - update_grid_stats() now called after every fill batch, not just on reposition
+//!   → AdaptiveOptimizer always receives live level utilisation data
 //! =============================================================================
 
 use crate::strategies::{StrategyManager, GridRebalancer, GridRebalancerConfig, Signal};
@@ -86,7 +90,7 @@ impl GridBot {
         info!("[GridBot] Circuit Breaker Gate:   ENABLED");
 
         let analytics_ctx = AnalyticsContext::default();
-        let mut manager = StrategyManager::new(analytics_ctx);
+        let mut manager   = StrategyManager::new(analytics_ctx);
 
         info!("[GridBot] Creating grid rebalancer from config...");
 
@@ -175,7 +179,7 @@ impl GridBot {
 
         if let Some(last_reposition) = self.last_reposition_time {
             let cooldown_secs = self.config.trading.rebalance_cooldown_secs;
-            let elapsed = last_reposition.elapsed().as_secs();
+            let elapsed       = last_reposition.elapsed().as_secs();
             if elapsed < cooldown_secs {
                 trace!("[GridBot] Reposition cooldown: {}s elapsed, {}s required",
                        elapsed, cooldown_secs);
@@ -185,14 +189,14 @@ impl GridBot {
 
         let price_change_pct = ((current_price - last_price).abs() / last_price) * 100.0;
         let threshold        = self.config.trading.reposition_threshold;
-        let should_reposition = price_change_pct > threshold;
+        let should           = price_change_pct > threshold;
 
-        if should_reposition {
+        if should {
             debug!("[GridBot] Reposition triggered: {:.3}% > {:.3}% threshold",
                    price_change_pct, threshold);
         }
 
-        should_reposition
+        should
     }
 
     pub async fn reposition_grid(&mut self, current_price: f64, last_price: f64) -> Result<()> {
@@ -262,8 +266,8 @@ impl GridBot {
 
         self.place_grid_orders(current_price).await?;
 
-        self.grid_repositions      += 1;
-        self.last_reposition_time   = Some(std::time::Instant::now());
+        self.grid_repositions     += 1;
+        self.last_reposition_time  = Some(std::time::Instant::now());
 
         let total_levels = self.config.trading.grid_levels as usize;
         let used_levels  = self.grid_state.count().await;
@@ -346,8 +350,9 @@ impl GridBot {
     ///   2. Circuit breaker     → gate: is the engine healthy?
     ///   3. Crossing detection  → should_reposition? → reposition_grid()
     ///   4. Fill collection     → engine.process_price_update()
-    ///   5. Portfolio snapshot  → engine.get_engine_stats()
-    ///   6. Adaptive optimizer  → runs every OPTIMIZATION_INTERVAL_CYCLES ticks
+    ///   5. Grid stats refresh  → update_grid_stats() [Step 5D: moved here from reposition only]
+    ///   6. Portfolio snapshot  → engine.get_engine_stats()
+    ///   7. Adaptive optimizer  → runs every OPTIMIZATION_INTERVAL_CYCLES ticks
     pub async fn process_price_update(&mut self, price: f64, timestamp: i64) -> Result<()> {
         self.total_cycles += 1;
         self.last_price    = Some(price);
@@ -433,11 +438,22 @@ impl GridBot {
             }
         }
 
-        // ── 5. Portfolio snapshot ─────────────────────────────────────────────
+        // ── 5. Grid stats refresh (Step 5D) ───────────────────────────────────
+        // Moved from reposition_grid-only to every tick so the AdaptiveOptimizer
+        // always has live level utilisation data, not stale zero-state data.
+        // This prevents the optimizer from misreading 0/0 efficiency and
+        // self-sabotaging position size on the first optimisation pass.
+        if self.grid_initialized {
+            let total_levels = self.config.trading.grid_levels as usize;
+            let used_levels  = self.grid_state.count().await;
+            self.enhanced_metrics.update_grid_stats(total_levels, used_levels);
+        }
+
+        // ── 6. Portfolio snapshot ─────────────────────────────────────────────
         let engine_stats = self.engine.get_engine_stats(price).await;
         self.enhanced_metrics.update_portfolio_value(engine_stats.total_value_usdc);
 
-        // ── 6. Adaptive optimization every N cycles ───────────────────────────
+        // ── 7. Adaptive optimization every N cycles ───────────────────────────
         if self.total_cycles - self.last_optimization_cycle >= OPTIMIZATION_INTERVAL_CYCLES {
             debug!("[GridBot] Running adaptive optimization cycle...");
             let result = self.adaptive_optimizer.optimize(&self.enhanced_metrics);
