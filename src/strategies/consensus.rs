@@ -92,12 +92,14 @@ impl ConsensusEngine {
                 size: 0.0,
                 reason: "majority bull".into(),
                 confidence: 0.75,
+                level_id: None,
             },
             std::cmp::Ordering::Less => Signal::Sell {
                 price: 0.0,
                 size: 0.0,
                 reason: "majority bear".into(),
                 confidence: 0.75,
+                level_id: None,
             },
             _ => Signal::Hold {
                 reason: Some("majority: tie".into()),
@@ -121,12 +123,14 @@ mod tests {
                 size: 1.0,
                 reason: "bullish".into(),
                 confidence: 0.9,
+                level_id: None,
             },
             Signal::Sell {
                 price: 101.0,
                 size: 1.0,
                 reason: "bearish".into(),
                 confidence: 0.3,
+                level_id: None,
             },
             Signal::Hold {
                 reason: Some("neutral".into()),
@@ -160,18 +164,21 @@ mod tests {
                 size: 1.0,
                 reason: "bull1".into(),
                 confidence: 0.9,
+                level_id: None,
             },
             Signal::Buy {
                 price: 100.0,
                 size: 1.0,
                 reason: "bull2".into(),
                 confidence: 0.8,
+                level_id: None,
             },
             Signal::Sell {
                 price: 101.0,
                 size: 1.0,
                 reason: "bear".into(),
                 confidence: 0.3,
+                level_id: None,
             },
         ];
         let s = engine.resolve(&signals);

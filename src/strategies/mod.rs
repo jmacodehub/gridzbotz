@@ -17,6 +17,8 @@
 //   - Stage 3 / Option B Step 1: level_id field on Signal::Buy/Sell
 //     None   = grid infrastructure action (init / reposition)
 //     Some(n) = price crossed grid level n boundary
+//   - Stage 3 / Step 6: get_grid_rebalancer_mut() added so GridBot can
+//     push level snapshots and anchor into GridRebalancer after placement.
 // =============================================================================
 
 use anyhow::Result;
@@ -56,6 +58,11 @@ pub trait Strategy: Send + Sync + 'static {
     }
     async fn initialize_at_price(&mut self, _price: f64) -> Result<()> {
         Ok(())
+    }
+    /// Downcast helper: returns a mutable reference to GridRebalancer if
+    /// this strategy IS a GridRebalancer, otherwise None.
+    fn as_grid_rebalancer_mut(&mut self) -> Option<&mut GridRebalancer> {
+        None
     }
 }
 
@@ -341,13 +348,24 @@ impl StrategyManager {
     // V5.5 GRID REBALANCER ACCESS
     // =========================================================================
 
-    /// Get reference to GridRebalancer strategy if present.
-    /// Enables GridBot to notify the strategy about fills for adaptive learning.
+    /// Get immutable reference to GridRebalancer strategy if present.
+    #[allow(unused)]
     pub fn get_grid_rebalancer(&self) -> Option<&GridRebalancer> {
-        for strategy in &self.strategies {
-            if strategy.name().contains("Grid Rebalancer") {
-                log::debug!("[StrategyMgr] Found GridRebalancer strategy");
-                return None; // TODO: implement proper downcasting
+        // TODO: implement proper downcasting via Any
+        None
+    }
+
+    /// Get mutable reference to GridRebalancer strategy if present.
+    ///
+    /// Used by `GridBot::sync_levels_to_strategy()` to push level snapshots
+    /// and anchor price into the strategy after every grid placement.
+    ///
+    /// Uses the `as_grid_rebalancer_mut()` hook on the Strategy trait so the
+    /// box can be downcast without requiring `std::any::Any`.
+    pub fn get_grid_rebalancer_mut(&mut self) -> Option<&mut GridRebalancer> {
+        for strategy in &mut self.strategies {
+            if let Some(r) = strategy.as_grid_rebalancer_mut() {
+                return Some(r);
             }
         }
         None
@@ -444,5 +462,14 @@ mod tests {
 
         mgr.notify_fill(&fill).await;
         assert_eq!(mgr.fill_count, 2);
+    }
+
+    #[test]
+    fn test_get_grid_rebalancer_mut_returns_some() {
+        let ctx = AnalyticsContext::default();
+        let mut mgr = StrategyManager::new(ctx);
+        mgr.add_strategy(GridRebalancer::new(GridRebalancerConfig::default()).unwrap());
+        assert!(mgr.get_grid_rebalancer_mut().is_some(),
+            "get_grid_rebalancer_mut() must find the GridRebalancer we just added");
     }
 }
