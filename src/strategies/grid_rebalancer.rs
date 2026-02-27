@@ -1,5 +1,5 @@
 //! ═══════════════════════════════════════════════════════════════════════════
-//! 🔥💎 GRID REBALANCER V4.1 - PROJECT FLASH 🔥💎
+//! 🔥📎 GRID REBALANCER V5.0 — LEVEL-CROSSING EDITION 🔥📎
 //!
 //! V4.0 ENHANCEMENTS - Adaptive Learning:
 //!   ✅ 100% Config-Driven (No Hardcoded Values!)
@@ -17,7 +17,22 @@
 //!      When should_trade_now() == false → Signal::Hold (regime gate blocks).
 //!      Grid bots have no directional opinion; the signal IS the on/off gate.
 //!
+//! V5.0 (Stage 3 / Step 6) — Strategy is Source of Truth:
+//!   ✅ LevelSnapshot: lightweight price-only struct for level-crossing state.
+//!   ✅ set_grid_levels() + set_anchor(): GridBot pushes level boundaries here
+//!      after every grid placement so the strategy owns crossing state.
+//!   ✅ analyze() has 5 ordered stages:
+//!      1. Regime gate        → Signal::Hold  if blocked
+//!      2. Not initialised    → Signal::Buy { level_id: None }  (bootstrap)
+//!      3. Reposition drift   → Signal::Buy { level_id: None }  (anchor drift)
+//!      4. Crossing scan      → Signal::Buy/Sell { level_id: Some(id) }
+//!      5. Nothing triggered  → Signal::Hold
+//!   ✅ last_price_for_crossing: dedicated prev-tick anchor (never drifts from
+//!      other price update callers).
+//!   ✅ reposition_threshold_pct: new config field (default 0.5%).
+//!
 //! February 12–27, 2026 - V4.1 Signal Fix!
+//! February 27, 2026    - V5.0 Level-Crossing Edition
 //! ═══════════════════════════════════════════════════════════════════════════
 
 use crate::trading::OrderSide;
@@ -29,6 +44,25 @@ use std::sync::atomic::{AtomicU64, AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::time::Instant;
 use serde::{Serialize, Deserialize};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// LEVEL SNAPSHOT — price-only crossing state (no order IDs)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Lightweight snapshot of a single grid level’s price boundaries.
+///
+/// Only prices live here — order IDs and fill state stay in `GridStateTracker`
+/// inside `GridBot`. This keeps the strategy layer stateless with respect to
+/// execution, which is the key modularity property of Option B.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LevelSnapshot {
+    /// Unique level identifier (matches `GridLevel.id` in GridStateTracker)
+    pub id:         u64,
+    /// Limit price for the buy order on this level
+    pub buy_price:  f64,
+    /// Limit price for the sell order on this level
+    pub sell_price: f64,
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // CONFIGURATION - Now 100% Config-Driven!
@@ -109,6 +143,15 @@ pub struct GridRebalancerConfig {
 
     /// Minimum number of orders to maintain
     pub min_orders_to_maintain: usize,
+
+    // ─────────────────────────────────────────────────────────────────────
+    // V5.0 Features - Level Crossing
+    // ─────────────────────────────────────────────────────────────────────
+
+    /// Percentage drift from grid anchor that triggers a full reposition.
+    /// E.g. 0.5 means: if price moves more than 0.5% from anchor, reposition.
+    /// Set to 0.0 to disable drift-based repositioning (rely on crossings only).
+    pub reposition_threshold_pct: f64,
 }
 
 impl Default for GridRebalancerConfig {
@@ -140,6 +183,9 @@ impl Default for GridRebalancerConfig {
             order_max_age_minutes: 10,
             order_refresh_interval_minutes: 5,
             min_orders_to_maintain: 8,
+
+            // Level crossing
+            reposition_threshold_pct: 0.5, // 0.5% anchor drift triggers reposition
         }
     }
 }
@@ -199,6 +245,11 @@ impl GridRebalancerConfig {
             }
         }
 
+        // Level crossing validation
+        if self.reposition_threshold_pct < 0.0 {
+            return Err(anyhow::anyhow!("reposition_threshold_pct cannot be negative"));
+        }
+
         Ok(())
     }
 
@@ -211,6 +262,7 @@ impl GridRebalancerConfig {
                 self.enable_regime_gate = false;
                 self.min_volatility_to_trade = 0.0;
                 self.pause_in_very_low_vol = false;
+                self.reposition_threshold_pct = 0.5;
             }
             "development" => {
                 // Dev: Moderate safety
@@ -218,6 +270,7 @@ impl GridRebalancerConfig {
                 if self.min_volatility_to_trade > 0.5 {
                     self.min_volatility_to_trade = 0.3;
                 }
+                self.reposition_threshold_pct = 0.5;
             }
             "production" => {
                 // Production: Enforce safety
@@ -262,6 +315,25 @@ pub struct GridRebalancer {
 
     // Strategy trait support
     last_signal: Arc<tokio::sync::RwLock<Option<Signal>>>,
+
+    // ────────────────────────────────────────────────────────────────────
+    // V5.0 — Level-crossing state
+    // ────────────────────────────────────────────────────────────────────
+
+    /// Price-boundary snapshot of all active grid levels.
+    /// Populated by GridBot calling `set_grid_levels()` after each placement.
+    /// Read by `analyze()` during crossing detection.
+    grid_levels: Arc<tokio::sync::RwLock<Vec<LevelSnapshot>>>,
+
+    /// Centre of the current grid band — set by GridBot via `set_anchor()`.
+    /// When `|price − anchor| / anchor > reposition_threshold_pct` the
+    /// strategy returns a reposition signal.
+    grid_anchor: Arc<tokio::sync::RwLock<Option<f64>>>,
+
+    /// Price observed on the previous call to `analyze()`.
+    /// Dedicated field so crossing comparisons always have a stable prev
+    /// reference regardless of what other methods update `current_price`.
+    last_price_for_crossing: Arc<tokio::sync::RwLock<Option<f64>>>,
 }
 
 impl GridRebalancer {
@@ -272,34 +344,35 @@ impl GridRebalancer {
             .context("GridRebalancer config validation failed")?;
 
         // Log initialization
-        info!("═══════════════════════════════════════════════════════════");
-        info!("🎯 Grid Rebalancer V4.0 Initializing...");
-        info!("═══════════════════════════════════════════════════════════");
+        info!("\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550");
+        info!("🎯 Grid Rebalancer V5.0 (Level-Crossing Edition) Initializing...");
+        info!("\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550");
         info!("📊 CORE SETTINGS:");
         info!("   Base spacing:     {:.3}%", config.grid_spacing * 100.0);
         info!("   Order size:       {} SOL", config.order_size);
         info!("   Reserves:         ${:.0} USDC / {} SOL",
               config.min_usdc_balance, config.min_sol_balance);
+        info!("   Reposition at:    {:.2}% anchor drift", config.reposition_threshold_pct);
 
         info!("📈 DYNAMIC FEATURES:");
-        info!("   Dynamic spacing:  {}", if config.enable_dynamic_spacing { "✅" } else { "❌" });
+        info!("   Dynamic spacing:  {}", if config.enable_dynamic_spacing { "\u2705" } else { "\u274c" });
         if config.enable_dynamic_spacing {
             info!("     Range:          {:.3}% - {:.3}%",
                   config.min_spacing * 100.0, config.max_spacing * 100.0);
         }
-        info!("   Fee filtering:    {}", if config.enable_fee_filtering { "✅" } else { "❌" });
+        info!("   Fee filtering:    {}", if config.enable_fee_filtering { "\u2705" } else { "\u274c" });
 
-        info!("🛡️ MARKET REGIME GATE:");
-        info!("   Enabled:          {}", if config.enable_regime_gate { "✅" } else { "❌ (TRADING FREELY!)" });
+        info!("🛡\ufe0f MARKET REGIME GATE:");
+        info!("   Enabled:          {}", if config.enable_regime_gate { "\u2705" } else { "\u274c (TRADING FREELY!)" });
         if config.enable_regime_gate {
             info!("   Min volatility:   {:.3}%", config.min_volatility_to_trade * 100.0);
-            info!("   Pause low vol:    {}", if config.pause_in_very_low_vol { "✅" } else { "❌" });
+            info!("   Pause low vol:    {}", if config.pause_in_very_low_vol { "\u2705" } else { "\u274c" });
         } else {
             warn!("⚠️ REGIME GATE DISABLED - Will trade in ANY market condition!");
         }
 
         info!("🔄 ORDER LIFECYCLE:");
-        info!("   Enabled:          {}", if config.enable_order_lifecycle { "✅" } else { "❌" });
+        info!("   Enabled:          {}", if config.enable_order_lifecycle { "\u2705" } else { "\u274c" });
         if config.enable_order_lifecycle {
             info!("   Max age:          {}m", config.order_max_age_minutes);
             info!("   Refresh interval: {}m", config.order_refresh_interval_minutes);
@@ -307,9 +380,9 @@ impl GridRebalancer {
         }
 
         info!("🧠 ADAPTIVE LEARNING:");
-        info!("   Fill tracking:    ✅");
-        info!("   Smart optimization: ✅");
-        info!("═══════════════════════════════════════════════════════════");
+        info!("   Fill tracking:    \u2705");
+        info!("   Level crossing:   \u2705 (V5.0)");
+        info!("\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550");
 
         Ok(Self {
             current_spacing: Arc::new(tokio::sync::RwLock::new(config.grid_spacing)),
@@ -324,6 +397,10 @@ impl GridRebalancer {
             trading_paused: Arc::new(AtomicBool::new(false)),
             pause_reason: Arc::new(tokio::sync::RwLock::new(String::new())),
             last_signal: Arc::new(tokio::sync::RwLock::new(None)),
+            // V5.0
+            grid_levels:             Arc::new(tokio::sync::RwLock::new(Vec::new())),
+            grid_anchor:             Arc::new(tokio::sync::RwLock::new(None)),
+            last_price_for_crossing: Arc::new(tokio::sync::RwLock::new(None)),
         })
     }
 
@@ -332,39 +409,49 @@ impl GridRebalancer {
         GridRebalancerBuilder::new()
     }
 
-    /// Update current price and price history
-    pub async fn update_price(&self, price: f64) -> Result<()> {
-        if price <= 0.0 {
-            return Err(anyhow::anyhow!("Invalid price: {}", price));
-        }
+    // ═══════════════════════════════════════════════════════════════════════════
+    // V5.0 — LEVEL SNAPSHOT INTERFACE
+    //
+    // Called by GridBot after every grid placement / reposition.
+    // This is the key wire that makes the strategy the source of truth.
+    // ═══════════════════════════════════════════════════════════════════════════
 
-        // Update current price
-        *self.current_price.write().await = Some(price);
-
-        // Update price history
-        let mut history = self.price_history.lock().await;
-        history.push((Instant::now(), price));
-
-        // Keep only relevant window
-        let cutoff = Instant::now()
-            - tokio::time::Duration::from_secs(self.config.volatility_window_seconds);
-        history.retain(|(time, _)| *time > cutoff);
-
-        trace!("📊 Price updated: ${:.4} (history: {} points)", price, history.len());
-        Ok(())
+    /// Push the current set of grid level price boundaries into the strategy.
+    ///
+    /// Call this in `GridBot` **after** every `place_grid_orders()` call so
+    /// that `analyze()` has an up-to-date crossing map.
+    ///
+    /// Only prices are stored here — order IDs and fill state remain in
+    /// `GridStateTracker`. This preserves the strategy/execution boundary.
+    pub async fn set_grid_levels(&self, levels: Vec<LevelSnapshot>) {
+        let count = levels.len();
+        *self.grid_levels.write().await = levels;
+        debug!("[GridRebalancer] Level snapshot updated: {} levels", count);
     }
 
-    // ═══════════════════════════════════════════════════════════════════
+    /// Set the anchor price for the current grid band.
+    ///
+    /// Called by `GridBot` after every reposition, passing the price at which
+    /// the grid was centred. The strategy uses this to detect when the market
+    /// has drifted far enough to warrant a full reposition.
+    pub async fn set_anchor(&self, anchor_price: f64) {
+        *self.grid_anchor.write().await = Some(anchor_price);
+        // Also reset the crossing prev-price so the first tick after a
+        // reposition cannot spuriously fire a crossing on a stale reference.
+        *self.last_price_for_crossing.write().await = Some(anchor_price);
+        debug!("[GridRebalancer] Anchor set @ ${:.4}", anchor_price);
+    }
+
+    /// Returns true if the strategy has received at least one level snapshot.
+    pub async fn is_initialized(&self) -> bool {
+        !self.grid_levels.read().await.is_empty()
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
     // V4.0 ENHANCEMENT: FILL TRACKING & ADAPTIVE LEARNING 🧠
-    // ═══════════════════════════════════════════════════════════════════
+    // ═══════════════════════════════════════════════════════════════════════════
 
     /// Notify strategy about filled orders for adaptive learning
-    ///
-    /// This enables the grid to:
-    /// - Track which price levels are most profitable
-    /// - Adjust spacing based on actual fill frequency
-    /// - Optimize order placement over time
-    /// - Build ML training dataset for future enhancements
     pub async fn on_fill_notification(
         &self,
         order_id: &str,
@@ -376,61 +463,43 @@ impl GridRebalancer {
         debug!("📨 Fill notification: {:?} {} @ ${:.4} (size: {:.4})",
                side, order_id, fill_price, fill_size);
 
-        // Track successful rebalance
         self.stats_rebalances.fetch_add(1, Ordering::Relaxed);
 
-        // Log P&L if available
         if let Some(profit) = pnl {
             if profit > 0.0 {
                 info!("💰 Profitable {:?} fill: +${:.2}", side, profit);
-            } else if profit < -0.01 {  // Only warn on significant loss
+            } else if profit < -0.01 {
                 debug!("📊 {:?} fill P&L: ${:.2}", side, profit);
             }
         }
 
-        // Calculate fill deviation from current mid-price
         if let Some(current_price) = *self.current_price.read().await {
             let _deviation_pct = ((fill_price - current_price).abs() / current_price) * 100.0;
             trace!("📊 Fill deviation from mid: {:.3}%", _deviation_pct);
-
-            // Future enhancement: Track optimal fill zones
-            // - Build heatmap of profitable price levels
-            // - Adjust grid density based on historical fill patterns
-            // - ML model: predict optimal spacing per volatility regime
         }
 
-        // Log current grid efficiency
         let stats = self.grid_stats().await;
         trace!("📊 Grid efficiency post-fill: {:.2}%", stats.efficiency_percent);
     }
 
-    // ═══════════════════════════════════════════════════════════════════
+    // ═══════════════════════════════════════════════════════════════════════════
     // V3.5 ENHANCEMENT: CONFIG-DRIVEN REGIME GATE 🔥
-    // ═══════════════════════════════════════════════════════════════════
+    // ═══════════════════════════════════════════════════════════════════════════
 
-    /// Check if trading should proceed based on market regime
-    ///
-    /// Now 100% config-driven:
-    /// - If `enable_regime_gate == false`: ALWAYS returns true
-    /// - If enabled: Checks volatility threshold
     pub async fn should_trade_now(&self) -> bool {
-        // 🔥 CRITICAL: Check if regime gate is enabled in config
         if !self.config.enable_regime_gate {
             trace!("⚡ Regime gate DISABLED - trading freely");
             return true;
         }
 
-        // Check if already paused
         if self.trading_paused.load(Ordering::Acquire) {
             let reason = self.pause_reason.read().await;
-            trace!("⏸️ Trading paused: {}", reason);
+            trace!("⏸\ufe0f Trading paused: {}", reason);
             return false;
         }
 
-        // Get current market stats
         let stats = self.grid_stats().await;
 
-        // Check VERY_LOW_VOL regime
         if self.config.pause_in_very_low_vol && stats.market_regime == "VERY_LOW_VOL" {
             if !self.trading_paused.load(Ordering::Acquire) {
                 warn!("🚫 REGIME GATE: Pausing - VERY_LOW_VOL detected");
@@ -440,7 +509,6 @@ impl GridRebalancer {
             return false;
         }
 
-        // 🔥 CRITICAL: Check volatility threshold from config
         if stats.volatility < self.config.min_volatility_to_trade {
             if !self.trading_paused.load(Ordering::Acquire) {
                 warn!("🚫 REGIME GATE: Pausing - Volatility {:.3}% < min {:.3}%",
@@ -456,7 +524,6 @@ impl GridRebalancer {
             return false;
         }
 
-        // Resume trading if was paused
         if self.trading_paused.load(Ordering::Acquire) {
             info!("✅ REGIME GATE: Resuming trading!");
             info!("   Regime: {} | Volatility: {:.3}%",
@@ -468,11 +535,10 @@ impl GridRebalancer {
         true
     }
 
-    // ═══════════════════════════════════════════════════════════════════
+    // ═══════════════════════════════════════════════════════════════════════════
     // V3 ENHANCEMENT: SMART FEE FILTER
-    // ═══════════════════════════════════════════════════════════════════
+    // ═══════════════════════════════════════════════════════════════════════════
 
-    /// Determine if order should be placed based on fee efficiency
     pub async fn should_place_order(&self, side: OrderSide, price: f64, stats: &GridStats) -> bool {
         if !self.config.enable_fee_filtering {
             trace!("💰 Fee filtering disabled - allowing order");
@@ -487,10 +553,8 @@ impl GridRebalancer {
             }
         };
 
-        // Calculate spread percentage
         let spread_pct = ((price - current_price).abs() / current_price) * 100.0;
 
-        // Dynamic minimum spread based on market regime
         let min_spread = match stats.market_regime.as_str() {
             "VERY_LOW_VOL" => 0.05,
             "LOW_VOL"      => 0.08,
@@ -512,11 +576,10 @@ impl GridRebalancer {
         true
     }
 
-    // ═══════════════════════════════════════════════════════════════════
-    // VOLATILITY CALCULATION
-    // ═══════════════════════════════════════════════════════════════════
+    // ═══════════════════════════════════════════════════════════════════════════
+    // VOLATILITY & REGIME
+    // ═══════════════════════════════════════════════════════════════════════════
 
-    /// Calculate price volatility from history
     async fn calculate_volatility(&self) -> f64 {
         let history = self.price_history.lock().await;
 
@@ -531,13 +594,9 @@ impl GridRebalancer {
             .map(|p| (p - mean).powi(2))
             .sum::<f64>() / prices.len() as f64;
 
-        let volatility = variance.sqrt();
-        trace!("📊 Calculated volatility: {:.3}% (from {} samples)",
-               volatility * 100.0, prices.len());
-        volatility
+        variance.sqrt()
     }
 
-    /// Get comprehensive grid statistics
     pub async fn grid_stats(&self) -> GridStats {
         let rebalances = self.stats_rebalances.load(Ordering::Relaxed);
         let filtered   = self.stats_filtered.load(Ordering::Relaxed);
@@ -550,7 +609,6 @@ impl GridRebalancer {
 
         let volatility = self.calculate_volatility().await;
 
-        // Determine market regime based on volatility
         let market_regime = if volatility < 0.5 {
             "VERY_LOW_VOL"
         } else if volatility < 1.0 {
@@ -584,15 +642,25 @@ impl GridRebalancer {
         }
     }
 
-    /// Update dynamic spacing based on volatility
+    async fn update_price(&self, price: f64) -> Result<()> {
+        if price <= 0.0 {
+            return Err(anyhow::anyhow!("Invalid price: {}", price));
+        }
+        *self.current_price.write().await = Some(price);
+        let mut history = self.price_history.lock().await;
+        history.push((Instant::now(), price));
+        let cutoff = Instant::now()
+            - tokio::time::Duration::from_secs(self.config.volatility_window_seconds);
+        history.retain(|(time, _)| *time > cutoff);
+        trace!("📊 Price updated: ${:.4} (history: {} points)", price, history.len());
+        Ok(())
+    }
+
     async fn update_dynamic_spacing(&self) {
         if !self.config.enable_dynamic_spacing {
             return;
         }
-
         let volatility = self.calculate_volatility().await;
-
-        // Dynamic spacing formula
         let new_spacing = if volatility < 0.5 {
             self.config.min_spacing
         } else if volatility > 2.0 {
@@ -600,7 +668,6 @@ impl GridRebalancer {
         } else {
             self.config.grid_spacing
         };
-
         let mut current = self.current_spacing.write().await;
         if (*current - new_spacing).abs() > 0.0001 {
             debug!("📊 Dynamic spacing adjusted: {:.3}% -> {:.3}%",
@@ -611,7 +678,7 @@ impl GridRebalancer {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// BUILDER PATTERN - Flexible Construction
+// BUILDER PATTERN
 // ═══════════════════════════════════════════════════════════════════════════
 
 pub struct GridRebalancerBuilder {
@@ -620,9 +687,7 @@ pub struct GridRebalancerBuilder {
 
 impl GridRebalancerBuilder {
     pub fn new() -> Self {
-        Self {
-            config: GridRebalancerConfig::default(),
-        }
+        Self { config: GridRebalancerConfig::default() }
     }
 
     pub fn grid_spacing(mut self, spacing: f64) -> Self {
@@ -645,6 +710,11 @@ impl GridRebalancerBuilder {
         self
     }
 
+    pub fn reposition_threshold(mut self, pct: f64) -> Self {
+        self.config.reposition_threshold_pct = pct;
+        self
+    }
+
     pub fn environment(mut self, env: &str) -> Self {
         self.config.apply_environment(env);
         self
@@ -656,9 +726,7 @@ impl GridRebalancerBuilder {
 }
 
 impl Default for GridRebalancerBuilder {
-    fn default() -> Self {
-        Self::new()
-    }
+    fn default() -> Self { Self::new() }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -668,61 +736,126 @@ impl Default for GridRebalancerBuilder {
 #[async_trait]
 impl Strategy for GridRebalancer {
     fn name(&self) -> &str {
-        "Grid Rebalancer V4.0"
+        "Grid Rebalancer V5.0"
     }
 
-    /// Analyze current price and return grid-active signal.
+    /// Analyze current price and return the appropriate grid signal.
     ///
-    /// # Signal semantics for a grid bot
+    /// # Signal semantics for a grid bot (V5.0)
     ///
-    /// A grid bot has no directional opinion (it profits from oscillation).
-    /// The signal is purely an on/off gate:
+    /// Signal priority (first matching stage wins):
     ///
-    /// - `Signal::Buy`  (confidence 1.0) → regime gate OPEN,  grid should run.
-    /// - `Signal::Hold`                  → regime gate CLOSED, grid paused.
+    /// 1. `Signal::Hold`                    — regime gate blocked trading.
+    /// 2. `Signal::Buy  { level_id: None }`  — grid not yet initialised; bootstrap.
+    /// 3. `Signal::Buy  { level_id: None }`  — anchor drift > threshold; full reposition.
+    /// 4. `Signal::Buy  { level_id: Some }`  — price crossed a buy boundary.
+    ///    `Signal::Sell { level_id: Some }`  — price crossed a sell boundary.
+    /// 5. `Signal::Hold`                    — nothing triggered this tick.
     ///
-    /// `process_price_update` in GridBot treats any non-Hold signal as
-    /// permission to call `reposition_grid()` / bootstrap the initial grid.
-    ///
-    /// ## Fix (V4.1 / Stage 3 Step 5D)
-    /// Previously both branches returned `Signal::Hold`, permanently
-    /// blocking `signal_active` and preventing the initial grid from ever
-    /// being placed.  The should_trade_now() == true branch now correctly
-    /// returns `Signal::Buy`.
+    /// Only one signal is returned per tick (the highest-priority one).
     async fn analyze(&mut self, price: f64, _timestamp: i64) -> Result<Signal> {
-        // Update price and recalculate spacing
+        // Bookkeeping
         self.update_price(price).await
             .context("Failed to update price")?;
         self.update_dynamic_spacing().await;
-
-        // Increment signal counter
         self.stats_signals.fetch_add(1, Ordering::Relaxed);
 
-        // Check market regime
-        let should_trade = self.should_trade_now().await;
-        let stats        = self.grid_stats().await;
+        // ── 1. REGIME GATE ────────────────────────────────────────────────────────────
+        if !self.should_trade_now().await {
+            let stats = self.grid_stats().await;
+            let sig = Signal::Hold {
+                reason: Some(format!("Regime gate: {}", stats.pause_reason)),
+            };
+            *self.last_signal.write().await = Some(sig.clone());
+            return Ok(sig);
+        }
 
-        // ── V4.1 FIX: return Buy when gate is open, Hold when closed ─────────
-        let signal = if should_trade {
-            // Grid-active: regime gate open, grid should run.
-            // Use size=0 and confidence=1.0 — GridBot drives sizing from
-            // AdaptiveOptimizer, not from the signal's size field.
-            Signal::Buy {
+        // ── 2. BOOTSTRAP CHECK ────────────────────────────────────────────────────────
+        // No levels pushed yet — signal GridBot to place the initial grid.
+        if !self.is_initialized().await {
+            debug!("[GridRebalancer] No levels — signalling grid bootstrap @ ${:.4}", price);
+            let sig = Signal::Buy {
                 price,
                 size: 0.0,
-                reason: format!("Grid active - {} regime", stats.market_regime),
+                reason: "Grid bootstrap — place initial levels".to_string(),
                 confidence: 1.0,
-            }
-        } else {
-            // Regime gate blocking: halt grid operations.
-            Signal::Hold {
-                reason: Some(format!("Trading paused - {}", stats.pause_reason)),
-            }
-        };
+                level_id: None,
+            };
+            *self.last_signal.write().await = Some(sig.clone());
+            return Ok(sig);
+        }
 
-        // Store last signal
-        *self.last_signal.write().await = Some(signal.clone());
-        Ok(signal)
+        // ── 3. ANCHOR DRIFT → FULL REPOSITION ──────────────────────────────────────────
+        // Only fires when reposition_threshold_pct > 0 (0 = disabled).
+        if self.config.reposition_threshold_pct > 0.0 {
+            if let Some(anchor) = *self.grid_anchor.read().await {
+                let drift_pct = ((price - anchor).abs() / anchor) * 100.0;
+                if drift_pct > self.config.reposition_threshold_pct {
+                    info!("[GridRebalancer] Anchor drift {:.3}% > {:.3}% — reposition",
+                          drift_pct, self.config.reposition_threshold_pct);
+                    let sig = Signal::Buy {
+                        price,
+                        size: 0.0,
+                        reason: format!("Reposition — anchor drift {:.2}%", drift_pct),
+                        confidence: 1.0,
+                        level_id: None,
+                    };
+                    *self.last_signal.write().await = Some(sig.clone());
+                    return Ok(sig);
+                }
+            }
+        }
+
+        // ── 4. LEVEL CROSSING SCAN ────────────────────────────────────────────────────
+        // Compare this tick’s price against the previous tick using the
+        // dedicated `last_price_for_crossing` field (never reset by other
+        // callers like `update_price` or `set_anchor`).
+        let prev_opt = *self.last_price_for_crossing.read().await;
+        *self.last_price_for_crossing.write().await = Some(price);
+
+        if let Some(prev) = prev_opt {
+            let levels = self.grid_levels.read().await;
+            for level in levels.iter() {
+                // Buy crossing: price crossed DOWN through buy_price
+                // prev was ABOVE buy_price, now AT or BELOW it
+                if prev > level.buy_price && price <= level.buy_price {
+                    debug!("[GridRebalancer] BUY crossing L{}: ${:.4} → ${:.4} crossed ${:.4}",
+                           level.id, prev, price, level.buy_price);
+                    let sig = Signal::Buy {
+                        price:      level.buy_price,
+                        size:       self.config.order_size,
+                        reason:     format!("Level {} buy boundary crossed", level.id),
+                        confidence: 1.0,
+                        level_id:   Some(level.id),
+                    };
+                    *self.last_signal.write().await = Some(sig.clone());
+                    self.stats_signals.fetch_add(1, Ordering::Relaxed);
+                    return Ok(sig);
+                }
+
+                // Sell crossing: price crossed UP through sell_price
+                // prev was BELOW sell_price, now AT or ABOVE it
+                if prev < level.sell_price && price >= level.sell_price {
+                    debug!("[GridRebalancer] SELL crossing L{}: ${:.4} → ${:.4} crossed ${:.4}",
+                           level.id, prev, price, level.sell_price);
+                    let sig = Signal::Sell {
+                        price:      level.sell_price,
+                        size:       self.config.order_size,
+                        reason:     format!("Level {} sell boundary crossed", level.id),
+                        confidence: 1.0,
+                        level_id:   Some(level.id),
+                    };
+                    *self.last_signal.write().await = Some(sig.clone());
+                    self.stats_signals.fetch_add(1, Ordering::Relaxed);
+                    return Ok(sig);
+                }
+            }
+        }
+
+        // ── 5. NOTHING TRIGGERED THIS TICK ──────────────────────────────────────────
+        let sig = Signal::Hold { reason: None };
+        *self.last_signal.write().await = Some(sig.clone());
+        Ok(sig)
     }
 
     fn stats(&self) -> BaseStrategyStats {
@@ -733,7 +866,7 @@ impl Strategy for GridRebalancer {
             signals_generated: signals,
             buy_signals:       rebalances / 2,
             sell_signals:      rebalances / 2,
-            hold_signals:      signals - rebalances,
+            hold_signals:      signals.saturating_sub(rebalances),
             ..Default::default()
         }
     }
@@ -760,20 +893,20 @@ impl Strategy for GridRebalancer {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// GRID STATS - Enhanced with Pause Reason
+// GRID STATS
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GridStats {
-    pub total_rebalances: u64,
-    pub rebalances_filtered: u64,
-    pub efficiency_percent: f64,
+    pub total_rebalances:       u64,
+    pub rebalances_filtered:    u64,
+    pub efficiency_percent:     f64,
     pub dynamic_spacing_enabled: bool,
     pub current_spacing_percent: f64,
-    pub volatility: f64,
-    pub market_regime: String,
-    pub trading_paused: bool,
-    pub pause_reason: String,
+    pub volatility:             f64,
+    pub market_regime:          String,
+    pub trading_paused:         bool,
+    pub pause_reason:           String,
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -783,6 +916,18 @@ pub struct GridStats {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn test_config() -> GridRebalancerConfig {
+        GridRebalancerConfig {
+            enable_regime_gate:      false,
+            min_volatility_to_trade: 0.0,
+            pause_in_very_low_vol:   false,
+            reposition_threshold_pct: 0.5,
+            ..GridRebalancerConfig::default()
+        }
+    }
+
+    // ─ existing tests (unchanged) ───────────────────────────────────────────────────────
 
     #[test]
     fn test_config_validation() {
@@ -796,6 +941,13 @@ mod tests {
         config.min_spacing = 0.2;
         config.max_spacing = 0.1;
         assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_config_validation_reposition_threshold() {
+        let mut config = GridRebalancerConfig::default();
+        config.reposition_threshold_pct = -1.0;
+        assert!(config.validate().is_err(), "negative threshold should fail");
     }
 
     #[test]
@@ -815,12 +967,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_regime_gate_disabled() {
-        let mut config = GridRebalancerConfig::default();
-        config.enable_regime_gate = false;
-
+        let config = test_config();
         let rebalancer = GridRebalancer::new(config).unwrap();
-
-        // Should always allow trading when disabled
         assert!(rebalancer.should_trade_now().await);
     }
 
@@ -831,67 +979,149 @@ mod tests {
             .enable_regime_gate(false)
             .environment("testing")
             .build();
-
         assert!(rebalancer.is_ok());
     }
 
     #[tokio::test]
+    async fn test_builder_reposition_threshold() {
+        let r = GridRebalancer::builder()
+            .reposition_threshold(1.0)
+            .enable_regime_gate(false)
+            .build()
+            .unwrap();
+        assert_eq!(r.config.reposition_threshold_pct, 1.0);
+    }
+
+    #[tokio::test]
     async fn test_fill_notification() {
-        let config = GridRebalancerConfig::default();
-        let rebalancer = GridRebalancer::new(config).unwrap();
-
-        // Update price first
+        let rebalancer = GridRebalancer::new(test_config()).unwrap();
         rebalancer.update_price(100.0).await.unwrap();
-
-        // Notify about a fill
         rebalancer.on_fill_notification(
-            "test_order_buy_123",
-            OrderSide::Buy,
-            99.5,
-            0.1,
-            Some(0.05),
+            "test_order_buy_123", OrderSide::Buy, 99.5, 0.1, Some(0.05),
         ).await;
-
-        // Verify rebalance counter incremented
         let stats = rebalancer.grid_stats().await;
         assert_eq!(stats.total_rebalances, 1);
     }
 
-    // ── V4.1 signal fix tests ────────────────────────────────────────────
+    // ─ V4.1 signal gate tests ────────────────────────────────────────────────────────
 
-    /// analyze() must return Signal::Buy when regime gate is disabled (always-open).
+    /// With regime gate off and no levels pushed, must return bootstrap Buy.
     #[tokio::test]
     async fn test_analyze_returns_buy_when_gate_open() {
-        let mut config = GridRebalancerConfig::default();
-        config.enable_regime_gate = false; // gate always open
-
-        let mut rebalancer = GridRebalancer::new(config).unwrap();
-        let signal = rebalancer.analyze(100.0, 0).await.unwrap();
-
+        let mut r = GridRebalancer::new(test_config()).unwrap();
+        let sig = r.analyze(100.0, 0).await.unwrap();
         assert!(
-            matches!(signal, Signal::Buy { .. }),
-            "Expected Signal::Buy when regime gate is open, got {:?}",
-            signal
+            matches!(sig, Signal::Buy { level_id: None, .. }),
+            "Expected bootstrap Signal::Buy(level_id=None), got {:?}", sig
         );
     }
 
-    /// analyze() must return Signal::Hold when regime gate blocks trading.
-    /// We enable the gate with a very high minimum volatility so it always
-    /// blocks on the tiny price history built during the test.
+    /// With regime gate blocking, must return Hold regardless of levels.
     #[tokio::test]
     async fn test_analyze_returns_hold_when_gate_closed() {
-        let mut config = GridRebalancerConfig::default();
-        config.enable_regime_gate        = true;
-        config.min_volatility_to_trade   = 999.0; // impossibly high → always blocked
-        config.pause_in_very_low_vol     = false;  // don't trigger the VERY_LOW_VOL branch
+        let config = GridRebalancerConfig {
+            enable_regime_gate:      true,
+            min_volatility_to_trade: 999.0,
+            pause_in_very_low_vol:   false,
+            ..GridRebalancerConfig::default()
+        };
+        let mut r = GridRebalancer::new(config).unwrap();
+        let sig = r.analyze(100.0, 0).await.unwrap();
+        assert!(
+            matches!(sig, Signal::Hold { .. }),
+            "Expected Signal::Hold, got {:?}", sig
+        );
+    }
 
-        let mut rebalancer = GridRebalancer::new(config).unwrap();
-        let signal = rebalancer.analyze(100.0, 0).await.unwrap();
+    // ─ V5.0 crossing detection tests ───────────────────────────────────────────────
+
+    /// Price drops through a buy boundary → Signal::Buy { level_id: Some(1) }
+    #[tokio::test]
+    async fn test_buy_crossing_emits_buy_signal() {
+        let mut r = GridRebalancer::new(test_config()).unwrap();
+
+        // Push one level: buy @ $99, sell @ $101
+        r.set_grid_levels(vec![
+            LevelSnapshot { id: 1, buy_price: 99.0, sell_price: 101.0 },
+        ]).await;
+        r.set_anchor(100.0).await;
+
+        // First tick above buy boundary
+        r.analyze(100.5, 0).await.unwrap();
+        // Second tick drops below buy boundary
+        let sig = r.analyze(98.5, 0).await.unwrap();
 
         assert!(
-            matches!(signal, Signal::Hold { .. }),
-            "Expected Signal::Hold when regime gate is closed, got {:?}",
-            signal
+            matches!(sig, Signal::Buy { level_id: Some(1), .. }),
+            "Expected Buy crossing L1, got {:?}", sig
         );
+    }
+
+    /// Price rises through a sell boundary → Signal::Sell { level_id: Some(2) }
+    #[tokio::test]
+    async fn test_sell_crossing_emits_sell_signal() {
+        let mut r = GridRebalancer::new(test_config()).unwrap();
+
+        r.set_grid_levels(vec![
+            LevelSnapshot { id: 2, buy_price: 99.0, sell_price: 101.0 },
+        ]).await;
+        r.set_anchor(100.0).await;
+
+        // First tick below sell boundary
+        r.analyze(100.0, 0).await.unwrap();
+        // Second tick rises above sell boundary
+        let sig = r.analyze(101.5, 0).await.unwrap();
+
+        assert!(
+            matches!(sig, Signal::Sell { level_id: Some(2), .. }),
+            "Expected Sell crossing L2, got {:?}", sig
+        );
+    }
+
+    /// Price within band, no boundary crossed → Signal::Hold
+    #[tokio::test]
+    async fn test_no_crossing_emits_hold() {
+        let mut r = GridRebalancer::new(test_config()).unwrap();
+
+        r.set_grid_levels(vec![
+            LevelSnapshot { id: 1, buy_price: 98.0, sell_price: 102.0 },
+        ]).await;
+        r.set_anchor(100.0).await;
+
+        r.analyze(100.0, 0).await.unwrap();
+        let sig = r.analyze(100.1, 0).await.unwrap();
+
+        assert!(
+            matches!(sig, Signal::Hold { .. }),
+            "Expected Hold (no crossing), got {:?}", sig
+        );
+    }
+
+    /// Price drifts more than threshold from anchor → reposition Buy (level_id: None)
+    #[tokio::test]
+    async fn test_reposition_on_anchor_drift() {
+        let config = GridRebalancerConfig {
+            reposition_threshold_pct: 0.5,
+            ..test_config()
+        };
+        let mut r = GridRebalancer::new(config).unwrap();
+
+        r.set_grid_levels(vec![
+            LevelSnapshot { id: 1, buy_price: 99.0, sell_price: 101.0 },
+        ]).await;
+        r.set_anchor(100.0).await;
+
+        // Tick stays inside band but drifts > 0.5% from anchor
+        r.analyze(100.0, 0).await.unwrap();
+        // 100 * 1.006 = 100.6 — 0.6% drift, above 0.5% threshold
+        let sig = r.analyze(100.6, 0).await.unwrap();
+
+        assert!(
+            matches!(sig, Signal::Buy { level_id: None, .. }),
+            "Expected reposition Buy(level_id=None), got {:?}", sig
+        );
+        if let Signal::Buy { reason, .. } = sig {
+            assert!(reason.contains("Reposition"), "Unexpected reason: {}", reason);
+        }
     }
 }
