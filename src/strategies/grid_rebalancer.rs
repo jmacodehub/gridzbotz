@@ -31,6 +31,10 @@
 //!      other price update callers).
 //!   ✅ reposition_threshold_pct: new config field (default 0.5%).
 //!
+//! Stage 3 / Step 6b:
+//!   ✅ as_grid_rebalancer_mut() impl on Strategy trait so StrategyManager
+//!      can hand out &mut GridRebalancer without std::any::Any.
+//!
 //! February 12–27, 2026 - V4.1 Signal Fix!
 //! February 27, 2026    - V5.0 Level-Crossing Edition
 //! ═══════════════════════════════════════════════════════════════════════════
@@ -49,7 +53,7 @@ use serde::{Serialize, Deserialize};
 // LEVEL SNAPSHOT — price-only crossing state (no order IDs)
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Lightweight snapshot of a single grid level’s price boundaries.
+/// Lightweight snapshot of a single grid level's price boundaries.
 ///
 /// Only prices live here — order IDs and fill state stay in `GridStateTracker`
 /// inside `GridBot`. This keeps the strategy layer stateless with respect to
@@ -344,9 +348,9 @@ impl GridRebalancer {
             .context("GridRebalancer config validation failed")?;
 
         // Log initialization
-        info!("\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550");
+        info!("═══════════════════════════════════════════════════════════════════════════");
         info!("🎯 Grid Rebalancer V5.0 (Level-Crossing Edition) Initializing...");
-        info!("\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550");
+        info!("═══════════════════════════════════════════════════════════════════════════");
         info!("📊 CORE SETTINGS:");
         info!("   Base spacing:     {:.3}%", config.grid_spacing * 100.0);
         info!("   Order size:       {} SOL", config.order_size);
@@ -355,24 +359,24 @@ impl GridRebalancer {
         info!("   Reposition at:    {:.2}% anchor drift", config.reposition_threshold_pct);
 
         info!("📈 DYNAMIC FEATURES:");
-        info!("   Dynamic spacing:  {}", if config.enable_dynamic_spacing { "\u2705" } else { "\u274c" });
+        info!("   Dynamic spacing:  {}", if config.enable_dynamic_spacing { "\u{2705}" } else { "\u{274c}" });
         if config.enable_dynamic_spacing {
             info!("     Range:          {:.3}% - {:.3}%",
                   config.min_spacing * 100.0, config.max_spacing * 100.0);
         }
-        info!("   Fee filtering:    {}", if config.enable_fee_filtering { "\u2705" } else { "\u274c" });
+        info!("   Fee filtering:    {}", if config.enable_fee_filtering { "\u{2705}" } else { "\u{274c}" });
 
-        info!("🛡\ufe0f MARKET REGIME GATE:");
-        info!("   Enabled:          {}", if config.enable_regime_gate { "\u2705" } else { "\u274c (TRADING FREELY!)" });
+        info!("🛡\u{fe0f} MARKET REGIME GATE:");
+        info!("   Enabled:          {}", if config.enable_regime_gate { "\u{2705}" } else { "\u{274c} (TRADING FREELY!)" });
         if config.enable_regime_gate {
             info!("   Min volatility:   {:.3}%", config.min_volatility_to_trade * 100.0);
-            info!("   Pause low vol:    {}", if config.pause_in_very_low_vol { "\u2705" } else { "\u274c" });
+            info!("   Pause low vol:    {}", if config.pause_in_very_low_vol { "\u{2705}" } else { "\u{274c}" });
         } else {
             warn!("⚠️ REGIME GATE DISABLED - Will trade in ANY market condition!");
         }
 
         info!("🔄 ORDER LIFECYCLE:");
-        info!("   Enabled:          {}", if config.enable_order_lifecycle { "\u2705" } else { "\u274c" });
+        info!("   Enabled:          {}", if config.enable_order_lifecycle { "\u{2705}" } else { "\u{274c}" });
         if config.enable_order_lifecycle {
             info!("   Max age:          {}m", config.order_max_age_minutes);
             info!("   Refresh interval: {}m", config.order_refresh_interval_minutes);
@@ -380,9 +384,9 @@ impl GridRebalancer {
         }
 
         info!("🧠 ADAPTIVE LEARNING:");
-        info!("   Fill tracking:    \u2705");
-        info!("   Level crossing:   \u2705 (V5.0)");
-        info!("\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550");
+        info!("   Fill tracking:    \u{2705}");
+        info!("   Level crossing:   \u{2705} (V5.0)");
+        info!("═══════════════════════════════════════════════════════════════════════════");
 
         Ok(Self {
             current_spacing: Arc::new(tokio::sync::RwLock::new(config.grid_spacing)),
@@ -494,7 +498,7 @@ impl GridRebalancer {
 
         if self.trading_paused.load(Ordering::Acquire) {
             let reason = self.pause_reason.read().await;
-            trace!("⏸\ufe0f Trading paused: {}", reason);
+            trace!("⏸\u{fe0f} Trading paused: {}", reason);
             return false;
         }
 
@@ -807,7 +811,7 @@ impl Strategy for GridRebalancer {
         }
 
         // ── 4. LEVEL CROSSING SCAN ────────────────────────────────────────────────────
-        // Compare this tick’s price against the previous tick using the
+        // Compare this tick's price against the previous tick using the
         // dedicated `last_price_for_crossing` field (never reset by other
         // callers like `update_price` or `set_anchor`).
         let prev_opt = *self.last_price_for_crossing.read().await;
@@ -889,6 +893,13 @@ impl Strategy for GridRebalancer {
                 self.last_signal.read().await.clone()
             })
         })
+    }
+
+    /// Downcast hook: returns &mut self so StrategyManager can access
+    /// GridRebalancer-specific methods (set_grid_levels, set_anchor) without
+    /// going through std::any::Any.
+    fn as_grid_rebalancer_mut(&mut self) -> Option<&mut GridRebalancer> {
+        Some(self)
     }
 }
 
@@ -1123,5 +1134,15 @@ mod tests {
         if let Signal::Buy { reason, .. } = sig {
             assert!(reason.contains("Reposition"), "Unexpected reason: {}", reason);
         }
+    }
+
+    /// as_grid_rebalancer_mut() must return Some(self)
+    #[test]
+    fn test_as_grid_rebalancer_mut_returns_self() {
+        let mut r = GridRebalancer::new(GridRebalancerConfig {
+            enable_regime_gate: false,
+            ..GridRebalancerConfig::default()
+        }).unwrap();
+        assert!(r.as_grid_rebalancer_mut().is_some());
     }
 }
