@@ -1,5 +1,14 @@
 //! ═══════════════════════════════════════════════════════════════════════════
-//! 🚀 PROJECT FLASH V3.6 – Production Grid Trading Bot
+//! 🚀 PROJECT FLASH V3.7 – Production Grid Trading Bot
+//!
+//! V3.7 ENHANCEMENTS (Step 5C, Feb 2026):
+//! ✅ Single unified tick: process_price_update() owns signal gate,
+//!    circuit breaker, crossing detection, fills, metrics, optimizer
+//! ✅ Removed duplicate should_reposition() + reposition_grid() from
+//!    run_trading_loop -- was causing double repositioning every cycle
+//! ✅ Reposition tracking via stats.grid_repositions delta -- accurate
+//! ✅ record_failure() now called on tick errors (was missing before)
+//! ✅ Cycle status line: Halted / Repositioned / Stable + fills + vol
 //!
 //! V3.6 ENHANCEMENTS (Step 4 — Session 2, Feb 2026):
 //! ✅ --mode paper|live CLI flag overrides bot.execution_mode in TOML
@@ -23,7 +32,7 @@
 //! ✅ Swap PaperTradingEngine for RealTradingEngine by changing one line
 //!    (or --mode live / bot.execution_mode = "live" in TOML)
 //!
-//! October 17, 2025 — MASTER V3.5 | February 2026 — V3.6 Step 4 LFG! 🔥
+//! October 17, 2025 — MASTER V3.5 | February 2026 — V3.7 Step 5C LFG! 🔥
 //! ═══════════════════════════════════════════════════════════════════════════
 
 use solana_grid_bot::init;
@@ -48,7 +57,7 @@ use clap::Parser;
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[derive(Parser, Debug)]
-#[clap(name = "gridzbotz", version = "3.6.0")]
+#[clap(name = "gridzbotz", version = "3.7.0")]
 #[clap(about = "Production-grade Solana grid trading bot", long_about = None)]
 struct Args {
     /// Configuration file path
@@ -219,8 +228,8 @@ fn print_banner(config: &Config) {
     };
 
     println!("\n{}", border);
-    println!("     🚀 GRIDZBOTZ V3.6 — PRODUCTION GRID TRADING BOT");
-    println!("     ⚡ Hybrid Feeds • 10Hz Cycles • Config-Driven Execution");
+    println!("     🚀 GRIDZBOTZ V3.7 — PRODUCTION GRID TRADING BOT");
+    println!("     ⚡ Hybrid Feeds • 10Hz Cycles • Signal-Gated Execution");
     println!("{}", border);
     println!("\n   Mode:        {}", mode_label);
     println!("   Instance:    {} | v{} | {}",
@@ -244,7 +253,7 @@ fn load_configuration(args: &Args) -> Result<Config> {
 
     let mut config = Config::from_file(&args.config)?;
 
-    // ── Mode override (--paper or --mode <value>) ─────────────────────────
+    // ── Mode override (--paper or --mode <value>) ──────────────────────────
     if let Some(mode) = args.resolved_mode() {
         let valid = ["paper", "live"];
         if !valid.contains(&mode.as_str()) {
@@ -296,7 +305,7 @@ fn load_configuration(args: &Args) -> Result<Config> {
 async fn initialize_components(config: &Config) -> Result<(GridBot, PriceFeed)> {
     info!("🔧 Initializing core components...");
 
-    // ── 1. Price Feed — must start before engine build ────────────────────
+    // ── 1. Price Feed — must start before engine build ─────────────────────
     info!("🚀 Starting V3.5 Hybrid Price Feed (Pyth/Hermes)...");
     let price_history_size = config.trading.volatility_window as usize;
     let feed = PriceFeed::new(price_history_size);
@@ -402,7 +411,7 @@ async fn run_trading_loop(
     let stats_interval       = config.metrics.stats_interval as u32;
     let slow_cycle_threshold = cycle_interval * 2;
 
-    info!("🔥 STARTING TRADING LOOP");
+    info!("🔥 STARTING TRADING LOOP — V4.4 CROSSING DETECTION");
     info!("   Total Cycles:     {}", total_cycles);
     info!("   Cycle Interval:   {}ms ({}Hz)", cycle_interval, 1000 / cycle_interval);
     info!("   Duration:         {:.1} minutes",
@@ -410,7 +419,10 @@ async fn run_trading_loop(
     info!("   Stats Interval:   Every {} cycles", stats_interval);
     println!();
 
-    let mut last_price = feed.latest_price().await;
+    // Snapshot of bot.grid_repositions at loop start.
+    // We diff this against get_stats() after each tick to detect
+    // new repositions without holding a reference into GridBot internals.
+    let mut last_reposition_count: u64 = 0;
 
     for cycle in 1..=total_cycles {
         if shutdown.load(Ordering::Relaxed) {
@@ -420,70 +432,86 @@ async fn run_trading_loop(
 
         let cycle_start = Instant::now();
 
+        // ── Price fetch ─────────────────────────────────────────────────────────
         let price = feed.latest_price().await;
         if price <= 0.0 {
             error!("Invalid price at cycle {}: {}", cycle, price);
             metrics.failed_price_fetches += 1;
             metrics.record_failure();
+            sleep(Duration::from_millis(cycle_interval)).await;
             continue;
         }
         metrics.price_updates += 1;
 
-        let price_change = if last_price > 0.0 {
-            ((price - last_price) / last_price) * 100.0
-        } else {
-            0.0
-        };
-
         let volatility = feed.volatility().await;
-        let trend      = classify_trend(price_change);
 
-        print!("Cycle {:>4}/{:<4} {} | SOL ${:>9.4} ({:>+6.3}%) | Vol: {:>5.2}% | ",
-               cycle, total_cycles, trend, price, price_change, volatility);
+        // ── Single unified tick ─────────────────────────────────────────────────
+        // process_price_update owns ALL grid logic:
+        //   signal gate → circuit breaker → crossing detection →
+        //   reposition_grid → fill collection → portfolio snapshot → optimizer
+        // main.rs drives the clock and reads summary stats for display.
+        let ts = chrono::Utc::now().timestamp();
+        match bot.process_price_update(price, ts).await {
+            Ok(_) => {
+                let stats = bot.get_stats().await;
 
-        if bot.should_reposition(price, last_price).await {
-            match bot.reposition_grid(price, last_price).await {
-                Ok(_) => {
-                    metrics.repositions += 1;
-                    println!("🔄 Rebalanced");
+                // ── Reposition delta tracking ───────────────────────────────
+                // grid_repositions is the authoritative counter in GridBot.
+                // We diff it each tick so SessionMetrics.repositions is exact.
+                let new_repositions = stats.grid_repositions
+                    .saturating_sub(last_reposition_count);
+                if new_repositions > 0 {
+                    metrics.repositions += new_repositions as u32;
+                    last_reposition_count = stats.grid_repositions;
                 }
-                Err(e) => {
-                    metrics.errors += 1;
-                    println!("⚠️  Failed");
-                    error!("Reposition error: {}", e);
-                }
+
+                // ── Cycle status line ───────────────────────────────────────
+                let status = if stats.trading_paused {
+                    metrics.regime_gate_blocks += 1;
+                    "🚫 Halted"
+                } else if new_repositions > 0 {
+                    "🔄 Repositioned"
+                } else {
+                    "✓ Stable"
+                };
+
+                println!(
+                    "Cycle {:>4}/{:<4} | SOL ${:>9.4} | Vol {:>5.2}% | Fills {:>3} | Repos {:>3} | {}",
+                    cycle, total_cycles,
+                    price,
+                    volatility,
+                    stats.successful_trades,
+                    stats.grid_repositions,
+                    status,
+                );
+
+                metrics.record_cycle(
+                    cycle_start.elapsed().as_millis() as u64,
+                    slow_cycle_threshold,
+                );
             }
-        } else {
-            let stats = bot.get_stats().await;
-            if stats.trading_paused {
-                metrics.regime_gate_blocks += 1;
-                println!("🚫 Paused (regime gate)");
-            } else {
-                println!("✓ Grid stable");
+            Err(e) => {
+                metrics.errors += 1;
+                metrics.record_failure();
+                println!("Cycle {:>4}/{:<4} | SOL ${:>9.4} | ⚠️  Tick error: {}",
+                         cycle, total_cycles, price, e);
+                error!("[Main] Tick failed at cycle {}: {}", cycle, e);
             }
         }
 
-        if let Err(e) = bot.process_price_update(price, chrono::Utc::now().timestamp()).await {
-            error!("Failed to process price update: {}", e);
-            metrics.errors += 1;
+        // ── Periodic stats log ───────────────────────────────────────────────────
+        if config.metrics.enable_metrics && cycle % stats_interval == 0 {
+            info!("📊 Cycle {:>5} | Avg: {:.1}ms | Repos: {} | Blocks: {} | Errors: {}",
+                  cycle, metrics.avg_cycle_time(),
+                  metrics.repositions, metrics.regime_gate_blocks, metrics.errors);
         }
 
-        last_price = price;
-
+        // ── Cycle timing — sleep remainder ────────────────────────────────────────
         let cycle_time = cycle_start.elapsed().as_millis() as u64;
-        metrics.record_cycle(cycle_time, slow_cycle_threshold);
-
         if cycle_time > slow_cycle_threshold {
             warn!("⏱️  Slow cycle #{}: {}ms (threshold: {}ms)",
                   cycle, cycle_time, slow_cycle_threshold);
         }
-
-        if config.metrics.enable_metrics && cycle % stats_interval == 0 {
-            info!("📊 Cycle {:>5} | Avg: {:.1}ms | Repos: {} | Blocks: {}",
-                  cycle, metrics.avg_cycle_time(), metrics.repositions,
-                  metrics.regime_gate_blocks);
-        }
-
         if cycle_time < cycle_interval {
             let sleep_ms = cycle_interval - cycle_time;
             trace!("Sleeping {}ms", sleep_ms);
@@ -513,14 +541,6 @@ async fn shutdown_components(bot: &mut GridBot, feed: &PriceFeed) -> Result<()> 
 // HELPERS
 // ═══════════════════════════════════════════════════════════════════════════
 
-fn classify_trend(price_change: f64) -> &'static str {
-    if price_change.abs() < 0.005 { "➡️" }
-    else if price_change >  0.1   { "🚀" }
-    else if price_change >  0.0   { "📈" }
-    else if price_change < -0.1   { "💥" }
-    else                          { "📉" }
-}
-
 fn setup_logging(args: &Args) {
     let log_level = if args.trace {
         log::LevelFilter::Trace
@@ -539,7 +559,7 @@ fn setup_logging(args: &Args) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// MAIN ENTRY POINT — V3.6 🚀
+// MAIN ENTRY POINT — V3.7 🚀
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[tokio::main]
@@ -613,15 +633,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_trend_classification() {
-        assert_eq!(classify_trend(0.001),  "➡️");
-        assert_eq!(classify_trend(0.15),   "🚀");
-        assert_eq!(classify_trend(0.06),   "📈");
-        assert_eq!(classify_trend(-0.15),  "💥");
-        assert_eq!(classify_trend(-0.06),  "📉");
-    }
-
-    #[test]
     fn test_slippage_decimal_conversion() {
         // 100 BPS → 0.01 (1%)
         let bps: u16 = 100;
@@ -689,5 +700,23 @@ mod tests {
             trace: false,
         };
         assert_eq!(args.resolved_mode(), None);
+    }
+
+    #[test]
+    fn test_session_metrics_success_rate() {
+        let mut m = SessionMetrics::new();
+        m.record_cycle(50, 200);
+        m.record_cycle(60, 200);
+        m.record_failure();
+        // 2 successful, 1 failed → 66.6%
+        assert!((m.success_rate() - 66.666).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_session_metrics_avg_cycle_time() {
+        let mut m = SessionMetrics::new();
+        m.record_cycle(100, 200);
+        m.record_cycle(200, 200);
+        assert!((m.avg_cycle_time() - 150.0).abs() < 1e-9);
     }
 }
