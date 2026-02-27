@@ -14,6 +14,9 @@
 //! ✅ Added mark_cancelled() for clean state management
 //! ✅ Full support for grid bot reposition logic
 //!
+//! V4.2 ENHANCEMENTS (Stage 3 / Step 6):
+//! ✅ Added get_all_levels() for level snapshot sync into GridRebalancer
+//!
 //! Key Feature: `can_cancel()` prevents cancelling levels with filled buys!
 //! ═══════════════════════════════════════════════════════════════════════════
 
@@ -188,7 +191,7 @@ pub struct GridStateTracker {
 impl GridStateTracker {
     /// Create new state tracker
     pub fn new() -> Self {
-        info!("🎯 Grid State Tracker V4.1 initialized");
+        info!("🎯 Grid State Tracker V4.2 initialized");
         Self {
             levels: Arc::new(RwLock::new(HashMap::new())),
             next_id: Arc::new(RwLock::new(1)),
@@ -227,28 +230,38 @@ impl GridStateTracker {
     }
 
     // ═══════════════════════════════════════════════════════════════════════
-    // 🔥 V4.1 NEW METHODS - Selective Cancellation Support
+    // V4.1 - Selective Cancellation Support
     // ═══════════════════════════════════════════════════════════════════════
 
     /// Get a specific level by ID (for selective order cancellation)
-    ///
-    /// Used by grid_bot.rs during reposition to access order IDs
-    /// for individual cancellation instead of cancel_all_orders()
     pub async fn get_level(&self, level_id: u64) -> Option<GridLevel> {
         let levels = self.levels.read().await;
         levels.get(&level_id).cloned()
     }
 
     /// Mark a level as cancelled and remove it from tracking
-    ///
-    /// Should only be called after successfully cancelling its orders.
-    /// Updates status to Cancelled and removes from active tracking.
     pub async fn mark_cancelled(&self, level_id: u64) {
         let mut levels = self.levels.write().await;
         if let Some(mut level) = levels.remove(&level_id) {
             level.status = GridLevelStatus::Cancelled;
             debug!("🗑️  Level {} marked as cancelled and removed", level_id);
         }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // V4.2 - Level Snapshot Support (Stage 3 / Step 6)
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /// Get ALL levels regardless of status.
+    ///
+    /// Used by `GridBot::sync_levels_to_strategy()` to build the
+    /// `Vec<LevelSnapshot>` that is pushed into `GridRebalancer` after every
+    /// grid placement, so crossing detection in `analyze()` is always
+    /// operating on the live grid boundaries.
+    ///
+    /// Contrast with `get_active_levels()` which filters terminal states.
+    pub async fn get_all_levels(&self) -> Vec<GridLevel> {
+        self.levels.read().await.values().cloned().collect()
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -273,7 +286,7 @@ impl GridStateTracker {
             .collect()
     }
 
-    /// Get all active levels
+    /// Get all active (non-terminal) levels
     pub async fn get_active_levels(&self) -> Vec<GridLevel> {
         self.levels.read().await
             .values()
@@ -376,7 +389,6 @@ mod tests {
     async fn test_reposition_safety() {
         let tracker = GridStateTracker::new();
 
-        // Create 3 levels
         for i in 0..3 {
             let level = tracker.create_level(100.0 + i as f64, 102.0 + i as f64, 1.0).await;
             let mut level_clone = level.clone();
@@ -384,16 +396,13 @@ mod tests {
             tracker.update_level(level_clone).await;
         }
 
-        // Fill buy for level 2
         tracker.mark_buy_filled(2).await;
 
-        // Get cancellable levels (should exclude level 2!)
         let cancellable = tracker.get_cancellable_levels().await;
         assert_eq!(cancellable.len(), 2);
         assert!(!cancellable.contains(&2), "Level 2 should NOT be cancellable!");
     }
 
-    // 🔥 NEW TESTS for V4.1 methods
     #[tokio::test]
     async fn test_get_level() {
         let tracker = GridStateTracker::new();
@@ -414,10 +423,32 @@ mod tests {
         let level_id = level.id;
 
         assert_eq!(tracker.count().await, 1);
-
         tracker.mark_cancelled(level_id).await;
-
         assert_eq!(tracker.count().await, 0);
         assert!(tracker.get_level(level_id).await.is_none());
+    }
+
+    // V4.2 - get_all_levels() test
+    #[tokio::test]
+    async fn test_get_all_levels_includes_all_statuses() {
+        let tracker = GridStateTracker::new();
+
+        // Create 3 levels
+        tracker.create_level(98.0, 102.0, 0.1).await;
+        tracker.create_level(97.0, 103.0, 0.1).await;
+        tracker.create_level(96.0, 104.0, 0.1).await;
+
+        // Mark level 1 as buy-filled (terminal-ish, but not terminal)
+        tracker.mark_buy_filled(1).await;
+
+        // get_all_levels() must return all 3 regardless of status
+        let all = tracker.get_all_levels().await;
+        assert_eq!(all.len(), 3, "get_all_levels must return all 3 levels");
+
+        // get_active_levels() filters terminal states
+        // (BuyFilled is NOT terminal, so still 3 here — cancel one to verify filter)
+        tracker.mark_cancelled(2).await; // removes from map
+        let all_after_cancel = tracker.get_all_levels().await;
+        assert_eq!(all_after_cancel.len(), 2, "cancelled level is removed from map");
     }
 }
