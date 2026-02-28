@@ -127,7 +127,7 @@ impl VirtualWallet {
         Ok(())
     }
 
-    pub total_value_usdc(&self, sol_price: f64) -> f64 {
+    pub fn total_value_usdc(&self, sol_price: f64) -> f64 {
         self.get_balance("USDC") + (self.get_balance("SOL") * sol_price)
     }
 
