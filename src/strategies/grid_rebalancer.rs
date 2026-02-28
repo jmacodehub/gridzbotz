@@ -38,6 +38,7 @@
 //! February 12–27, 2026 - V4.1 Signal Fix!
 //! February 27, 2026    - V5.0 Level-Crossing Edition
 //! February 28, 2026    - Test fix: crossing tests disable drift reposition
+//! February 28, 2026    - Fix: replace \u escape ASCII text with real UTF-8
 //! ═══════════════════════════════════════════════════════════════════════════
 
 use crate::trading::OrderSide;
@@ -322,9 +323,9 @@ impl GridRebalancer {
         config.validate()
             .context("GridRebalancer config validation failed")?;
 
-        info!("\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550");
+        info!("═══════════════════════════════════════════════════════════════════════════");
         info!("🎯 Grid Rebalancer V5.0 (Level-Crossing Edition) Initializing...");
-        info!("\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550");
+        info!("═══════════════════════════════════════════════════════════════════════════");
         info!("📊 CORE SETTINGS:");
         info!("   Base spacing:     {:.3}%", config.grid_spacing * 100.0);
         info!("   Order size:       {} SOL", config.order_size);
@@ -332,31 +333,31 @@ impl GridRebalancer {
               config.min_usdc_balance, config.min_sol_balance);
         info!("   Reposition at:    {:.2}% anchor drift", config.reposition_threshold_pct);
         info!("📈 DYNAMIC FEATURES:");
-        info!("   Dynamic spacing:  {}", if config.enable_dynamic_spacing { "\u2705" } else { "\u274c" });
+        info!("   Dynamic spacing:  {}", if config.enable_dynamic_spacing { "✅" } else { "❌" });
         if config.enable_dynamic_spacing {
             info!("     Range:          {:.3}% - {:.3}%",
                   config.min_spacing * 100.0, config.max_spacing * 100.0);
         }
-        info!("   Fee filtering:    {}", if config.enable_fee_filtering { "\u2705" } else { "\u274c" });
+        info!("   Fee filtering:    {}", if config.enable_fee_filtering { "✅" } else { "❌" });
         info!("🛡\u{fe0f} MARKET REGIME GATE:");
-        info!("   Enabled:          {}", if config.enable_regime_gate { "\u2705" } else { "\u274c (TRADING FREELY!)" });
+        info!("   Enabled:          {}", if config.enable_regime_gate { "✅" } else { "❌ (TRADING FREELY!)" });
         if config.enable_regime_gate {
             info!("   Min volatility:   {:.3}%", config.min_volatility_to_trade * 100.0);
-            info!("   Pause low vol:    {}", if config.pause_in_very_low_vol { "\u2705" } else { "\u274c" });
+            info!("   Pause low vol:    {}", if config.pause_in_very_low_vol { "✅" } else { "❌" });
         } else {
             warn!("⚠️ REGIME GATE DISABLED - Will trade in ANY market condition!");
         }
         info!("🔄 ORDER LIFECYCLE:");
-        info!("   Enabled:          {}", if config.enable_order_lifecycle { "\u2705" } else { "\u274c" });
+        info!("   Enabled:          {}", if config.enable_order_lifecycle { "✅" } else { "❌" });
         if config.enable_order_lifecycle {
             info!("   Max age:          {}m", config.order_max_age_minutes);
             info!("   Refresh interval: {}m", config.order_refresh_interval_minutes);
             info!("   Min orders:       {}", config.min_orders_to_maintain);
         }
         info!("🧠 ADAPTIVE LEARNING:");
-        info!("   Fill tracking:    \u2705");
-        info!("   Level crossing:   \u2705 (V5.0)");
-        info!("\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550");
+        info!("   Fill tracking:    ✅");
+        info!("   Level crossing:   ✅ (V5.0)");
+        info!("═══════════════════════════════════════════════════════════════════════════");
 
         Ok(Self {
             current_spacing: Arc::new(tokio::sync::RwLock::new(config.grid_spacing)),
