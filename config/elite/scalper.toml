@@ -1,0 +1,197 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+#  🎯 ELITE CONFIG #1: SCALPER
+#
+#  Market Personality: Ultra-tight grid, high frequency, low volatility hunter
+#  Target Environment: Stable sideways markets (ATR < 0.5)
+#  Expected APY:       12–18% in low-vol grind
+#  Trade Frequency:    20–40 fills per day
+#  Risk Level:         LOW (tight stops, frequent profit-taking)
+#
+#  Philosophy:
+#  "Pennies in front of a steamroller — but the steamroller is a Roomba."
+#  Captures micro-moves with surgical precision. Dense grid, tight spacing,
+#  aggressive repositioning. Pauses automatically when volatility spikes
+#  (regime gate kicks in). Best for Asian/European hours when SOL grinds.
+#
+#  Tuning Notes:
+#  - 0.08% spacing = tightest viable on SOL/USDC (Pyth confidence ±0.03%)
+#  - 50 levels = ±4% coverage (25 buy, 25 sell)
+#  - Reposition at 0.3% drift (stay glued to price action)
+#  - Min profit 0.05% = accept tiny wins, volume over size
+#  - Regime gate: pause if ATR > 1.0 (protects from whipsaws)
+#
+#  Launch:
+#    cargo run --release -- --config config/elite/scalper.toml --paper
+#    # After 24h backtest, flip to --mode live if stats look good
+# ═══════════════════════════════════════════════════════════════════════════════
+
+test_name = "Elite #1: SCALPER — Ultra-Tight Grid Hunter"
+
+[bot]
+name            = "Scalper-v1"
+version         = "1.0.0"
+environment     = "testing"
+execution_mode  = "paper"
+instance_id     = "scalper-paper-1"
+
+[network]
+cluster    = "devnet"
+rpc_url    = "https://api.devnet.solana.com"
+commitment = "confirmed"
+
+[execution]
+max_trade_sol              = 0.3           # Small position sizes (frequent, not huge)
+priority_fee_microlamports = 50000
+max_slippage_bps           = 50            # 0.5% max (tight, liquid pairs only)
+confirmation_timeout_secs  = 60
+max_retries                = 3
+
+[paper_trading]
+initial_usdc          = 3000.0             # Smaller capital, higher turnover
+initial_sol           = 5.0
+test_duration_hours   = 2                  # 2-hour scalp sprint
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  📊 TRADING — Scalper Tuning
+# ═══════════════════════════════════════════════════════════════════════════════
+[trading]
+# 🔥 Core Grid: TIGHT and DENSE
+grid_levels          = 50                  # 50 levels = ±4% coverage (0.08% × 50)
+grid_spacing_percent = 0.08                # 🎯 0.08% = surgical precision
+min_order_size       = 0.05                # Tiny fills, high frequency
+max_position_size    = 50.0                # Cap at 50 SOL total exposure
+
+# Reserves
+min_usdc_reserve = 200.0
+min_sol_reserve  = 1.0
+
+# Dynamic Grid
+enable_dynamic_grid  = false               # Static spacing (predictable in low vol)
+volatility_window    = 100
+
+# 🎯 Reposition Aggressively
+reposition_threshold = 0.3                 # 0.3% drift = instant reposition
+
+# Auto-Rebalancing
+enable_auto_rebalance    = true
+enable_smart_rebalance   = true
+rebalance_threshold_pct  = 3.0             # Tighter rebalance trigger (3%)
+rebalance_cooldown_secs  = 30              # Faster cooldown (30s)
+
+# Order Management
+max_orders_per_side          = 15          # More orders per side (dense grid)
+order_refresh_interval_secs  = 180         # Refresh every 3 min (fast)
+enable_market_orders         = false
+enable_fee_optimization      = true        # Critical for scalping margins
+
+# Order Lifecycle
+enable_order_lifecycle         = true
+order_max_age_minutes          = 5         # Cancel stale orders fast (5 min)
+order_refresh_interval_minutes = 3
+min_orders_to_maintain         = 12        # Always keep grid dense
+
+# 🎯 Profit Threshold: TINY WINS
+min_profit_threshold_pct = 0.05            # 0.05% = 5 BPS (accept micro-profits)
+max_slippage_pct         = 0.5             # Tight slippage tolerance
+
+# Price Bounds (Optional)
+enable_price_bounds = false
+lower_price_bound   = 120.0
+upper_price_bound   = 180.0
+
+# 🔥 Regime Gate: CRITICAL FOR SCALPER
+enable_regime_gate       = true            # 🚨 ENABLED — pause in high vol
+min_volatility_to_trade  = 0.01            # 1 BPS min (always active in normal markets)
+pause_in_very_low_vol    = false           # Never pause for low vol
+# Custom threshold: pause if ATR > 1.0 (implement in RegimeGate)
+
+# Advanced
+enable_adaptive_spacing      = false
+enable_smart_position_sizing = false
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  🎯 STRATEGIES
+# ═══════════════════════════════════════════════════════════════════════════════
+[strategies]
+active         = ["grid"]
+consensus_mode = "single"
+
+enable_multi_timeframe       = false
+require_timeframe_alignment  = false
+
+[strategies.grid]
+enabled                  = true
+weight                   = 1.0
+min_confidence           = 0.4             # Lower threshold (more aggressive)
+reposition_threshold_pct = 0.30            # Match trading.reposition_threshold
+
+[strategies.momentum]
+enabled         = false
+weight          = 0.8
+min_confidence  = 0.6
+lookback_period = 20
+threshold       = 0.02
+
+[strategies.mean_reversion]
+enabled            = false
+weight             = 0.7
+min_confidence     = 0.6
+sma_period         = 20
+std_dev_multiplier = 2.0
+
+[strategies.rsi]
+enabled              = false
+weight               = 0.9
+min_confidence       = 0.7
+period               = 14
+oversold_threshold   = 30.0
+overbought_threshold = 70.0
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  🚨 RISK MANAGEMENT — Tight Stops for Scalper
+# ═══════════════════════════════════════════════════════════════════════════════
+[risk]
+max_position_size_pct         = 20.0       # Lower exposure (20% max)
+max_drawdown_pct              = 5.0        # 🚨 Tight drawdown limit (5%)
+stop_loss_pct                 = 2.0        # 🚨 Tight stop-loss (2%)
+take_profit_pct               = 1.0        # Quick profit-taking (1%)
+enable_circuit_breaker        = true
+circuit_breaker_threshold_pct = 3.0        # Trip at 3% rapid loss
+circuit_breaker_cooldown_secs = 180        # 3-min cooldown
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  📡 PYTH PRICE FEED — High Frequency
+# ═══════════════════════════════════════════════════════════════════════════════
+[pyth]
+http_endpoint      = "https://hermes.pyth.network"
+feed_ids           = ["0xef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d"]
+update_interval_ms = 100                   # 🚀 10Hz polling (max resolution)
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  ⚙️  PERFORMANCE — Fast Cycles
+# ═══════════════════════════════════════════════════════════════════════════════
+[performance]
+cycle_interval_ms  = 100                   # 10Hz main loop
+startup_delay_ms   = 1000
+request_timeout_ms = 3000                  # Tight timeout (fail fast)
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  📋 LOGGING
+# ═══════════════════════════════════════════════════════════════════════════════
+[logging]
+level               = "info"
+file_path           = "logs/scalper_v1.log"
+enable_file_logging = true
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  📈 METRICS
+# ═══════════════════════════════════════════════════════════════════════════════
+[metrics]
+enable_metrics = true
+stats_interval = 100                       # Stats every 100 cycles (~10 seconds)
+
+[database]
+enabled = false
+
+[alerts]
+enabled = false

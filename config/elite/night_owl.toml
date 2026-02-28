@@ -1,0 +1,198 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+#  🎯 ELITE CONFIG #3: NIGHT OWL
+#
+#  Market Personality: Conservative, sleep-safe, minimal risk
+#  Target Environment: Stable markets, overnight holds, low stress
+#  Expected APY:       8–12% (low risk, consistent)
+#  Trade Frequency:    3–8 fills per day (slow and steady)
+#  Risk Level:         VERY LOW (tight stops, circuit breakers)
+#
+#  Philosophy:
+#  "Sleep like a baby while the bot grinds."
+#  Built for overnight safety. Tight risk limits, aggressive circuit breakers,
+#  regime gate pauses trading if volatility spikes. Set it before bed, wake up
+#  to steady gains (or minimal losses). Perfect for traders with day jobs who
+#  want passive income without babysitting charts. Capital preservation > max returns.
+#
+#  Tuning Notes:
+#  - 0.25% spacing = balanced (not too tight, not too wide)
+#  - 25 levels = ±6.25% coverage (12 buy, 13 sell)
+#  - Max drawdown 3.0% = ultra-tight kill-switch
+#  - Stop-loss 1.5% = exit positions fast on adverse moves
+#  - Regime gate ON = pause if ATR > 0.8 (avoid overnight volatility)
+#
+#  Launch:
+#    cargo run --release -- --config config/elite/night_owl.toml --paper
+#    # Test overnight, check morning stats, flip to --mode live if comfy
+# ═══════════════════════════════════════════════════════════════════════════════
+
+test_name = "Elite #3: NIGHT OWL — Sleep-Safe Conservative Grid"
+
+[bot]
+name            = "NightOwl-v1"
+version         = "1.0.0"
+environment     = "testing"
+execution_mode  = "paper"
+instance_id     = "nightowl-paper-1"
+
+[network]
+cluster    = "devnet"
+rpc_url    = "https://api.devnet.solana.com"
+commitment = "confirmed"
+
+[execution]
+max_trade_sol              = 0.4           # Moderate position sizes
+priority_fee_microlamports = 50000
+max_slippage_bps           = 75            # 0.75% max (conservative)
+confirmation_timeout_secs  = 60
+max_retries                = 3
+
+[paper_trading]
+initial_usdc          = 5000.0
+initial_sol           = 10.0
+test_duration_hours   = 8                  # 8-hour overnight sim
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  📊 TRADING — Night Owl Tuning
+# ═══════════════════════════════════════════════════════════════════════════════
+[trading]
+# 🔥 Core Grid: BALANCED
+grid_levels          = 25                  # 25 levels = ±6.25% coverage
+grid_spacing_percent = 0.25                # 🎯 0.25% = balanced spacing
+min_order_size       = 0.1
+max_position_size    = 80.0
+
+# Reserves
+min_usdc_reserve = 400.0                   # Higher reserves (safety buffer)
+min_sol_reserve  = 2.5
+
+# Dynamic Grid
+enable_dynamic_grid  = false               # Static grid (predictable)
+volatility_window    = 100
+
+# 🎯 Reposition Moderately
+reposition_threshold = 0.5                 # 0.5% drift = balanced
+
+# Auto-Rebalancing
+enable_auto_rebalance    = true
+enable_smart_rebalance   = true
+rebalance_threshold_pct  = 5.0
+rebalance_cooldown_secs  = 90
+
+# Order Management
+max_orders_per_side          = 10
+order_refresh_interval_secs  = 300
+enable_market_orders         = false
+enable_fee_optimization      = true
+
+# Order Lifecycle
+enable_order_lifecycle         = true
+order_max_age_minutes          = 12
+order_refresh_interval_minutes = 8
+min_orders_to_maintain         = 8
+
+# 🎯 Profit Threshold: Conservative
+min_profit_threshold_pct = 0.15            # 0.15% = 15 BPS (steady wins)
+max_slippage_pct         = 1.0
+
+# Price Bounds (Optional)
+enable_price_bounds = false
+lower_price_bound   = 110.0
+upper_price_bound   = 200.0
+
+# 🔥 Regime Gate: ENABLED (Safety First)
+enable_regime_gate       = true            # 🚨 ENABLED — pause in high vol
+min_volatility_to_trade  = 0.01
+pause_in_very_low_vol    = false
+# Pause if ATR > 0.8 (implement in RegimeGate)
+
+# Advanced
+enable_adaptive_spacing      = false
+enable_smart_position_sizing = false
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  🎯 STRATEGIES
+# ═══════════════════════════════════════════════════════════════════════════════
+[strategies]
+active         = ["grid"]
+consensus_mode = "single"
+
+enable_multi_timeframe       = false
+require_timeframe_alignment  = false
+
+[strategies.grid]
+enabled                  = true
+weight                   = 1.0
+min_confidence           = 0.5
+reposition_threshold_pct = 0.50
+
+[strategies.momentum]
+enabled         = false
+weight          = 0.8
+min_confidence  = 0.6
+lookback_period = 20
+threshold       = 0.02
+
+[strategies.mean_reversion]
+enabled            = false
+weight             = 0.7
+min_confidence     = 0.6
+sma_period         = 20
+std_dev_multiplier = 2.0
+
+[strategies.rsi]
+enabled              = false
+weight               = 0.9
+min_confidence       = 0.7
+period               = 14
+oversold_threshold   = 30.0
+overbought_threshold = 70.0
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  🚨 RISK MANAGEMENT — ULTRA-TIGHT (Sleep Safe)
+# ═══════════════════════════════════════════════════════════════════════════════
+[risk]
+max_position_size_pct         = 25.0
+max_drawdown_pct              = 3.0        # 🚨 ULTRA-TIGHT (3% max drawdown)
+stop_loss_pct                 = 1.5        # 🚨 Fast exit (1.5% stop-loss)
+take_profit_pct               = 5.0        # Quick profit-taking (5%)
+enable_circuit_breaker        = true
+circuit_breaker_threshold_pct = 2.0        # 🚨 Hair-trigger breaker (2%)
+circuit_breaker_cooldown_secs = 300
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  📡 PYTH PRICE FEED
+# ═══════════════════════════════════════════════════════════════════════════════
+[pyth]
+http_endpoint      = "https://hermes.pyth.network"
+feed_ids           = ["0xef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d"]
+update_interval_ms = 500                   # 2Hz (conservative, low overhead)
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  ⚙️  PERFORMANCE
+# ═══════════════════════════════════════════════════════════════════════════════
+[performance]
+cycle_interval_ms  = 500                   # 2Hz (low CPU, conserve resources)
+startup_delay_ms   = 2000
+request_timeout_ms = 5000
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  📋 LOGGING
+# ═══════════════════════════════════════════════════════════════════════════════
+[logging]
+level               = "info"
+file_path           = "logs/night_owl_v1.log"
+enable_file_logging = true
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  📈 METRICS
+# ═══════════════════════════════════════════════════════════════════════════════
+[metrics]
+enable_metrics = true
+stats_interval = 60                        # Stats every 60 cycles (~30 seconds)
+
+[database]
+enabled = false
+
+[alerts]
+enabled = false

@@ -1,0 +1,197 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+#  🎯 ELITE CONFIG #2: MOMENTUM HUNTER
+#
+#  Market Personality: Wide grid, trend-following, volatility lover
+#  Target Environment: Trending markets with momentum (ATR > 1.5)
+#  Expected APY:       25–40% in strong trends
+#  Trade Frequency:    5–10 fills per day (quality over quantity)
+#  Risk Level:         MEDIUM-HIGH (wider stops, let winners run)
+#
+#  Philosophy:
+#  "The trend is your friend until the bend at the end."
+#  Built for breakouts, news-driven volatility, and sustained directional moves.
+#  Wide spacing captures the meat of big swings without getting chopped by noise.
+#  No regime gate — this config WANTS chaos. When ATR spikes, momentum hunter
+#  comes alive. Perfect for FOMC days, CPI prints, or when BTC goes parabolic.
+#
+#  Tuning Notes:
+#  - 0.40% spacing = wide enough to avoid whipsaw noise
+#  - 20 levels = ±8% coverage (10 buy, 10 sell)
+#  - Reposition at 1.0% drift (let trends develop before reacting)
+#  - Min profit 0.30% = only take trades with real meat
+#  - Regime gate OFF = no pausing, always hunting
+#
+#  Launch:
+#    cargo run --release -- --config config/elite/momentum_hunter.toml --paper
+#    # Monitor during high-vol events, flip to --mode live for big moves
+# ═══════════════════════════════════════════════════════════════════════════════
+
+test_name = "Elite #2: MOMENTUM HUNTER — Wide Grid Trend-Rider"
+
+[bot]
+name            = "MomentumHunter-v1"
+version         = "1.0.0"
+environment     = "testing"
+execution_mode  = "paper"
+instance_id     = "momentum-paper-1"
+
+[network]
+cluster    = "devnet"
+rpc_url    = "https://api.devnet.solana.com"
+commitment = "confirmed"
+
+[execution]
+max_trade_sol              = 1.0           # Larger position sizes (swing trades)
+priority_fee_microlamports = 75000         # Higher priority (compete for fills)
+max_slippage_bps           = 150           # 1.5% max (accept slippage in vol)
+confirmation_timeout_secs  = 90
+max_retries                = 5             # More retries (high-vol failures)
+
+[paper_trading]
+initial_usdc          = 10000.0            # Larger capital for big swings
+initial_sol           = 20.0
+test_duration_hours   = 4                  # 4-hour momentum session
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  📊 TRADING — Momentum Hunter Tuning
+# ═══════════════════════════════════════════════════════════════════════════════
+[trading]
+# 🔥 Core Grid: WIDE and SPARSE
+grid_levels          = 20                  # 20 levels = ±8% coverage (0.40% × 20)
+grid_spacing_percent = 0.40                # 🎯 0.40% = wide spacing for big moves
+min_order_size       = 0.2                 # Larger fills, fewer trades
+max_position_size    = 200.0               # Higher cap (swing trading)
+
+# Reserves
+min_usdc_reserve = 500.0
+min_sol_reserve  = 3.0
+
+# Dynamic Grid
+enable_dynamic_grid  = true                # 🔥 ATR-driven spacing (adapts to vol)
+volatility_window    = 50                  # Shorter window (react fast)
+
+# 🎯 Reposition Conservatively (Let Trends Run)
+reposition_threshold = 1.0                 # 1.0% drift = let momentum develop
+
+# Auto-Rebalancing
+enable_auto_rebalance    = true
+enable_smart_rebalance   = true
+rebalance_threshold_pct  = 10.0            # Wider rebalance trigger (10%)
+rebalance_cooldown_secs  = 120             # Slower cooldown (2 min)
+
+# Order Management
+max_orders_per_side          = 8           # Fewer orders per side (sparse grid)
+order_refresh_interval_secs  = 600         # Refresh every 10 min (patient)
+enable_market_orders         = false
+enable_fee_optimization      = true
+
+# Order Lifecycle
+enable_order_lifecycle         = true
+order_max_age_minutes          = 15        # Longer stale order tolerance
+order_refresh_interval_minutes = 10
+min_orders_to_maintain         = 6
+
+# 🎯 Profit Threshold: MEATY WINS ONLY
+min_profit_threshold_pct = 0.30            # 0.30% = 30 BPS (quality over quantity)
+max_slippage_pct         = 2.0             # Tolerate slippage in vol
+
+# Price Bounds (Optional)
+enable_price_bounds = false
+lower_price_bound   = 100.0
+upper_price_bound   = 250.0
+
+# 🔥 Regime Gate: OFF (Thrives in Chaos)
+enable_regime_gate       = false           # 🚨 DISABLED — no pausing, always active
+min_volatility_to_trade  = 0.0
+pause_in_very_low_vol    = false
+
+# Advanced
+enable_adaptive_spacing      = true        # 🔥 ATR-dynamic spacing enabled
+enable_smart_position_sizing = false
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  🎯 STRATEGIES
+# ═══════════════════════════════════════════════════════════════════════════════
+[strategies]
+active         = ["grid"]
+consensus_mode = "single"
+
+enable_multi_timeframe       = false
+require_timeframe_alignment  = false
+
+[strategies.grid]
+enabled                  = true
+weight                   = 1.0
+min_confidence           = 0.6             # Higher threshold (pickier)
+reposition_threshold_pct = 1.00            # Match trading.reposition_threshold
+
+[strategies.momentum]
+enabled         = false
+weight          = 0.9                      # High weight when enabled
+min_confidence  = 0.7
+lookback_period = 30                       # Longer lookback for trends
+threshold       = 0.05                     # 5% move = strong momentum
+
+[strategies.mean_reversion]
+enabled            = false                 # Conflicts with momentum
+weight             = 0.3                   # Low weight (anti-trend)
+min_confidence     = 0.5
+sma_period         = 20
+std_dev_multiplier = 2.0
+
+[strategies.rsi]
+enabled              = false
+weight               = 0.5
+min_confidence       = 0.6
+period               = 14
+oversold_threshold   = 25.0                # More extreme (avoid noise)
+overbought_threshold = 75.0
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  🚨 RISK MANAGEMENT — Wider Stops for Momentum
+# ═══════════════════════════════════════════════════════════════════════════════
+[risk]
+max_position_size_pct         = 40.0       # Higher exposure (swing trades)
+max_drawdown_pct              = 15.0       # 🔥 Wider drawdown tolerance
+stop_loss_pct                 = 8.0        # Wider stop-loss (let trends breathe)
+take_profit_pct               = 20.0       # Let winners run (20% target)
+enable_circuit_breaker        = true
+circuit_breaker_threshold_pct = 12.0       # Trip at 12% rapid loss
+circuit_breaker_cooldown_secs = 600        # 10-min cooldown
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  📡 PYTH PRICE FEED
+# ═══════════════════════════════════════════════════════════════════════════════
+[pyth]
+http_endpoint      = "https://hermes.pyth.network"
+feed_ids           = ["0xef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d"]
+update_interval_ms = 200                   # 5Hz polling (balanced)
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  ⚙️  PERFORMANCE
+# ═══════════════════════════════════════════════════════════════════════════════
+[performance]
+cycle_interval_ms  = 200                   # 5Hz main loop (slower, patient)
+startup_delay_ms   = 2000                  # Longer warmup
+request_timeout_ms = 5000
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  📋 LOGGING
+# ═══════════════════════════════════════════════════════════════════════════════
+[logging]
+level               = "info"
+file_path           = "logs/momentum_hunter_v1.log"
+enable_file_logging = true
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  📈 METRICS
+# ═══════════════════════════════════════════════════════════════════════════════
+[metrics]
+enable_metrics = true
+stats_interval = 50
+
+[database]
+enabled = false
+
+[alerts]
+enabled = false

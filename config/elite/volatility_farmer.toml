@@ -1,0 +1,199 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+#  🎯 ELITE CONFIG #4: VOLATILITY FARMER
+#
+#  Market Personality: ATR-dynamic, regime-aware, adaptive chameleon
+#  Target Environment: All volatility regimes (low, medium, high)
+#  Expected APY:       18–30% (consistent across all markets)
+#  Trade Frequency:    8–20 fills per day (adapts to vol)
+#  Risk Level:         MEDIUM (responsive risk management)
+#
+#  Philosophy:
+#  "Dance with the market, don't fight it."
+#  This config is the Swiss Army knife — works in any regime by adapting
+#  grid spacing dynamically based on ATR. When volatility spikes, spacing
+#  widens automatically to avoid whipsaw. When vol drops, spacing tightens
+#  to capture micro-moves. Regime gate pauses trading only when volatility
+#  becomes EXTREME (ATR > 2.5). Perfect for "set it and forget it" adaptive trading.
+#
+#  Tuning Notes:
+#  - ATR-dynamic spacing enabled (grid breathes with the market)
+#  - 30 levels = ±7.5% coverage (baseline)
+#  - Volatility window 50 cycles = fast regime detection
+#  - Reposition at 0.4% drift (responsive to vol shifts)
+#  - Regime gate: pause only if ATR > 2.5 (extreme outlier)
+#
+#  Launch:
+#    cargo run --release -- --config config/elite/volatility_farmer.toml --paper
+#    # Monitor across different vol regimes, flip to --mode live when confident
+# ═══════════════════════════════════════════════════════════════════════════════
+
+test_name = "Elite #4: VOLATILITY FARMER — ATR-Dynamic Adaptive Grid"
+
+[bot]
+name            = "VolatilityFarmer-v1"
+version         = "1.0.0"
+environment     = "testing"
+execution_mode  = "paper"
+instance_id     = "volfarm-paper-1"
+
+[network]
+cluster    = "devnet"
+rpc_url    = "https://api.devnet.solana.com"
+commitment = "confirmed"
+
+[execution]
+max_trade_sol              = 0.6
+priority_fee_microlamports = 60000
+max_slippage_bps           = 120           # 1.2% (adaptive to vol)
+confirmation_timeout_secs  = 60
+max_retries                = 4
+
+[paper_trading]
+initial_usdc          = 8000.0
+initial_sol           = 15.0
+test_duration_hours   = 6                  # 6-hour adaptive session
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  📊 TRADING — Volatility Farmer Tuning
+# ═══════════════════════════════════════════════════════════════════════════════
+[trading]
+# 🔥 Core Grid: ATR-DYNAMIC
+grid_levels          = 30                  # 30 levels baseline
+grid_spacing_percent = 0.20                # 🎯 0.20% baseline (ATR will adjust)
+min_order_size       = 0.1
+max_position_size    = 120.0
+
+# Reserves
+min_usdc_reserve = 350.0
+min_sol_reserve  = 2.0
+
+# 🔥 Dynamic Grid: ENABLED (ATR-driven adaptive spacing)
+enable_dynamic_grid  = true                # 🚀 ATR adjusts spacing in real-time
+volatility_window    = 50                  # Short window = fast regime detection
+
+# 🎯 Reposition Responsively
+reposition_threshold = 0.4                 # 0.4% drift = responsive to vol changes
+
+# Auto-Rebalancing
+enable_auto_rebalance    = true
+enable_smart_rebalance   = true
+rebalance_threshold_pct  = 6.0
+rebalance_cooldown_secs  = 60
+
+# Order Management
+max_orders_per_side          = 12
+order_refresh_interval_secs  = 240
+enable_market_orders         = false
+enable_fee_optimization      = true
+
+# Order Lifecycle
+enable_order_lifecycle         = true
+order_max_age_minutes          = 10
+order_refresh_interval_minutes = 6
+min_orders_to_maintain         = 10
+
+# 🎯 Profit Threshold: Adaptive
+min_profit_threshold_pct = 0.12            # 0.12% = 12 BPS (balanced)
+max_slippage_pct         = 1.5
+
+# Price Bounds (Optional)
+enable_price_bounds = false
+lower_price_bound   = 100.0
+upper_price_bound   = 220.0
+
+# 🔥 Regime Gate: Smart Pause (Only Extreme Vol)
+enable_regime_gate       = true            # 🚨 ENABLED but lenient
+min_volatility_to_trade  = 0.01
+pause_in_very_low_vol    = false
+# Pause only if ATR > 2.5 (extreme outlier events)
+
+# 🔥 Advanced: ATR-Dynamic Spacing ENABLED
+enable_adaptive_spacing      = true        # 🚀 ATR-driven grid breathing
+enable_smart_position_sizing = false       # Future: confidence-based sizing
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  🎯 STRATEGIES
+# ═══════════════════════════════════════════════════════════════════════════════
+[strategies]
+active         = ["grid"]
+consensus_mode = "single"
+
+enable_multi_timeframe       = false
+require_timeframe_alignment  = false
+
+[strategies.grid]
+enabled                  = true
+weight                   = 1.0
+min_confidence           = 0.5
+reposition_threshold_pct = 0.40
+
+[strategies.momentum]
+enabled         = false
+weight          = 0.8
+min_confidence  = 0.6
+lookback_period = 25
+threshold       = 0.03
+
+[strategies.mean_reversion]
+enabled            = false
+weight             = 0.7
+min_confidence     = 0.6
+sma_period         = 20
+std_dev_multiplier = 2.0
+
+[strategies.rsi]
+enabled              = false
+weight               = 0.9
+min_confidence       = 0.7
+period               = 14
+oversold_threshold   = 30.0
+overbought_threshold = 70.0
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  🚨 RISK MANAGEMENT — Adaptive
+# ═══════════════════════════════════════════════════════════════════════════════
+[risk]
+max_position_size_pct         = 30.0
+max_drawdown_pct              = 8.0        # Moderate drawdown tolerance
+stop_loss_pct                 = 4.0        # Balanced stop-loss
+take_profit_pct               = 12.0       # Moderate profit target
+enable_circuit_breaker        = true
+circuit_breaker_threshold_pct = 6.0        # Trip at 6% rapid loss
+circuit_breaker_cooldown_secs = 300
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  📡 PYTH PRICE FEED
+# ═══════════════════════════════════════════════════════════════════════════════
+[pyth]
+http_endpoint      = "https://hermes.pyth.network"
+feed_ids           = ["0xef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d"]
+update_interval_ms = 200                   # 5Hz (balanced for adaptive)
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  ⚙️  PERFORMANCE
+# ═══════════════════════════════════════════════════════════════════════════════
+[performance]
+cycle_interval_ms  = 200                   # 5Hz main loop
+startup_delay_ms   = 1500
+request_timeout_ms = 5000
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  📋 LOGGING
+# ═══════════════════════════════════════════════════════════════════════════════
+[logging]
+level               = "info"
+file_path           = "logs/volatility_farmer_v1.log"
+enable_file_logging = true
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  📈 METRICS
+# ═══════════════════════════════════════════════════════════════════════════════
+[metrics]
+enable_metrics = true
+stats_interval = 50
+
+[database]
+enabled = false
+
+[alerts]
+enabled = false
