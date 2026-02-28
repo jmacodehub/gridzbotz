@@ -337,7 +337,13 @@ pub trait TradingEngine: Send + Sync {
 
     async fn cancel_order(&self, order_id: &str) -> TradingResult<()>;
     async fn cancel_all_orders(&self) -> TradingResult<usize>;
-    async fn process_price_update(&self, current_price: f64) -> TradingResult<Vec<String>>;
+
+    /// Process price update and return any newly confirmed fills.
+    ///
+    /// V5.2: Returns Vec<FillEvent> (not Vec<String>) to support fill fan-out.
+    /// Each FillEvent is broadcast to all strategies via StrategyManager::notify_fill().
+    async fn process_price_update(&self, current_price: f64) -> TradingResult<Vec<FillEvent>>;
+
     async fn open_order_count(&self) -> usize;
     async fn is_trading_allowed(&self) -> bool;
 

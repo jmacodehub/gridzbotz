@@ -304,6 +304,7 @@ impl Strategy for ArbitrageStrategy {
                         opp.display(),
                         opp.net_profit_percent
                     ),
+                    level_id: None,  // Arbitrage opportunities aren't grid-level-specific
                 }
             } else {
                 self.stats.hold_signals += 1;
