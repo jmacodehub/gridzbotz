@@ -63,11 +63,11 @@ pub trait Strategy: Send + Sync + 'static {
 // ══════════════════════════════════════════════════════════════════════
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Signal {
-    StrongBuy { price: f64, size: f64, reason: String, confidence: f64 },
-    Buy       { price: f64, size: f64, reason: String, confidence: f64 },
+    StrongBuy { price: f64, size: f64, reason: String, confidence: f64, level_id: Option<u64> },
+    Buy       { price: f64, size: f64, reason: String, confidence: f64, level_id: Option<u64> },
     Hold      { reason: Option<String> },
-    Sell      { price: f64, size: f64, reason: String, confidence: f64 },
-    StrongSell{ price: f64, size: f64, reason: String, confidence: f64 },
+    Sell      { price: f64, size: f64, reason: String, confidence: f64, level_id: Option<u64> },
+    StrongSell{ price: f64, size: f64, reason: String, confidence: f64, level_id: Option<u64> },
 }
 
 impl Signal {
@@ -101,16 +101,24 @@ impl Signal {
 
     pub fn display(&self) -> String {
         match self {
-            Signal::StrongBuy { price, reason, confidence, .. } =>
-                format!("STRONG BUY @ ${:.4} | {} | {:.0}% conf", price, reason, confidence * 100.0),
-            Signal::Buy { price, reason, confidence, .. } =>
-                format!("BUY @ ${:.4} | {} | {:.0}%", price, reason, confidence * 100.0),
+            Signal::StrongBuy { price, reason, confidence, level_id, .. } => {
+                let level_str = level_id.map_or_else(|| String::new(), |id| format!(" level {} | ", id));
+                format!("STRONG BUY @ ${:.4} | {}{} | {:.0}% conf", price, level_str, reason, confidence * 100.0)
+            },
+            Signal::Buy { price, reason, confidence, level_id, .. } => {
+                let level_str = level_id.map_or_else(|| String::new(), |id| format!(" level {} | ", id));
+                format!("BUY @ ${:.4} | {}{} | {:.0}%", price, level_str, reason, confidence * 100.0)
+            },
             Signal::Hold { reason } =>
                 format!("HOLD | {}", reason.clone().unwrap_or_else(|| "Neutral".into())),
-            Signal::Sell { price, reason, confidence, .. } =>
-                format!("SELL @ ${:.4} | {} | {:.0}%", price, reason, confidence * 100.0),
-            Signal::StrongSell { price, reason, confidence, .. } =>
-                format!("STRONG SELL @ ${:.4} | {} | {:.0}%", price, reason, confidence * 100.0),
+            Signal::Sell { price, reason, confidence, level_id, .. } => {
+                let level_str = level_id.map_or_else(|| String::new(), |id| format!(" level {} | ", id));
+                format!("SELL @ ${:.4} | {}{} | {:.0}%", price, level_str, reason, confidence * 100.0)
+            },
+            Signal::StrongSell { price, reason, confidence, level_id, .. } => {
+                let level_str = level_id.map_or_else(|| String::new(), |id| format!(" level {} | ", id));
+                format!("STRONG SELL @ ${:.4} | {}{} | {:.0}%", price, level_str, reason, confidence * 100.0)
+            },
         }
     }
 }
@@ -277,10 +285,10 @@ mod tests {
     #[test]
     fn test_signal_strength_v55() {
         let strong_buy = Signal::StrongBuy {
-            price: 100.0, size: 1.0, reason: "test".into(), confidence: 0.9,
+            price: 100.0, size: 1.0, reason: "test".into(), confidence: 0.9, level_id: None,
         };
         let buy = Signal::Buy {
-            price: 100.0, size: 1.0, reason: "test".into(), confidence: 0.7,
+            price: 100.0, size: 1.0, reason: "test".into(), confidence: 0.7, level_id: None,
         };
         let hold = Signal::Hold { reason: Some("test".into()) };
         assert!(strong_buy.strength() > buy.strength());
@@ -306,5 +314,30 @@ mod tests {
         let fill = FillEvent::new("TEST", OrderSide::Sell, 100.0, 0.1, 0.001, None, 0);
         let mut gr = GridRebalancer::new(GridRebalancerConfig::default()).unwrap();
         gr.on_fill(&fill);
+    }
+
+    #[test]
+    fn test_signal_display_with_level_id() {
+        let buy_with_level = Signal::Buy {
+            price: 142.50,
+            size: 0.1,
+            reason: "level crossed".into(),
+            confidence: 0.85,
+            level_id: Some(5),
+        };
+        let display = buy_with_level.display();
+        assert!(display.contains("level 5"));
+        assert!(display.contains("$142.50"));
+
+        let buy_without_level = Signal::Buy {
+            price: 142.50,
+            size: 0.1,
+            reason: "grid reposition".into(),
+            confidence: 0.90,
+            level_id: None,
+        };
+        let display = buy_without_level.display();
+        assert!(!display.contains("level"));
+        assert!(display.contains("grid reposition"));
     }
 }
