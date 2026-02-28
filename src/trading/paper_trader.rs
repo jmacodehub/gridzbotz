@@ -127,7 +127,7 @@ impl VirtualWallet {
         Ok(())
     }
 
-    pub fn total_value_usdc(&self, sol_price: f64) -> f64 {
+    pub total_value_usdc(&self, sol_price: f64) -> f64 {
         self.get_balance("USDC") + (self.get_balance("SOL") * sol_price)
     }
 
@@ -481,7 +481,7 @@ impl PaperTradingEngine {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// TRADING ENGINE TRAIT IMPLEMENTATION (V3.1)
+// TRADING ENGINE TRAIT IMPLEMENTATION (V3.1 / V5.2)
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[async_trait]
@@ -504,8 +504,14 @@ impl TradingEngine for PaperTradingEngine {
         self.cancel_all_orders().await
     }
 
-    async fn process_price_update(&self, current_price: f64) -> TradingResult<Vec<String>> {
-        self.process_price_update(current_price).await
+    /// V5.2: Returns Vec<FillEvent> to match trait signature.
+    /// Implementation accumulates fills in `pending_fills`;
+    /// callers should use `drain_fills()` to retrieve and fan-out to strategies.
+    async fn process_price_update(&self, current_price: f64) -> TradingResult<Vec<FillEvent>> {
+        // Process price update (fills orders, accumulates FillEvents)
+        let _filled_order_ids = self.process_price_update(current_price).await?;
+        // Return accumulated FillEvents (drains pending_fills)
+        Ok(self.drain_fills().await)
     }
 
     async fn open_order_count(&self) -> usize {
