@@ -31,39 +31,24 @@ use super::{TradingEngine, TradingResult, FillEvent};
 // CONSTANTS
 // ═══════════════════════════════════════════════════════════════════════════
 
-const DEFAULT_MAKER_FEE: f64 = 0.0002;  // 0.02% OpenBook maker fee
-const DEFAULT_TAKER_FEE: f64 = 0.0004;  // 0.04% OpenBook taker fee
-const DEFAULT_SLIPPAGE: f64 = 0.0005;   // 0.05% default slippage
+const DEFAULT_MAKER_FEE: f64 = 0.0002;
+const DEFAULT_TAKER_FEE: f64 = 0.0004;
+const DEFAULT_SLIPPAGE: f64 = 0.0005;
 const MAX_TRADE_HISTORY: usize = 10000;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // DATA STRUCTURES
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Order side (buy or sell)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum OrderSide {
-    Buy,
-    Sell,
-}
+pub enum OrderSide { Buy, Sell }
 
-/// Order status
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum OrderStatus {
-    Open,
-    PartiallyFilled,
-    Filled,
-    Cancelled,
-}
+pub enum OrderStatus { Open, PartiallyFilled, Filled, Cancelled }
 
-/// Order type
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum OrderType {
-    Limit,
-    Market,
-}
+pub enum OrderType { Limit, Market }
 
-/// An order in the paper trading system
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Order {
     pub id: String,
@@ -81,12 +66,9 @@ pub struct Order {
 impl Order {
     fn new(id: String, side: OrderSide, order_type: OrderType, price: f64, size: f64) -> Self {
         Self {
-            id,
-            side,
-            order_type,
+            id, side, order_type,
             status: OrderStatus::Open,
-            price,
-            size,
+            price, size,
             filled_size: 0.0,
             created_at: chrono::Utc::now().timestamp(),
             filled_at: None,
@@ -95,7 +77,6 @@ impl Order {
     }
 }
 
-/// A completed trade
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Trade {
     pub order_id: String,
@@ -107,7 +88,6 @@ pub struct Trade {
     pub pnl: Option<f64>,
 }
 
-/// Virtual wallet holding token balances
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VirtualWallet {
     pub balances: HashMap<String, f64>,
@@ -120,13 +100,9 @@ impl VirtualWallet {
         let mut balances = HashMap::new();
         balances.insert("USDC".to_string(), initial_usdc);
         balances.insert("SOL".to_string(), initial_sol);
-        info!("\ud83d\udcb0 Virtual wallet initialized: ${:.2} USDC, {:.4} SOL",
+        info!("[WALLET] Initialized: ${:.2} USDC, {:.4} SOL",
               initial_usdc, initial_sol);
-        Self {
-            balances,
-            initial_balance_usdc: initial_usdc,
-            initial_balance_sol: initial_sol,
-        }
+        Self { balances, initial_balance_usdc: initial_usdc, initial_balance_sol: initial_sol }
     }
 
     pub fn get_balance(&self, token: &str) -> f64 {
@@ -163,13 +139,11 @@ impl VirtualWallet {
     }
 
     pub fn pnl_usdc(&self, sol_price: f64) -> f64 {
-        let current_value = self.total_value_usdc(sol_price);
-        let initial_value = self.initial_balance_usdc + (self.initial_balance_sol * sol_price);
-        current_value - initial_value
+        self.total_value_usdc(sol_price)
+            - (self.initial_balance_usdc + self.initial_balance_sol * sol_price)
     }
 }
 
-/// Performance statistics
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct PerformanceStats {
     pub total_trades: usize,
@@ -189,7 +163,6 @@ pub struct PerformanceStats {
 // PAPER TRADING ENGINE
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Main paper trading engine
 #[derive(Clone)]
 pub struct PaperTradingEngine {
     wallet: Arc<RwLock<VirtualWallet>>,
@@ -199,13 +172,13 @@ pub struct PaperTradingEngine {
     taker_fee: f64,
     slippage: f64,
     next_order_id: Arc<RwLock<u64>>,
-    // V3.2: Fill accumulator — drained by orchestrator after each tick
+    // V3.2: Fill accumulator
     pending_fills: Arc<RwLock<Vec<FillEvent>>>,
 }
 
 impl PaperTradingEngine {
     pub fn new(initial_usdc: f64, initial_sol: f64) -> Self {
-        info!("🎮 Initializing Paper Trading Engine V3.2");
+        info!("[PAPER] Initializing Paper Trading Engine V3.2");
         Self {
             wallet: Arc::new(RwLock::new(VirtualWallet::new(initial_usdc, initial_sol))),
             open_orders: Arc::new(RwLock::new(HashMap::new())),
@@ -221,14 +194,14 @@ impl PaperTradingEngine {
     pub fn with_fees(mut self, maker_fee: f64, taker_fee: f64) -> Self {
         self.maker_fee = maker_fee;
         self.taker_fee = taker_fee;
-        info!("\ud83d\udcb8 Custom fees: Maker {:.4}%, Taker {:.4}%",
+        info!("[FEES] Custom fees: Maker {:.4}%, Taker {:.4}%",
               maker_fee * 100.0, taker_fee * 100.0);
         self
     }
 
     pub fn with_slippage(mut self, slippage: f64) -> Self {
         self.slippage = slippage;
-        info!("\ud83d� Custom slippage: {:.4}%", slippage * 100.0);
+        info!("[SLIP] Custom slippage: {:.4}%", slippage * 100.0);
         self
     }
 
@@ -260,7 +233,7 @@ impl PaperTradingEngine {
         drop(wallet);
         let order = Order::new(order_id.clone(), side, OrderType::Limit, price, size);
         self.open_orders.write().await.insert(order_id.clone(), order);
-        debug!("\ud83d\udcdd {:?} limit order placed: {:.4} SOL @ ${:.4} (ID: {})",
+        debug!("[ORDER] {:?} limit order placed: {:.4} SOL @ ${:.4} (ID: {})",
             side, size, price, order_id);
         Ok(order_id)
     }
@@ -275,7 +248,7 @@ impl PaperTradingEngine {
         let mut orders = self.open_orders.write().await;
         if let Some(mut order) = orders.remove(base_id) {
             order.status = OrderStatus::Cancelled;
-            debug!("\u274c Cancelled order: {}", base_id);
+            debug!("[CANCEL] Cancelled order: {}", base_id);
             Ok(())
         } else {
             bail!("Order not found: {}", order_id);
@@ -286,7 +259,7 @@ impl PaperTradingEngine {
         let mut orders = self.open_orders.write().await;
         let count = orders.len();
         orders.clear();
-        if count > 0 { info!("\u274c Cancelled {} orders", count); }
+        if count > 0 { info!("[CANCEL] Cancelled {} orders", count); }
         Ok(count)
     }
 
@@ -346,7 +319,7 @@ impl PaperTradingEngine {
 
                     let ts = order.filled_at.unwrap();
 
-                    let trade = Trade {
+                    history.push_back(Trade {
                         order_id: order_id.clone(),
                         side: order.side,
                         price: execution_price,
@@ -354,8 +327,7 @@ impl PaperTradingEngine {
                         fee,
                         timestamp: ts,
                         pnl: None,
-                    };
-                    history.push_back(trade);
+                    });
                     if history.len() > MAX_TRADE_HISTORY {
                         history.pop_front();
                     }
@@ -367,19 +339,18 @@ impl PaperTradingEngine {
                         execution_price,
                         order.size,
                         fee,
-                        None, // pnl enriched by caller if needed
+                        None,
                         ts,
                     ));
 
                     filled_orders.push(order_id.clone());
-                    debug!("\u2705 {:?} order filled: {:.4} SOL @ ${:.4} (fee: ${:.4})",
+                    debug!("[FILL] {:?} order filled: {:.4} SOL @ ${:.4} (fee: ${:.4})",
                         order.side, order.size, execution_price, fee);
                 } else {
                     orders.insert(order_id, order);
                 }
             }
         }
-
         Ok(filled_orders)
     }
 
@@ -394,8 +365,7 @@ impl PaperTradingEngine {
     /// }
     /// ```
     pub async fn drain_fills(&self) -> Vec<FillEvent> {
-        let mut fills = self.pending_fills.write().await;
-        std::mem::take(&mut *fills)
+        std::mem::take(&mut *self.pending_fills.write().await)
     }
 
     fn apply_slippage(&self, price: f64, side: OrderSide) -> f64 {
@@ -422,8 +392,7 @@ impl PaperTradingEngine {
     }
 
     pub async fn get_trade_history(&self, limit: usize) -> Vec<Trade> {
-        let history = self.trade_history.read().await;
-        history.iter().rev().take(limit).cloned().collect()
+        self.trade_history.read().await.iter().rev().take(limit).cloned().collect()
     }
 
     pub async fn trade_count(&self) -> usize {
@@ -462,9 +431,9 @@ impl PaperTradingEngine {
             }
         }
 
-        let pair_trades = stats.winning_trades + stats.losing_trades;
-        if pair_trades > 0 {
-            stats.win_rate = (stats.winning_trades as f64 / pair_trades as f64) * 100.0;
+        let pairs = stats.winning_trades + stats.losing_trades;
+        if pairs > 0 {
+            stats.win_rate = (stats.winning_trades as f64 / pairs as f64) * 100.0;
         }
         if !wins.is_empty() {
             stats.avg_win = wins.iter().sum::<f64>() / wins.len() as f64;
@@ -472,11 +441,9 @@ impl PaperTradingEngine {
         if !losses.is_empty() {
             stats.avg_loss = losses.iter().sum::<f64>() / losses.len() as f64;
         }
-        let total_wins: f64 = wins.iter().sum();
-        let total_losses: f64 = losses.iter().sum::<f64>().abs();
-        if total_losses > 0.0 {
-            stats.profit_factor = total_wins / total_losses;
-        }
+        let tw: f64 = wins.iter().sum();
+        let tl: f64 = losses.iter().sum::<f64>().abs();
+        if tl > 0.0 { stats.profit_factor = tw / tl; }
         stats
     }
 
@@ -485,10 +452,10 @@ impl PaperTradingEngine {
         let open_orders = self.open_orders.read().await;
         let trade_count = self.trade_history.read().await.len();
 
-        println!("\n\u2554\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2557");
-        println!("\u2551   \ud83d\udcca PAPER TRADING STATUS             \u2551");
-        println!("\u255a\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255d");
-        println!("\n\ud83d\udcb0 Wallet:");
+        println!("\n+=======================================+");
+        println!("| [PAPER] PAPER TRADING STATUS          |");
+        println!("+=======================================+");
+        println!("\n[WALLET]");
         println!("  USDC: ${:.2}", wallet.get_balance("USDC"));
         println!("  SOL:  {:.4} SOL (${:.2})",
                  wallet.get_balance("SOL"),
@@ -499,7 +466,7 @@ impl PaperTradingEngine {
         drop(wallet);
 
         let stats = self.get_performance_stats().await;
-        println!("\n\ud83d\udcc8 Performance:");
+        println!("\n[PERFORMANCE]");
         println!("  Total Trades: {} ({} pairs)",
                  trade_count, stats.winning_trades + stats.losing_trades);
         println!("  Win Rate: {:.2}%", stats.win_rate);
@@ -508,8 +475,8 @@ impl PaperTradingEngine {
         if stats.winning_trades + stats.losing_trades > 0 {
             println!("  Profit Factor: {:.2}", stats.profit_factor);
         }
-        println!("\n\ud83d\udcdd Open Orders: {}", open_orders.len());
-        println!("\n\ud83d\udcb5 Current SOL Price: ${:.4}", current_price);
+        println!("\n[ORDERS] Open: {}", open_orders.len());
+        println!("[PRICE]  Current SOL: ${:.4}", current_price);
     }
 }
 
@@ -545,9 +512,7 @@ impl TradingEngine for PaperTradingEngine {
         self.open_order_count().await
     }
 
-    async fn is_trading_allowed(&self) -> bool {
-        true
-    }
+    async fn is_trading_allowed(&self) -> bool { true }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -588,12 +553,10 @@ mod tests {
         assert_eq!(engine.open_order_count().await, 0);
     }
 
-    // V3.2: drain_fills tests
     #[tokio::test]
     async fn test_drain_fills_returns_fill_event() {
         let engine = PaperTradingEngine::new(10_000.0, 0.0);
         engine.place_limit_order(OrderSide::Buy, 100.0, 1.0).await.unwrap();
-        // Price drops to 98 — triggers the buy order
         engine.process_price_update(98.0).await.unwrap();
         let fills = engine.drain_fills().await;
         assert_eq!(fills.len(), 1, "Expected 1 filled order");
@@ -602,8 +565,7 @@ mod tests {
         assert!(fill.fill_price > 0.0);
         assert!(fill.fill_size > 0.0);
         assert!(fill.fee_usdc > 0.0);
-        assert!(fill.pnl.is_none(), "PnL is None at fill time");
-        // Second drain is empty (idempotent)
+        assert!(fill.pnl.is_none());
         assert!(engine.drain_fills().await.is_empty());
     }
 
@@ -611,7 +573,6 @@ mod tests {
     async fn test_no_fills_when_price_does_not_match() {
         let engine = PaperTradingEngine::new(10_000.0, 0.0);
         engine.place_limit_order(OrderSide::Buy, 100.0, 1.0).await.unwrap();
-        // Price is above order — no fill
         engine.process_price_update(105.0).await.unwrap();
         assert!(engine.drain_fills().await.is_empty());
     }
