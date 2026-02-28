@@ -262,18 +262,15 @@ pub fn version_string() -> String {
 ///
 /// ```no_run
 /// use solana_grid_bot::prelude::*;
-/// use solana_grid_bot::trading::{TradingEngine, PaperTradingEngine};
 ///
 /// #[tokio::main]
 /// async fn main() -> Result<()> {
 ///     let config = Config::from_file("config/master.toml")?;
-///     // Stage 3 Step 1: build engine here, inject into GridBot.
-///     // Swap PaperTradingEngine → RealTradingEngine to go live.
-///     let engine: Box<dyn TradingEngine> = Box::new(
-///         PaperTradingEngine::new(1000.0, 10.0)
-///     );
-///     let mut bot = GridBot::new(config, engine)?;
+///     
+///     // Stage 3: GridBot::new(config) builds engine internally
+///     let mut bot = GridBot::new(config)?;
 ///     bot.initialize().await?;
+///     
 ///     Ok(())
 /// }
 /// ```
