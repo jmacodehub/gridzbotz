@@ -1,5 +1,5 @@
-// 🎯 PROJECT FLASH V5.5 - STRATEGY ENGINE (Fill Fan-out Edition)
-// ═══════════════════════════════════════════════════════════════════════
+// PROJECT FLASH V5.5 - STRATEGY ENGINE (Fill Fan-out Edition)
+// ══════════════════════════════════════════════════════════════════════
 //
 // Purpose:
 //   Asynchronous multi-strategy manager for modular trading orchestration.
@@ -12,8 +12,8 @@
 //   ✅ Derived lightweight stats for diagnostic analytics.
 //   ✅ Monitor-friendly volatility access for live dashboards.
 //   ✅ V4.0 Grid State Machine compatible (added missing methods)
-//   ✅ V5.5 on_fill() trait method + notify_fill() fan-out 🎉
-// ═══════════════════════════════════════════════════════════════════════
+//   ✅ V5.5 on_fill() trait method + notify_fill() fan-out
+// ══════════════════════════════════════════════════════════════════════
 
 use anyhow::Result;
 use async_trait::async_trait;
@@ -31,9 +31,9 @@ pub use consensus::*;
 pub use grid_rebalancer::*;
 pub use shared::*;
 
-// ═══════════════════════════════════════════════════════════════════════
-// STRATEGY TRAIT - ASYNC AND CONTEXT-AWARE
-// ═══════════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════════
+// STRATEGY TRAIT
+// ══════════════════════════════════════════════════════════════════════
 #[async_trait]
 pub trait Strategy: Send + Sync + 'static {
     fn name(&self) -> &str;
@@ -41,72 +41,42 @@ pub trait Strategy: Send + Sync + 'static {
     fn stats(&self) -> StrategyStats;
     fn reset(&mut self);
     fn attach_analytics(&mut self, _ctx: AnalyticsContext) {}
-    fn is_enabled(&self) -> bool {
-        true
-    }
-    fn last_signal(&self) -> Option<Signal> {
-        None
-    }
-    async fn initialize_at_price(&mut self, _price: f64) -> Result<()> {
-        Ok(())
-    }
+    fn is_enabled(&self) -> bool { true }
+    fn last_signal(&self) -> Option<Signal> { None }
+    async fn initialize_at_price(&mut self, _price: f64) -> Result<()> { Ok(()) }
 
-    // ───────────────────────────────────────────────────────────────────
+    // -----------------------------------------------------------------------
     // V5.5: Fill feedback loop
-    // ───────────────────────────────────────────────────────────────────
+    // -----------------------------------------------------------------------
     /// Called by StrategyManager::notify_fill() on every confirmed order fill.
     ///
-    /// Default implementation is a no-op — all existing strategy impls
-    /// (RSI, MACD, Momentum, Arbitrage …) inherit this for free and require
-    /// zero code changes.
+    /// Default is a no-op — existing strategies (RSI, MACD, Momentum, Arbitrage)
+    /// inherit this for free and require zero code changes.
     ///
     /// Override in GridRebalancer (and any future ML strategy) to react
     /// to fills for adaptive spacing / position sizing.
     fn on_fill(&mut self, _fill: &crate::trading::FillEvent) {}
 }
 
-// ═══════════════════════════════════════════════════════════════════════
-// SIGNAL STRUCTURE - UNIFIED CROSS-MODULE STANDARD
-// ═══════════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════════
+// SIGNAL STRUCTURE
+// ══════════════════════════════════════════════════════════════════════
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Signal {
-    StrongBuy {
-        price: f64,
-        size: f64,
-        reason: String,
-        confidence: f64,
-    },
-    Buy {
-        price: f64,
-        size: f64,
-        reason: String,
-        confidence: f64,
-    },
-    Hold {
-        reason: Option<String>,
-    },
-    Sell {
-        price: f64,
-        size: f64,
-        reason: String,
-        confidence: f64,
-    },
-    StrongSell {
-        price: f64,
-        size: f64,
-        reason: String,
-        confidence: f64,
-    },
+    StrongBuy { price: f64, size: f64, reason: String, confidence: f64 },
+    Buy       { price: f64, size: f64, reason: String, confidence: f64 },
+    Hold      { reason: Option<String> },
+    Sell      { price: f64, size: f64, reason: String, confidence: f64 },
+    StrongSell{ price: f64, size: f64, reason: String, confidence: f64 },
 }
 
 impl Signal {
-    /// 🔥 FIXED: Typo correction (Optionrate → Option<crate)
     pub fn to_order_side(&self) -> Option<crate::trading::OrderSide> {
         match self {
-            Signal::StrongBuy { .. } | Signal::Buy { .. } => Some(crate::trading::OrderSide::Buy),
-            Signal::StrongSell { .. } | Signal::Sell { .. } => {
-                Some(crate::trading::OrderSide::Sell)
-            }
+            Signal::StrongBuy { .. } | Signal::Buy { .. } =>
+                Some(crate::trading::OrderSide::Buy),
+            Signal::StrongSell { .. } | Signal::Sell { .. } =>
+                Some(crate::trading::OrderSide::Sell),
             Signal::Hold { .. } => None,
         }
     }
@@ -121,66 +91,26 @@ impl Signal {
 
     pub fn strength(&self) -> f64 {
         match self {
-            Signal::StrongBuy { confidence, .. } | Signal::StrongSell { confidence, .. } => {
-                0.5 + confidence * 0.5
-            }
-            Signal::Buy { confidence, .. } | Signal::Sell { confidence, .. } => {
-                0.25 + confidence * 0.25
-            }
+            Signal::StrongBuy { confidence, .. } | Signal::StrongSell { confidence, .. } =>
+                0.5 + confidence * 0.5,
+            Signal::Buy { confidence, .. } | Signal::Sell { confidence, .. } =>
+                0.25 + confidence * 0.25,
             Signal::Hold { .. } => 0.0,
         }
     }
 
     pub fn display(&self) -> String {
         match self {
-            Signal::StrongBuy {
-                price,
-                reason,
-                confidence,
-                ..
-            } => format!(
-                "🟢 STRONG BUY @ ${:.4} | {} | {:.0}% conf",
-                price,
-                reason,
-                confidence * 100.0
-            ),
-            Signal::Buy {
-                price,
-                reason,
-                confidence,
-                ..
-            } => format!(
-                "🟩 BUY @ ${:.4} | {} | {:.0}%",
-                price,
-                reason,
-                confidence * 100.0
-            ),
-            Signal::Hold { reason } => format!(
-                "⏸️ HOLD | {}",
-                reason.clone().unwrap_or_else(|| "Neutral".into())
-            ),
-            Signal::Sell {
-                price,
-                reason,
-                confidence,
-                ..
-            } => format!(
-                "🟥 SELL @ ${:.4} | {} | {:.0}%",
-                price,
-                reason,
-                confidence * 100.0
-            ),
-            Signal::StrongSell {
-                price,
-                reason,
-                confidence,
-                ..
-            } => format!(
-                "🔴 STRONG SELL @ ${:.4} | {} | {:.0}%",
-                price,
-                reason,
-                confidence * 100.0
-            ),
+            Signal::StrongBuy { price, reason, confidence, .. } =>
+                format!("STRONG BUY @ ${:.4} | {} | {:.0}% conf", price, reason, confidence * 100.0),
+            Signal::Buy { price, reason, confidence, .. } =>
+                format!("BUY @ ${:.4} | {} | {:.0}%", price, reason, confidence * 100.0),
+            Signal::Hold { reason } =>
+                format!("HOLD | {}", reason.clone().unwrap_or_else(|| "Neutral".into())),
+            Signal::Sell { price, reason, confidence, .. } =>
+                format!("SELL @ ${:.4} | {} | {:.0}%", price, reason, confidence * 100.0),
+            Signal::StrongSell { price, reason, confidence, .. } =>
+                format!("STRONG SELL @ ${:.4} | {} | {:.0}%", price, reason, confidence * 100.0),
         }
     }
 }
@@ -191,15 +121,15 @@ impl fmt::Display for Signal {
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════════
-// STRATEGY STATS - LIGHTWEIGHT PERFORMANCE METRICS
-// ═══════════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════════
+// STRATEGY STATS
+// ══════════════════════════════════════════════════════════════════════
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct StrategyStats {
     pub signals_generated: u64,
-    pub buy_signals: u64,      // 🔥 ADDED: For grid_rebalancer compatibility
-    pub sell_signals: u64,     // 🔥 ADDED: For grid_rebalancer compatibility
-    pub hold_signals: u64,     // 🔥 ADDED: For arbitrage compatibility
+    pub buy_signals: u64,
+    pub sell_signals: u64,
+    pub hold_signals: u64,
     pub active_trades: u64,
     pub total_pnl: f64,
     pub win_rate: f64,
@@ -208,7 +138,6 @@ pub struct StrategyStats {
 }
 
 impl StrategyStats {
-    /// 🔥 ADDED: Helper to record signals
     pub fn record_signal(&mut self, signal: &Signal) {
         self.signals_generated += 1;
         match signal {
@@ -219,9 +148,9 @@ impl StrategyStats {
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════════
-// STRATEGY MANAGER - ASYNC CONSENSUS ORCHESTRATOR
-// ═══════════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════════
+// STRATEGY MANAGER
+// ══════════════════════════════════════════════════════════════════════
 pub struct StrategyManager {
     pub strategies: Vec<Box<dyn Strategy>>,
     pub engine: ConsensusEngine,
@@ -230,17 +159,13 @@ pub struct StrategyManager {
 
 impl std::fmt::Debug for StrategyManager {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "StrategyManager with {} strategies",
-            self.strategies.len()
-        )
+        write!(f, "StrategyManager with {} strategies", self.strategies.len())
     }
 }
 
 impl StrategyManager {
     pub fn new(ctx: AnalyticsContext) -> Self {
-        info!("🧠 Strategy Manager V5.5 initialized");
+        info!("[STRATEGY] Manager V5.5 initialized");
         Self {
             strategies: Vec::new(),
             engine: ConsensusEngine::new(ConsensusMode::default()),
@@ -251,7 +176,8 @@ impl StrategyManager {
     pub fn add_strategy<S: Strategy + 'static>(&mut self, strategy: S) {
         let mut boxed = Box::new(strategy);
         boxed.attach_analytics(self.context.clone());
-        info!("\ud83d\udcc8 Attached {}", boxed.name());
+        // FIX: was invalid \uXXXX escape; now plain ASCII
+        info!("[STRATEGY] Attached {}", boxed.name());
         self.strategies.push(boxed);
     }
 
@@ -259,9 +185,7 @@ impl StrategyManager {
         use futures::stream::{FuturesUnordered, StreamExt};
 
         if self.strategies.is_empty() {
-            return Ok(Signal::Hold {
-                reason: Some("no strategies loaded".into()),
-            });
+            return Ok(Signal::Hold { reason: Some("no strategies loaded".into()) });
         }
 
         let mut results = Vec::new();
@@ -269,13 +193,9 @@ impl StrategyManager {
         for s in &mut self.strategies {
             futs.push(s.analyze(price, ts));
         }
-
         while let Some(res) = futs.next().await {
-            if let Ok(sig) = res {
-                results.push(sig);
-            }
+            if let Ok(sig) = res { results.push(sig); }
         }
-
         Ok(self.engine.resolve(&results))
     }
 
@@ -290,9 +210,8 @@ impl StrategyManager {
         self.context.get_current_volatility()
     }
 
-    /// Display stats for all strategies
     pub fn display_stats(&self) {
-        println!("\n📊 Strategy Performance (V5.5):");
+        println!("\n[STATS] Strategy Performance (V5.5):");
         for (i, strategy) in self.strategies.iter().enumerate() {
             let stats = strategy.stats();
             println!("  Strategy {} ({}): {} signals generated",
@@ -309,23 +228,22 @@ impl StrategyManager {
         }
     }
 
-    // ═══════════════════════════════════════════════════════════════════
+    // =======================================================================
     // V5.5: FILL FAN-OUT
-    // ═══════════════════════════════════════════════════════════════════
+    // =======================================================================
 
     /// Broadcast a confirmed fill to every registered strategy.
     ///
     /// Strategies that care (e.g. GridRebalancer) override `on_fill`;
     /// all others inherit the default no-op and incur zero cost.
     ///
-    /// Call site: PaperTradingEngine / RealTradingEngine after each
-    /// confirmed fill.
+    /// Call site: GridBot::process_price_update() after engine.drain_fills().
     pub fn notify_fill(&mut self, fill: &crate::trading::FillEvent) {
         for strategy in &mut self.strategies {
             strategy.on_fill(fill);
         }
         log::debug!(
-            "📨 Fill fanned out to {} strategies — {:?} {} @ {:.4}",
+            "[FILL] Fanned out to {} strategies — {:?} {} @ {:.4}",
             self.strategies.len(),
             fill.side,
             fill.order_id,
@@ -334,9 +252,9 @@ impl StrategyManager {
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════════
-// TEST SUITE - CONSENSUS AND SIGNAL PIPELINE
-// ═══════════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════════
+// TESTS
+// ══════════════════════════════════════════════════════════════════════
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -348,9 +266,7 @@ mod tests {
         let ctx = AnalyticsContext::default();
         let mut mgr = StrategyManager::new(ctx);
         mgr.engine.mode = ConsensusMode::MajorityVote;
-
         mgr.add_strategy(GridRebalancer::new(GridRebalancerConfig::default()).unwrap());
-
         let sig = mgr.analyze_all(100.0, 1).await.unwrap();
         assert!(matches!(
             sig,
@@ -361,19 +277,12 @@ mod tests {
     #[test]
     fn test_signal_strength_v55() {
         let strong_buy = Signal::StrongBuy {
-            price: 100.0,
-            size: 1.0,
-            reason: "test".into(),
-            confidence: 0.9
+            price: 100.0, size: 1.0, reason: "test".into(), confidence: 0.9,
         };
         let buy = Signal::Buy {
-            price: 100.0,
-            size: 1.0,
-            reason: "test".into(),
-            confidence: 0.7
+            price: 100.0, size: 1.0, reason: "test".into(), confidence: 0.7,
         };
         let hold = Signal::Hold { reason: Some("test".into()) };
-
         assert!(strong_buy.strength() > buy.strength());
         assert!(buy.strength() > hold.strength());
         assert_eq!(hold.strength(), 0.0);
@@ -384,37 +293,18 @@ mod tests {
         let ctx = AnalyticsContext::default();
         let mut mgr = StrategyManager::new(ctx);
         mgr.add_strategy(GridRebalancer::new(GridRebalancerConfig::default()).unwrap());
-
         let fill = FillEvent::new(
-            "ORDER-001",
-            OrderSide::Buy,
-            142.50,
-            0.1,
-            0.0025,
-            Some(0.05),
-            1_700_000_000,
+            "ORDER-001", OrderSide::Buy, 142.50, 0.1, 0.0025, Some(0.05), 1_700_000_000,
         );
-
-        // Should not panic; GridRebalancer.on_fill() records the event
         mgr.notify_fill(&fill);
-
-        // Verify: fill was received (GridRebalancer increments rebalances counter)
         let stats = mgr.strategies[0].stats();
-        // on_fill increments buy_signals as a proxy for fill count
-        assert!(stats.rebalances_executed >= 0); // smoke: no panic
+        assert!(stats.rebalances_executed >= 0);
     }
 
     #[test]
     fn test_on_fill_default_noop() {
-        // Any strategy that does NOT override on_fill should compile fine
-        // and silently ignore the call. We verify this with GridRebalancer
-        // which DOES override it — and with the default path covered by
-        // the trait’s default impl (no separate struct needed).
-        let fill = FillEvent::new(
-            "TEST", OrderSide::Sell, 100.0, 0.1, 0.001, None, 0,
-        );
+        let fill = FillEvent::new("TEST", OrderSide::Sell, 100.0, 0.1, 0.001, None, 0);
         let mut gr = GridRebalancer::new(GridRebalancerConfig::default()).unwrap();
-        // Should not panic
         gr.on_fill(&fill);
     }
 }
