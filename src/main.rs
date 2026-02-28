@@ -28,9 +28,8 @@
 //! ✅ Multi-Environment Support (testing, dev, production)
 //!
 //! Stage 3 / Step 1 (Feb 2026):
-//! ✅ Engine built here and injected into GridBot::new()
-//! ✅ Swap PaperTradingEngine for RealTradingEngine by changing one line
-//!    (or --mode live / bot.execution_mode = "live" in TOML)
+//! ✅ GridBot::new(config) builds engine internally (grid_bot.rs:54)
+//! ✅ No longer inject engine from main.rs
 //!
 //! October 17, 2025 — MASTER V3.5 | February 2026 — V3.7 Step 5C LFG! 🔥
 //! ═══════════════════════════════════════════════════════════════════════════
@@ -38,11 +37,7 @@
 use solana_grid_bot::init;
 use solana_grid_bot::config::Config;
 use solana_grid_bot::bots::GridBot;
-use solana_grid_bot::trading::{
-    PriceFeed,
-    PaperTradingEngine,
-    TradingEngine,
-};
+use solana_grid_bot::trading::PriceFeed;
 
 use std::{error::Error, time::Instant, path::PathBuf};
 use log::{info, warn, error, debug, trace};
@@ -300,12 +295,12 @@ fn load_configuration(args: &Args) -> Result<Config> {
 // COMPONENT INITIALIZATION (Modular & Robust)
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Start the price feed first so we have a real SOL price before building
-/// the engine — the paper engine needs it to compute `spacing_usd`.
+/// Stage 3/Step 1: GridBot::new(config) builds engine internally.
+/// Price feed starts first for banner display (mode, initial price).
 async fn initialize_components(config: &Config) -> Result<(GridBot, PriceFeed)> {
     info!("🔧 Initializing core components...");
 
-    // ── 1. Price Feed — must start before engine build ─────────────────────
+    // ── 1. Price Feed — start before GridBot for banner display ────────────
     info!("🚀 Starting V3.5 Hybrid Price Feed (Pyth/Hermes)...");
     let price_history_size = config.trading.volatility_window as usize;
     let feed = PriceFeed::new(price_history_size);
@@ -329,64 +324,11 @@ async fn initialize_components(config: &Config) -> Result<(GridBot, PriceFeed)> 
     let mode = feed.get_mode().await;
     info!("💰 Initial SOL/USD: ${:.4}  (feed mode: {:?})", initial_price, mode);
 
-    // ── 2. Derive execution params from config ────────────────────────────
-    //
-    // slippage_decimal: convert BPS → fraction (100 BPS = 0.01 = 1%)
-    // spacing_usd:      grid_spacing_percent is relative to price, so
-    //                   we anchor to the live price at startup.
-    let slippage_decimal = config.execution.max_slippage_bps as f64 / 10_000.0;
-    let spacing_usd      = initial_price * (config.trading.grid_spacing_percent / 100.0);
-    let maker_fee        = slippage_decimal / 2.0;   // taker/2 is a reasonable maker proxy
-    let taker_fee        = slippage_decimal;
-
-    info!("⚙️  Engine params:");
-    info!("   Slippage:   {:.4}% ({} BPS)",
-        slippage_decimal * 100.0, config.execution.max_slippage_bps);
-    info!("   Spacing:    ${:.4} ({:.3}% of ${:.2})",
-        spacing_usd, config.trading.grid_spacing_percent, initial_price);
-    info!("   Fees:       maker {:.4}% / taker {:.4}%",
-        maker_fee * 100.0, taker_fee * 100.0);
-
-    // ── 3. Engine — branched on execution mode ────────────────────────────
-    let engine: Box<dyn TradingEngine> = if config.bot.is_paper() {
-        let initial_usdc = config.paper_trading.initial_usdc;
-        let initial_sol  = config.paper_trading.initial_sol;
-        if initial_usdc <= 0.0 || initial_sol <= 0.0 {
-            anyhow::bail!(
-                "Invalid paper capital: USDC={}, SOL={}",
-                initial_usdc, initial_sol
-            );
-        }
-
-        info!("🟡 PAPER mode — building PaperTradingEngine");
-        info!("   Capital: ${:.2} USDC + {:.4} SOL", initial_usdc, initial_sol);
-        info!("   Fill log: fills/fills_YYYYMMDD.csv");
-
-        Box::new(
-            PaperTradingEngine::new(initial_usdc, initial_sol)
-                .with_fees(maker_fee, taker_fee)
-                .with_slippage(slippage_decimal)
-                .with_fill_logging("fills")
-                .with_grid_spacing(spacing_usd)
-        )
-    } else {
-        // ── Step 5 stub: RealTradingEngine will replace this bail! ────────
-        // When Step 5 is wired:
-        //   Box::new(RealTradingEngine::new(config, keystore, jupiter, rpc).await?)
-        anyhow::bail!(
-            "🔴 LIVE mode not yet wired (Step 5). \
-             Set --mode paper or bot.execution_mode = \"paper\" in TOML to run the bot. \
-             Live execution via Jupiter is coming in Step 5."
-        );
-    };
-
-    info!("✅ Engine ready");
-
-    // ── 4. GridBot ────────────────────────────────────────────────────────
-    info!("🤖 Initializing GridBot...");
-    let mut bot = GridBot::new(config.clone(), engine)?;
+    // ── 2. GridBot (builds PaperTradingEngine internally) ──────────────────
+    info!("🤖 Initializing GridBot V4.4 Stage 3...");
+    let mut bot = GridBot::new(config.clone())?;
     bot.initialize().await?;
-    info!("✅ GridBot ready");
+    info!("✅ GridBot ready (engine built internally)");
 
     Ok((bot, feed))
 }
