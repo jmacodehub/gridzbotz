@@ -1,5 +1,5 @@
-//! ═══════════════════════════════════════════════════════════════════════════
-//! 🔥💎 GRID REBALANCER V5.0 - ADAPTIVE SPACING + FILL FEEDBACK 🔥💎
+//! ═════════════════════════════════════════════════════════════════════════
+//! 🔥📎 GRID REBALANCER V5.1 - ADAPTIVE SPACING + FILL FEEDBACK + LEVEL ANALYTICS 🔥📎
 //!
 //! V5.0 ENHANCEMENTS (Stage 3 — Feb 2026):
 //!   ✅ SpacingMode enum: Fixed | VolatilityBuckets | AtrDynamic
@@ -8,8 +8,15 @@
 //!   ✅ FillState: thread-safe fill timestamp + bias in Arc<Mutex<_>>
 //!   ✅ Builder gains spacing_mode() for per-bot TOML config
 //!
-//! February 28, 2026 - V5.0 Stage 3 Complete!
-//! ═══════════════════════════════════════════════════════════════════════════
+//! V5.1 ENHANCEMENTS (Feb 2026 — per-level analytics):
+//!   ✅ LevelSnapshot: per-level fill count, total PnL, avg distance from mid
+//!   ✅ LevelAnalytics: O(1) HashMap accumulator keyed on GridLevel.id (u64)
+//!   ✅ on_fill() extended: records analytics when FillEvent::level_id is Some
+//!   ✅ get_level_analytics(): public API returning LevelAnalyticsReport
+//!   ✅ LevelAnalyticsReport: hot_levels, profitable_levels, full snapshots
+//!
+//! February 28, 2026 - V5.1 Level Analytics Complete!
+//! ═════════════════════════════════════════════════════════════════════════
 
 use crate::trading::{FillEvent, OrderSide};
 use crate::strategies::{Strategy, Signal, StrategyStats as BaseStrategyStats};
@@ -17,7 +24,7 @@ use crate::strategies::shared::analytics::atr_dynamic::{ATRDynamic, ATRConfig};
 use async_trait::async_trait;
 use anyhow::{Result, Context};
 use log::{info, warn, debug, trace};
-use std::collections::VecDeque;
+use std::collections::{VecDeque, HashMap};
 use std::sync::atomic::{AtomicU64, AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::time::Instant;
@@ -57,7 +64,7 @@ impl Default for SpacingMode {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// FILL STATE - Thread-safe fill feedback tracking
+// FILL STATE - Thread-safe fill-rate feedback tracking (V5.0)
 // ═══════════════════════════════════════════════════════════════════════════
 
 /// Bundles mutable fill-feedback state into one Arc<Mutex<_>>.
@@ -90,38 +97,176 @@ impl FillState {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// LEVEL ANALYTICS - Per-level fill tracking (V5.1)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Point-in-time performance snapshot for a single grid level.
+///
+/// Accumulated across every `FillEvent` where `level_id == Some(self.level_id)`.
+/// `level_id` matches `GridLevel.id` (u64) exactly — no casting needed.
+#[derive(Debug, Clone)]
+pub struct LevelSnapshot {
+    /// Grid level ID — direct match to `GridLevel.id`
+    pub level_id:              u64,
+    /// Number of fills recorded on this level
+    pub fill_count:            u64,
+    /// Cumulative realised PnL across all fills (0.0 when pnl was None)
+    pub total_pnl:             f64,
+    /// Fill price of the most recent fill
+    pub last_fill_price:       f64,
+    /// Unix timestamp (seconds) of the most recent fill
+    pub last_fill_timestamp:   i64,
+    /// Sum of `distance_from_mid_pct` values for averaging.
+    /// Divide by `fill_count` via `avg_distance_from_mid()` helper.
+    pub distance_from_mid_sum: f64,
+}
+
+impl LevelSnapshot {
+    /// Average % distance from mid-price across all fills on this level.
+    ///
+    /// - Negative result → level consistently fills below mid (buy zone)
+    /// - Positive result → level consistently fills above mid (sell zone)
+    /// - `None` when no fill carried a `distance_from_mid_pct` value
+    pub fn avg_distance_from_mid(&self) -> Option<f64> {
+        if self.fill_count == 0 || self.distance_from_mid_sum == 0.0 {
+            return None;
+        }
+        Some(self.distance_from_mid_sum / self.fill_count as f64)
+    }
+}
+
+/// Internal per-level accumulator. Keyed by `GridLevel.id` for O(1) lookup.
+struct LevelAnalytics {
+    levels:              HashMap<u64, LevelSnapshot>,
+    /// Fills that carried a `level_id` (grid-originated)
+    fills_with_level:    u64,
+    /// Fills without a `level_id` (RSI, Momentum, manual, etc.)
+    fills_without_level: u64,
+}
+
+impl LevelAnalytics {
+    fn new() -> Self {
+        Self {
+            levels:              HashMap::new(),
+            fills_with_level:    0,
+            fills_without_level: 0,
+        }
+    }
+
+    /// Record one fill. Upserts the `LevelSnapshot` when `level_id` is `Some`.
+    /// Increments `fills_without_level` otherwise — non-grid fills are counted
+    /// for coverage but not tracked per-level.
+    fn record_fill(&mut self, fill: &FillEvent) {
+        match fill.level_id {
+            Some(id) => {
+                let snap = self.levels.entry(id).or_insert_with(|| LevelSnapshot {
+                    level_id:              id,
+                    fill_count:            0,
+                    total_pnl:             0.0,
+                    last_fill_price:       fill.fill_price,
+                    last_fill_timestamp:   fill.timestamp,
+                    distance_from_mid_sum: 0.0,
+                });
+                snap.fill_count          += 1;
+                snap.last_fill_price      = fill.fill_price;
+                snap.last_fill_timestamp  = fill.timestamp;
+                snap.total_pnl           += fill.pnl.unwrap_or(0.0);
+                if let Some(dist) = fill.distance_from_mid_pct {
+                    snap.distance_from_mid_sum += dist;
+                }
+                self.fills_with_level += 1;
+            }
+            None => {
+                self.fills_without_level += 1;
+            }
+        }
+    }
+
+    /// Level IDs with at least `min_fills` fills, sorted descending by fill count.
+    /// These are the "hot zones" where price action is most active.
+    fn hot_levels(&self, min_fills: u64) -> Vec<u64> {
+        let mut ids: Vec<u64> = self.levels.values()
+            .filter(|s| s.fill_count >= min_fills)
+            .map(|s| s.level_id)
+            .collect();
+        ids.sort_unstable_by(|a, b| {
+            self.levels[b].fill_count.cmp(&self.levels[a].fill_count)
+        });
+        ids
+    }
+
+    /// Level IDs with `total_pnl > min_pnl`, sorted descending by total PnL.
+    fn profitable_levels(&self, min_pnl: f64) -> Vec<u64> {
+        let mut ids: Vec<u64> = self.levels.values()
+            .filter(|s| s.total_pnl > min_pnl)
+            .map(|s| s.level_id)
+            .collect();
+        ids.sort_unstable_by(|a, b| {
+            let pa = self.levels[a].total_pnl;
+            let pb = self.levels[b].total_pnl;
+            pb.partial_cmp(&pa).unwrap_or(std::cmp::Ordering::Equal)
+        });
+        ids
+    }
+
+    /// Cloned snapshots of all levels, sorted descending by fill count.
+    fn snapshots_sorted(&self) -> Vec<LevelSnapshot> {
+        let mut snaps: Vec<LevelSnapshot> = self.levels.values().cloned().collect();
+        snaps.sort_unstable_by(|a, b| b.fill_count.cmp(&a.fill_count));
+        snaps
+    }
+}
+
+/// Public analytics report returned by `GridRebalancer::get_level_analytics()`.
+#[derive(Debug, Clone)]
+pub struct LevelAnalyticsReport {
+    /// All level snapshots sorted by fill count descending (most active first)
+    pub snapshots:            Vec<LevelSnapshot>,
+    /// Level IDs with ≥ 5 fills — hot activity zones
+    pub hot_levels:           Vec<u64>,
+    /// Level IDs with total_pnl > 0 — profitable zones
+    pub profitable_levels:    Vec<u64>,
+    /// Fills that carried a `level_id` (grid-originated fills)
+    pub fills_with_level:     u64,
+    /// Fills without a `level_id` (non-grid strategy fills)
+    pub fills_without_level:  u64,
+    /// Total distinct grid levels tracked
+    pub total_tracked_levels: usize,
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // CONFIGURATION - 100% Config-Driven
 // ═══════════════════════════════════════════════════════════════════════════
 
 /// Grid Rebalancer Configuration — all behavior controlled here, no hardcoded values.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GridRebalancerConfig {
-    // ── Core Grid ─────────────────────────────────────────────────────────
+    // ── Core Grid ──────────────────────────────────────────────────────
     pub grid_spacing: f64,
     pub order_size: f64,
     pub min_usdc_balance: f64,
     pub min_sol_balance: f64,
     pub enabled: bool,
 
-    // ── V2: Dynamic Spacing ───────────────────────────────────────────────
+    // ── V2: Dynamic Spacing ───────────────────────────────────────────
     pub enable_dynamic_spacing: bool,
     pub enable_fee_filtering: bool,
     pub volatility_window_seconds: u64,
     pub max_spacing: f64,
     pub min_spacing: f64,
 
-    // ── V3: Market Regime Gate ────────────────────────────────────────────
+    // ── V3: Market Regime Gate ─────────────────────────────────────────
     pub enable_regime_gate: bool,
     pub min_volatility_to_trade: f64,
     pub pause_in_very_low_vol: bool,
 
-    // ── V3: Order Lifecycle ───────────────────────────────────────────────
+    // ── V3: Order Lifecycle ───────────────────────────────────────────
     pub enable_order_lifecycle: bool,
     pub order_max_age_minutes: u64,
     pub order_refresh_interval_minutes: u64,
     pub min_orders_to_maintain: usize,
 
-    // ── V5.0: Spacing Mode ────────────────────────────────────────────────
+    // ── V5.0: Spacing Mode ───────────────────────────────────────────
     /// Selects the spacing algorithm. Defaults to VolatilityBuckets.
     pub spacing_mode: SpacingMode,
 }
@@ -230,7 +375,7 @@ impl GridRebalancerConfig {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// GRID REBALANCER - V5.0
+// GRID REBALANCER - V5.1
 // ═══════════════════════════════════════════════════════════════════════════
 
 pub struct GridRebalancer {
@@ -253,6 +398,9 @@ pub struct GridRebalancer {
     // V5.0: Fill feedback + ATR
     fill_state: Arc<tokio::sync::Mutex<FillState>>,
     atr_dynamic: Arc<tokio::sync::Mutex<Option<ATRDynamic>>>,
+
+    // V5.1: Per-level analytics
+    level_analytics: Arc<tokio::sync::Mutex<LevelAnalytics>>,
 }
 
 impl GridRebalancer {
@@ -260,7 +408,7 @@ impl GridRebalancer {
         config.validate().context("GridRebalancer config validation failed")?;
 
         info!("═══════════════════════════════════════════════════════════");
-        info!("🎯 Grid Rebalancer V5.0 Initializing...");
+        info!("🎯 Grid Rebalancer V5.1 Initializing...");
         info!("═══════════════════════════════════════════════════════════");
         info!("📊 CORE: spacing={:.3}% size={} SOL reserves=${:.0}/{} SOL",
               config.grid_spacing * 100.0, config.order_size,
@@ -282,7 +430,7 @@ impl GridRebalancer {
         info!("🛡️ REGIME GATE: {} | min_vol={:.3}%",
               if config.enable_regime_gate { "✅" } else { "❌ FREE" },
               config.min_volatility_to_trade * 100.0);
-        info!("🧠 ADAPTIVE: fill-feedback bias ✅");
+        info!("🧠 ADAPTIVE: fill-feedback bias ✅ | level analytics ✅");
         info!("═══════════════════════════════════════════════════════════");
 
         // Build ATR only when the mode requires it
@@ -314,6 +462,7 @@ impl GridRebalancer {
             last_signal: Arc::new(tokio::sync::RwLock::new(None)),
             fill_state: Arc::new(tokio::sync::Mutex::new(FillState::new())),
             atr_dynamic: Arc::new(tokio::sync::Mutex::new(atr_dynamic)),
+            level_analytics: Arc::new(tokio::sync::Mutex::new(LevelAnalytics::new())),
         })
     }
 
@@ -344,7 +493,7 @@ impl GridRebalancer {
         Ok(())
     }
 
-    // ── Regime Gate ─────────────────────────────────────────────────────────
+    // ── Regime Gate ────────────────────────────────────────────────────────────
 
     pub async fn should_trade_now(&self) -> bool {
         if !self.config.enable_regime_gate {
@@ -376,7 +525,7 @@ impl GridRebalancer {
         true
     }
 
-    // ── Fee Filter ───────────────────────────────────────────────────────────
+    // ── Fee Filter ──────────────────────────────────────────────────────────────
 
     pub async fn should_place_order(&self, side: OrderSide, price: f64, stats: &GridStats) -> bool {
         if !self.config.enable_fee_filtering {
@@ -404,7 +553,7 @@ impl GridRebalancer {
         true
     }
 
-    // ── Volatility (fallback for VolatilityBuckets) ──────────────────────────
+    // ── Volatility (fallback for VolatilityBuckets) ────────────────────────────────
 
     async fn calculate_volatility(&self) -> f64 {
         let history = self.price_history.lock().await;
@@ -417,7 +566,7 @@ impl GridRebalancer {
         variance.sqrt()
     }
 
-    // ── Spacing Dispatch ─────────────────────────────────────────────────────
+    // ── Spacing Dispatch ─────────────────────────────────────────────────────────────
 
     async fn update_dynamic_spacing(&self) {
         if !self.config.enable_dynamic_spacing {
@@ -466,7 +615,7 @@ impl GridRebalancer {
         }
     }
 
-    // ── Grid Stats ───────────────────────────────────────────────────────────
+    // ── Grid Stats ──────────────────────────────────────────────────────────────
 
     pub async fn grid_stats(&self) -> GridStats {
         let rebalances = self.stats_rebalances.load(Ordering::Relaxed);
@@ -495,6 +644,25 @@ impl GridRebalancer {
             market_regime: market_regime.to_string(),
             trading_paused,
             pause_reason,
+        }
+    }
+
+    // ── V5.1: Level Analytics API ──────────────────────────────────────────────
+
+    /// Return a point-in-time snapshot of per-level fill analytics.
+    ///
+    /// Cheap clone — safe to call from monitoring loops or status endpoints.
+    /// The `hot_levels` threshold is fixed at 5 fills; use `LevelAnalyticsReport`
+    /// fields to apply custom thresholds downstream.
+    pub async fn get_level_analytics(&self) -> LevelAnalyticsReport {
+        let analytics = self.level_analytics.lock().await;
+        LevelAnalyticsReport {
+            hot_levels:           analytics.hot_levels(5),
+            profitable_levels:    analytics.profitable_levels(0.0),
+            snapshots:            analytics.snapshots_sorted(),
+            fills_with_level:     analytics.fills_with_level,
+            fills_without_level:  analytics.fills_without_level,
+            total_tracked_levels: analytics.levels.len(),
         }
     }
 
@@ -543,7 +711,7 @@ impl Default for GridRebalancerBuilder {
 
 #[async_trait]
 impl Strategy for GridRebalancer {
-    fn name(&self) -> &str { "Grid Rebalancer V5.0" }
+    fn name(&self) -> &str { "Grid Rebalancer V5.1" }
 
     async fn analyze(&mut self, price: f64, _timestamp: i64) -> Result<Signal> {
         self.update_price(price).await.context("Failed to update price")?;
@@ -591,9 +759,18 @@ impl Strategy for GridRebalancer {
         })
     }
 
-    // ── V5.0: Fill feedback loop ───────────────────────────────────────────
-    /// Sync fn — uses try_lock (non-blocking). Never contended under normal load.
+    // ── V5.0 + V5.1: Fill feedback loop + per-level analytics ────────────────────
+    //
+    // Sync fn — uses try_lock (non-blocking). Never contended under normal load.
+    //
+    // Execution order:
+    //   1. [V5.0] Update fill-rate ring buffer + compute spacing bias
+    //   2. [V5.1] Record level analytics (O(1) HashMap upsert)
+    //   3.        Increment global rebalance counter
     fn on_fill(&mut self, fill: &FillEvent) {
+        // ───────────────────────────────────────────────────────────────
+        // Step 1: Fill-rate spacing bias (V5.0 — unchanged)
+        // ───────────────────────────────────────────────────────────────
         if let Ok(mut state) = self.fill_state.try_lock() {
             // Ring buffer — keep last 20 timestamps
             state.timestamps.push_back(fill.timestamp);
@@ -619,6 +796,24 @@ impl Strategy for GridRebalancer {
             debug!("📨 on_fill: {:?} {} @ {:.4} | bias {:+.4}%",
                 fill.side, fill.order_id, fill.fill_price, state.bias * 100.0);
         }
+
+        // ───────────────────────────────────────────────────────────────
+        // Step 2: Per-level analytics (V5.1)
+        // ───────────────────────────────────────────────────────────────
+        if let Ok(mut analytics) = self.level_analytics.try_lock() {
+            analytics.record_fill(fill);
+            if let Some(id) = fill.level_id {
+                let fill_count = analytics.levels.get(&id).map(|s| s.fill_count).unwrap_or(0);
+                debug!("📊 Level {:3} | {:?} @ ${:.4} | pnl: {:+.4} | total fills: {}",
+                    id, fill.side, fill.fill_price,
+                    fill.pnl.unwrap_or(0.0),
+                    fill_count);
+            }
+        }
+
+        // ───────────────────────────────────────────────────────────────
+        // Step 3: Global fill counter
+        // ───────────────────────────────────────────────────────────────
         self.stats_rebalances.fetch_add(1, Ordering::Relaxed);
     }
 }
@@ -648,6 +843,10 @@ pub struct GridStats {
 mod tests {
     use super::*;
     use crate::trading::{FillEvent, OrderSide};
+
+    // ───────────────────────────────────────────────────────────────
+    // Existing V5.0 tests (unchanged)
+    // ───────────────────────────────────────────────────────────────
 
     #[test]
     fn test_config_validation() {
@@ -737,5 +936,190 @@ mod tests {
         ).await;
         let stats = rebalancer.grid_stats().await;
         assert_eq!(stats.total_rebalances, 1);
+    }
+
+    // ───────────────────────────────────────────────────────────────
+    // V5.1: Level analytics tests
+    // ───────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_level_snapshot_avg_distance() {
+        let snap = LevelSnapshot {
+            level_id: 101,
+            fill_count: 4,
+            total_pnl: 2.0,
+            last_fill_price: 153.0,
+            last_fill_timestamp: 1_000_000,
+            distance_from_mid_sum: -4.8, // 4 fills averaging -1.2% each
+        };
+        let avg = snap.avg_distance_from_mid().unwrap();
+        assert!((avg - (-1.2)).abs() < 0.001, "Expected -1.2%, got {:.4}", avg);
+    }
+
+    #[test]
+    fn test_level_snapshot_avg_distance_none_when_zero() {
+        let snap = LevelSnapshot {
+            level_id: 201,
+            fill_count: 3,
+            total_pnl: 0.0,
+            last_fill_price: 157.0,
+            last_fill_timestamp: 1_000_001,
+            distance_from_mid_sum: 0.0, // no distances recorded
+        };
+        assert!(snap.avg_distance_from_mid().is_none());
+    }
+
+    #[test]
+    fn test_level_analytics_records_fills() {
+        let mut analytics = LevelAnalytics::new();
+        let now = 1_700_000_000_i64;
+
+        // Three fills on level 102
+        for i in 0..3 {
+            let fill = FillEvent::new(
+                format!("ORD-{}", i), OrderSide::Buy,
+                153.50, 0.1, 0.001, Some(0.50), now + i,
+            ).with_level(102).with_distance_from_mid(-1.0);
+            analytics.record_fill(&fill);
+        }
+
+        assert_eq!(analytics.fills_with_level, 3);
+        assert_eq!(analytics.fills_without_level, 0);
+        let snap = &analytics.levels[&102];
+        assert_eq!(snap.fill_count, 3);
+        assert!((snap.total_pnl - 1.50).abs() < 0.001);
+        assert!((snap.distance_from_mid_sum - (-3.0)).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_level_analytics_hot_levels() {
+        let mut analytics = LevelAnalytics::new();
+        let now = 1_700_000_000_i64;
+
+        // 6 fills on level 102 (hot), 2 fills on level 103 (not hot)
+        for i in 0..6 {
+            analytics.record_fill(&FillEvent::new(
+                format!("H-{}", i), OrderSide::Buy,
+                100.0, 0.1, 0.001, None, now + i,
+            ).with_level(102));
+        }
+        for i in 0..2 {
+            analytics.record_fill(&FillEvent::new(
+                format!("C-{}", i), OrderSide::Sell,
+                101.0, 0.1, 0.001, None, now + i,
+            ).with_level(103));
+        }
+
+        let hot = analytics.hot_levels(5);
+        assert_eq!(hot, vec![102], "Only level 102 has ≥ 5 fills");
+
+        let not_hot = analytics.hot_levels(3);
+        assert!(not_hot.contains(&102));
+        assert!(!not_hot.contains(&103), "level 103 has only 2 fills");
+    }
+
+    #[test]
+    fn test_level_analytics_profitable_levels() {
+        let mut analytics = LevelAnalytics::new();
+        let now = 1_700_000_000_i64;
+
+        // Level 201: profitable
+        analytics.record_fill(&FillEvent::new(
+            "P1", OrderSide::Sell, 155.0, 0.1, 0.001, Some(5.0), now,
+        ).with_level(201));
+
+        // Level 202: break-even (pnl = 0.0)
+        analytics.record_fill(&FillEvent::new(
+            "P2", OrderSide::Sell, 155.5, 0.1, 0.001, Some(0.0), now + 1,
+        ).with_level(202));
+
+        // Level 203: loss
+        analytics.record_fill(&FillEvent::new(
+            "P3", OrderSide::Buy, 154.0, 0.1, 0.001, Some(-1.0), now + 2,
+        ).with_level(203));
+
+        let profitable = analytics.profitable_levels(0.0);
+        assert!(profitable.contains(&201), "Level 201 should be profitable");
+        assert!(!profitable.contains(&202), "Level 202 is break-even, not > 0");
+        assert!(!profitable.contains(&203), "Level 203 is a loss");
+    }
+
+    #[test]
+    fn test_on_fill_without_level_id_counted() {
+        let config = GridRebalancerConfig::default();
+        let mut rebalancer = GridRebalancer::new(config).unwrap();
+        let now = 1_700_000_000_i64;
+
+        // Non-grid fill (RSI signal, no level_id)
+        let fill = FillEvent::new(
+            "RSI-001", OrderSide::Buy, 150.0, 0.5, 0.005, None, now,
+        );
+        rebalancer.on_fill(&fill);
+
+        let analytics = rebalancer.level_analytics.try_lock().unwrap();
+        assert_eq!(analytics.fills_without_level, 1);
+        assert_eq!(analytics.fills_with_level, 0);
+        assert!(analytics.levels.is_empty());
+    }
+
+    #[test]
+    fn test_on_fill_with_level_id_tracked() {
+        let config = GridRebalancerConfig::default();
+        let mut rebalancer = GridRebalancer::new(config).unwrap();
+        let now = 1_700_000_000_i64;
+
+        let fill = FillEvent::new(
+            "GRID-042", OrderSide::Buy, 153.50, 0.1, 0.001, Some(1.25), now,
+        )
+        .with_level(42)
+        .with_distance_from_mid(-0.9);
+
+        rebalancer.on_fill(&fill);
+
+        let analytics = rebalancer.level_analytics.try_lock().unwrap();
+        assert_eq!(analytics.fills_with_level, 1);
+        assert_eq!(analytics.fills_without_level, 0);
+        let snap = analytics.levels.get(&42).expect("Level 42 must be tracked");
+        assert_eq!(snap.fill_count, 1);
+        assert!((snap.total_pnl - 1.25).abs() < 0.001);
+        assert!((snap.distance_from_mid_sum - (-0.9)).abs() < 0.001);
+    }
+
+    #[tokio::test]
+    async fn test_get_level_analytics_report() {
+        let config = GridRebalancerConfig::default();
+        let mut rebalancer = GridRebalancer::new(config).unwrap();
+        let now = 1_700_000_000_i64;
+
+        // 6 fills on level 101 (hot + profitable)
+        for i in 0..6 {
+            rebalancer.on_fill(&FillEvent::new(
+                format!("L101-{}", i), OrderSide::Buy,
+                153.0, 0.1, 0.001, Some(0.80), now + i,
+            ).with_level(101).with_distance_from_mid(-1.2));
+        }
+        // 2 fills on level 201 (not hot)
+        for i in 0..2 {
+            rebalancer.on_fill(&FillEvent::new(
+                format!("L201-{}", i), OrderSide::Sell,
+                157.0, 0.1, 0.001, Some(0.20), now + i,
+            ).with_level(201));
+        }
+        // 1 non-grid fill
+        rebalancer.on_fill(&FillEvent::new(
+            "MOMENTUM-01", OrderSide::Buy, 154.0, 0.3, 0.003, None, now,
+        ));
+
+        let report = rebalancer.get_level_analytics().await;
+
+        assert_eq!(report.total_tracked_levels, 2);
+        assert_eq!(report.fills_with_level, 8);
+        assert_eq!(report.fills_without_level, 1);
+        assert_eq!(report.hot_levels, vec![101], "Only level 101 has ≥ 5 fills");
+        assert!(report.profitable_levels.contains(&101));
+        assert!(report.profitable_levels.contains(&201));
+        // Snapshots sorted by fill_count desc — level 101 must be first
+        assert_eq!(report.snapshots[0].level_id, 101);
+        assert_eq!(report.snapshots[0].fill_count, 6);
     }
 }
