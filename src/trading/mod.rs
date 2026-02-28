@@ -1,5 +1,5 @@
 //! ═════════════════════════════════════════════════════════════════════════
-//! Trading Module V5.1 - Jupiter-Powered Real Trading Engine (Consolidated)
+//! Trading Module V5.2 - Jupiter-Powered Real Trading Engine (Consolidated)
 //!
 //! Architecture:
 //! - Unified Trading Interface: Generic trait for paper and live trading
@@ -19,7 +19,11 @@
 //! ✅ executor.execute_versioned() wired for Jupiter swaps
 //! ✅ keystore.sign_versioned_transaction() added
 //!
-//! February 2026 - V5.1 JUPITER CONSOLIDATED! 🚀
+//! V5.2 CHANGES (Stage 3 — Feb 2026):
+//! ✅ FillEvent added — data carrier for confirmed order fills
+//!    Fan-out to strategies via StrategyManager::notify_fill()
+//!
+//! February 2026 - V5.2 FILL EVENT ADDED! 🚀
 //! ═════════════════════════════════════════════════════════════════════════
 
 pub use crate::config::Config;
@@ -198,6 +202,54 @@ pub struct BatchOrderRequest {
     pub grid_level_id: Option<u64>,
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// FILL EVENT (Stage 3 — V5.2) 📨
+// Emitted whenever an order is confirmed filled.
+// Fan-out to all strategies via StrategyManager::notify_fill().
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[derive(Debug, Clone)]
+pub struct FillEvent {
+    /// Unique order identifier
+    pub order_id:   String,
+    /// Buy or Sell
+    pub side:       OrderSide,
+    /// Actual fill price
+    pub fill_price: f64,
+    /// Amount filled (in base token, e.g. SOL)
+    pub fill_size:  f64,
+    /// Transaction fee paid in USDC
+    pub fee_usdc:   f64,
+    /// Realised P&L for this fill (None if unknown / first leg)
+    pub pnl:        Option<f64>,
+    /// Unix timestamp (seconds)
+    pub timestamp:  i64,
+}
+
+impl FillEvent {
+    /// Construct a FillEvent. Pass `timestamp` from the engine clock
+    /// (use `chrono::Utc::now().timestamp()` or a mock for tests).
+    pub fn new(
+        order_id:   impl Into<String>,
+        side:       OrderSide,
+        fill_price: f64,
+        fill_size:  f64,
+        fee_usdc:   f64,
+        pnl:        Option<f64>,
+        timestamp:  i64,
+    ) -> Self {
+        Self {
+            order_id: order_id.into(),
+            side,
+            fill_price,
+            fill_size,
+            fee_usdc,
+            pnl,
+            timestamp,
+        }
+    }
+}
+
 /// Engine health status for monitoring
 #[derive(Debug, Clone)]
 pub struct EngineHealthStatus {
@@ -291,6 +343,9 @@ pub mod prelude {
         OrderType,
         Order,
 
+        // Fill Event (Stage 3)
+        FillEvent,
+
         // Grid State Machine
         GridStateTracker,
         GridLevel,
@@ -351,11 +406,45 @@ mod tests {
     }
 
     #[test]
+    fn test_fill_event_construction() {
+        let fill = FillEvent::new(
+            "ORDER-BUY-001",
+            OrderSide::Buy,
+            142.50,
+            0.1,
+            0.0025,
+            Some(0.05),
+            1_700_000_000,
+        );
+        assert_eq!(fill.order_id, "ORDER-BUY-001");
+        assert_eq!(fill.fill_price, 142.50);
+        assert_eq!(fill.fill_size, 0.1);
+        assert_eq!(fill.pnl, Some(0.05));
+        assert_eq!(fill.timestamp, 1_700_000_000);
+    }
+
+    #[test]
+    fn test_fill_event_no_pnl() {
+        // First leg of a grid pair has no P&L yet
+        let fill = FillEvent::new(
+            "ORDER-SELL-002",
+            OrderSide::Sell,
+            143.00,
+            0.1,
+            0.0025,
+            None,
+            1_700_000_001,
+        );
+        assert!(fill.pnl.is_none());
+    }
+
+    #[test]
     fn test_module_exports() {
         use super::prelude::*;
         let _: Option<RealTradingConfig> = None;
         let _: Option<EnhancedMetrics>   = None;
         let _: Option<AdaptiveOptimizer> = None;
         let _: Option<JupiterClient>     = None;
+        let _: Option<FillEvent>         = None;
     }
 }
