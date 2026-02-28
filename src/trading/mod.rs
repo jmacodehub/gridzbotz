@@ -1,4 +1,4 @@
-//! ═════════════════════════════════════════════════════════════════════════
+//! ═════════════════════════════════════════════════════════════════════
 //! Trading Module V5.2 - Jupiter-Powered Real Trading Engine (Consolidated)
 //!
 //! Architecture:
@@ -30,7 +30,7 @@
 //! ✅ All existing call sites unaffected (new fields default to None)
 //!
 //! February 2026 - V5.2.1 PER-LEVEL ANALYTICS! 🚀
-//! ═════════════════════════════════════════════════════════════════════════
+//! ═════════════════════════════════════════════════════════════════════
 
 pub use crate::config::Config;
 
@@ -239,7 +239,7 @@ pub struct FillEvent {
     /// Unix timestamp (seconds)
     pub timestamp:  i64,
 
-    // ── V5.2.1: Per-level analytics ─────────────────────────────────────
+    // ── V5.2.1: Per-level analytics ───────────────────────────────────────
     /// Grid level that triggered this fill.
     /// Matches `GridLevel.id` (u64) exactly.
     /// `None` for non-grid fills (manual trades, RSI/Momentum signals).
@@ -282,13 +282,29 @@ impl FillEvent {
         }
     }
 
-    // ── V5.2.1: Builder methods ──────────────────────────────────────────
+    // ── V5.2.1: Builder methods ────────────────────────────────────────
 
     /// Attach the grid level that triggered this fill.
     ///
-    /// Use the `GridLevel.id` value directly:
+    /// Use the `GridLevel.id` value directly.
+    ///
+    /// # Examples
+    ///
     /// ```
-    /// let fill = FillEvent::new(...).with_level(level.id);
+    /// use solana_grid_bot::trading::{FillEvent, OrderSide};
+    ///
+    /// let level_id: u64 = 42;
+    /// let fill = FillEvent::new(
+    ///     "ORDER-123",
+    ///     OrderSide::Buy,
+    ///     153.50,
+    ///     0.1,
+    ///     0.0025,
+    ///     None,
+    ///     1_700_000_000,
+    /// ).with_level(level_id);
+    ///
+    /// assert_eq!(fill.level_id, Some(42));
     /// ```
     #[inline]
     pub fn with_level(mut self, level_id: u64) -> Self {
@@ -301,10 +317,26 @@ impl FillEvent {
     /// - Negative value → fill occurred below mid (buy side)
     /// - Positive value → fill occurred above mid (sell side)
     ///
+    /// # Examples
+    ///
     /// ```
+    /// use solana_grid_bot::trading::{FillEvent, OrderSide};
+    ///
     /// let mid = 155.00_f64;
+    /// let fill_price = 153.14_f64;
     /// let pct = (fill_price - mid) / mid * 100.0;
-    /// let fill = FillEvent::new(...).with_distance_from_mid(pct);
+    ///
+    /// let fill = FillEvent::new(
+    ///     "ORDER-456",
+    ///     OrderSide::Buy,
+    ///     fill_price,
+    ///     0.1,
+    ///     0.0025,
+    ///     None,
+    ///     1_700_000_100,
+    /// ).with_distance_from_mid(pct);
+    ///
+    /// assert!(fill.distance_from_mid_pct.unwrap() < 0.0, "Buy below mid should be negative");
     /// ```
     #[inline]
     pub fn with_distance_from_mid(mut self, pct: f64) -> Self {
@@ -512,7 +544,7 @@ mod tests {
         assert!(fill.distance_from_mid_pct.is_none());
     }
 
-    // ── V5.2.1: Per-level analytics tests ───────────────────────────────
+    // ── V5.2.1: Per-level analytics tests ───────────────────────────────────────
 
     #[test]
     fn test_fill_event_with_level_id() {
