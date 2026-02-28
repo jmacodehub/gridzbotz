@@ -23,7 +23,13 @@
 //! ✅ FillEvent added — data carrier for confirmed order fills
 //!    Fan-out to strategies via StrategyManager::notify_fill()
 //!
-//! February 2026 - V5.2 FILL EVENT ADDED! 🚀
+//! V5.2.1 CHANGES (Feb 2026 — per-level analytics):
+//! ✅ FillEvent gains level_id: Option<u64>            — grid level ID
+//! ✅ FillEvent gains distance_from_mid_pct: Option<f64> — % from mid at fill
+//! ✅ Builder methods: .with_level() / .with_distance_from_mid()
+//! ✅ All existing call sites unaffected (new fields default to None)
+//!
+//! February 2026 - V5.2.1 PER-LEVEL ANALYTICS! 🚀
 //! ═════════════════════════════════════════════════════════════════════════
 
 pub use crate::config::Config;
@@ -203,9 +209,17 @@ pub struct BatchOrderRequest {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// FILL EVENT (Stage 3 — V5.2) 📨
+// FILL EVENT (V5.2 / V5.2.1) 📨
+//
 // Emitted whenever an order is confirmed filled.
 // Fan-out to all strategies via StrategyManager::notify_fill().
+//
+// V5.2.1: Two optional analytics fields added for per-level tracking.
+// All existing FillEvent::new() call sites are unaffected — new fields
+// default to None and can be attached fluently via builder methods:
+//
+//   FillEvent::new(...).with_level(level.id).with_distance_from_mid(-1.2)
+//
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[derive(Debug, Clone)]
@@ -224,11 +238,28 @@ pub struct FillEvent {
     pub pnl:        Option<f64>,
     /// Unix timestamp (seconds)
     pub timestamp:  i64,
+
+    // ── V5.2.1: Per-level analytics ─────────────────────────────────────
+    /// Grid level that triggered this fill.
+    /// Matches `GridLevel.id` (u64) exactly.
+    /// `None` for non-grid fills (manual trades, RSI/Momentum signals).
+    pub level_id:              Option<u64>,
+    /// Percentage distance from mid-price at the moment of fill.
+    /// Negative = fill below mid (buy side), positive = above (sell side).
+    /// Example: -1.2 means the fill occurred 1.2% below mid-price.
+    /// `None` when mid-price was unavailable at fill time.
+    pub distance_from_mid_pct: Option<f64>,
 }
 
 impl FillEvent {
-    /// Construct a FillEvent. Pass `timestamp` from the engine clock
-    /// (use `chrono::Utc::now().timestamp()` or a mock for tests).
+    /// Construct a FillEvent.
+    ///
+    /// Pass `timestamp` from the engine clock
+    /// (`chrono::Utc::now().timestamp()` or a mock for tests).
+    ///
+    /// `level_id` and `distance_from_mid_pct` default to `None`.
+    /// Attach them with the builder methods below:
+    ///   `.with_level(id)` and `.with_distance_from_mid(pct)`
     pub fn new(
         order_id:   impl Into<String>,
         side:       OrderSide,
@@ -246,7 +277,39 @@ impl FillEvent {
             fee_usdc,
             pnl,
             timestamp,
+            level_id:              None,
+            distance_from_mid_pct: None,
         }
+    }
+
+    // ── V5.2.1: Builder methods ──────────────────────────────────────────
+
+    /// Attach the grid level that triggered this fill.
+    ///
+    /// Use the `GridLevel.id` value directly:
+    /// ```
+    /// let fill = FillEvent::new(...).with_level(level.id);
+    /// ```
+    #[inline]
+    pub fn with_level(mut self, level_id: u64) -> Self {
+        self.level_id = Some(level_id);
+        self
+    }
+
+    /// Attach the percentage distance from mid-price at fill time.
+    ///
+    /// - Negative value → fill occurred below mid (buy side)
+    /// - Positive value → fill occurred above mid (sell side)
+    ///
+    /// ```
+    /// let mid = 155.00_f64;
+    /// let pct = (fill_price - mid) / mid * 100.0;
+    /// let fill = FillEvent::new(...).with_distance_from_mid(pct);
+    /// ```
+    #[inline]
+    pub fn with_distance_from_mid(mut self, pct: f64) -> Self {
+        self.distance_from_mid_pct = Some(pct);
+        self
     }
 }
 
@@ -343,7 +406,7 @@ pub mod prelude {
         OrderType,
         Order,
 
-        // Fill Event (Stage 3)
+        // Fill Event (V5.2 / V5.2.1 per-level analytics)
         FillEvent,
 
         // Grid State Machine
@@ -421,6 +484,9 @@ mod tests {
         assert_eq!(fill.fill_size, 0.1);
         assert_eq!(fill.pnl, Some(0.05));
         assert_eq!(fill.timestamp, 1_700_000_000);
+        // V5.2.1: new fields must be None by default — existing callers unaffected
+        assert!(fill.level_id.is_none(), "level_id must default to None");
+        assert!(fill.distance_from_mid_pct.is_none(), "distance_from_mid_pct must default to None");
     }
 
     #[test]
@@ -436,6 +502,87 @@ mod tests {
             1_700_000_001,
         );
         assert!(fill.pnl.is_none());
+        assert!(fill.level_id.is_none());
+        assert!(fill.distance_from_mid_pct.is_none());
+    }
+
+    // ── V5.2.1: Per-level analytics tests ───────────────────────────────
+
+    #[test]
+    fn test_fill_event_with_level_id() {
+        let fill = FillEvent::new(
+            "ORDER-BUY-042",
+            OrderSide::Buy,
+            153.50,
+            0.1,
+            0.0025,
+            None,
+            1_700_000_100,
+        )
+        .with_level(102);
+
+        assert_eq!(fill.level_id, Some(102));
+        assert!(fill.distance_from_mid_pct.is_none());
+        assert_eq!(fill.order_id, "ORDER-BUY-042");
+        assert_eq!(fill.fill_price, 153.50);
+    }
+
+    #[test]
+    fn test_fill_event_builder_chain() {
+        // Simulate a real grid fill: level 3, price 1.2% below mid of 155.00
+        let mid_price = 155.00_f64;
+        let fill_price = 153.14_f64;
+        let level_id: u64 = 3;
+        let distance_pct = (fill_price - mid_price) / mid_price * 100.0;
+
+        let fill = FillEvent::new(
+            "ORDER-BUY-003",
+            OrderSide::Buy,
+            fill_price,
+            0.2,
+            0.003,
+            Some(1.85),
+            1_700_000_200,
+        )
+        .with_level(level_id)
+        .with_distance_from_mid(distance_pct);
+
+        // All core fields intact
+        assert_eq!(fill.order_id, "ORDER-BUY-003");
+        assert_eq!(fill.side, OrderSide::Buy);
+        assert_eq!(fill.fill_price, fill_price);
+        assert_eq!(fill.pnl, Some(1.85));
+
+        // Analytics fields correctly attached
+        assert_eq!(fill.level_id, Some(3));
+        let dist = fill.distance_from_mid_pct.unwrap();
+        assert!(dist < 0.0, "Buy below mid must be negative: got {:.4}", dist);
+        assert!((dist - (-1.2)).abs() < 0.1, "Expected ~-1.2%, got {:.4}%", dist);
+    }
+
+    #[test]
+    fn test_fill_event_sell_side_distance() {
+        // Sell fill above mid → positive distance
+        let mid_price = 155.00_f64;
+        let fill_price = 156.55_f64;
+        let distance_pct = (fill_price - mid_price) / mid_price * 100.0;
+
+        let fill = FillEvent::new(
+            "ORDER-SELL-201",
+            OrderSide::Sell,
+            fill_price,
+            0.1,
+            0.002,
+            Some(3.10),
+            1_700_000_300,
+        )
+        .with_level(201)
+        .with_distance_from_mid(distance_pct);
+
+        assert_eq!(fill.level_id, Some(201));
+        let dist = fill.distance_from_mid_pct.unwrap();
+        assert!(dist > 0.0, "Sell above mid must be positive: got {:.4}", dist);
+        assert!((dist - 1.0).abs() < 0.1, "Expected ~+1.0%, got {:.4}%", dist);
     }
 
     #[test]
