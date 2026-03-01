@@ -1,12 +1,28 @@
 //! ═══════════════════════════════════════════════════════════════════════════
-//! SHARED ANALYTICS TOOLBOX - PROJECT FLASH V5.4
+//! SHARED ANALYTICS TOOLBOX - PROJECT FLASH V5.5
 //! ═══════════════════════════════════════════════════════════════════════════
 //!
 //! Purpose:
 //!   Centralizes all analytical utilities for strategies to share state through a
 //!   unified context (Volatility, ATR, Regime, Fees, etc.).
 //!
-//! Improvements for V5.4 (Regime Gate Configuration):
+//! V5.5 (fix/vol-units-alignment):
+//!   ✅ BPS → TRUE-% converter fixed: / 10,000 → / 100
+//!      2 BPS now correctly produces 0.02 (not 0.0002) — matches regime_detection.rs V2.4
+//!   ✅ summarize() display corrected: removed double-multiplication by 100
+//!      stddev_volatility = 0.5 now logs "0.5000%" not "50.0000%"
+//!   ✅ BPS display in summarize() corrected: × 100 (not × 10,000)
+//!      0.5% volatility now shows "50 BPS" not "5000 BPS"
+//!   ✅ Test assertions updated to TRUE-% convention (0.02 not 0.0002)
+//!
+//! ⚠️  UNIT SYSTEM CANON (V5.5+)
+//!   All volatility values flowing through this module are TRUE PERCENTAGE:
+//!     0.5  = 0.5%  (normal SOL tick)
+//!     0.02 = 0.02% (min-vol gate floor)
+//!   BPS inputs from TOML are converted via: bps / 100.0 → TRUE %
+//!   Do NOT multiply volatility by 100 before passing to regime_detection.rs.
+//!
+//! V5.4 (previous):
 //!   ✅ RegimeGateConfig → RegimeConfig converter (BPS → % transformation)
 //!   ✅ Production-grade config validation with helpful error messages
 //!   ✅ Non-blocking volatility accessor for monitoring dashboards
@@ -37,67 +53,80 @@ pub use regime_detection::{RegimeConfig, RegimeDetector};
 pub use volatility_calc::{VolatilityCalculator, VolatilityConfig, VolatilityStats};
 
 // ═══════════════════════════════════════════════════════════════════════════
-// ✅ CONFIG CONVERTERS - Production-Grade BPS → % Transformation
+// ✅ CONFIG CONVERTERS - Production-Grade BPS → TRUE-% Transformation
 // ═══════════════════════════════════════════════════════════════════════════
 // This is the CRITICAL link between:
 //   1. TOML config (BPS format: 2, 15, 30)
-//   2. Internal regime detection (% format: 0.02%, 0.15%, 0.30%)
+//   2. Internal regime detection (TRUE-% format: 0.02, 0.15, 0.30)
+//
+// UNIT SYSTEM:
+//   BPS (Basis Points): 1 BPS = 0.01%
+//   TRUE %:             0.02  = 0.02%  (NOT 0.0002)
+//   Conversion:         bps / 100 = true_%
+//   Examples:
+//     2 BPS → 2 / 100 = 0.02   (0.02%)  ✅
+//    15 BPS → 15 / 100 = 0.15  (0.15%)  ✅
+//   100 BPS → 100 / 100 = 1.0  (1.0%)   ✅
+//
+// ⚠️  V5.4 BUG (fixed in V5.5):
+//   Old: bps / 10,000 → decimal fraction (0.0002)
+//   New: bps / 100    → TRUE %            (0.02)
+//   regime_detection.rs V2.4 expects TRUE % — the old formula was 100× off.
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Convert Bot's RegimeGateConfig (in BPS) → RegimeConfig (in %)
+/// Convert Bot's RegimeGateConfig (in BPS) → RegimeConfig (in TRUE %)
 ///
-/// # BPS Conversion Explanation
+/// # Unit Conversion
 /// BPS = Basis Points (1 BPS = 0.01%)
-/// - Input:  volatility_threshold = 2 BPS (from TOML)
-/// - Output: very_low = 0.0002 (internal decimal representation)
-/// - Logging: "2 BPS = 0.02%"
+/// Formula: threshold_true_pct = bps / 100.0
 ///
-/// # Example
+/// # Examples
 /// ```ignore
 /// let toml_config = RegimeGateConfig {
 ///     enable_regime_gate: true,
-///     volatility_threshold_bps: 2.0,  // 2 BPS
+///     volatility_threshold_bps: 2.0,      // 2 BPS = 0.02%
 ///     trend_threshold: 3.0,
-///     min_volatility_to_trade_bps: 3.0,
+///     min_volatility_to_trade_bps: 3.0,  // 3 BPS = 0.03%
 ///     pause_in_very_low_vol: true,
 /// };
 /// let regime_cfg = RegimeConfig::from(&toml_config);
-/// assert_eq!(regime_cfg.thresholds.very_low, 0.0002);  // 2 BPS -> 0.02%
+/// // 2 BPS → 0.02 (TRUE %) — matches regime_detection.rs V2.4
+/// assert!((regime_cfg.thresholds.very_low - 0.02).abs() < 1e-6);
 /// ```
 impl From<&RegimeGateConfig> for RegimeConfig {
     fn from(cfg: &RegimeGateConfig) -> Self {
-        // ✅ CONVERSION: BPS → percentage
-        // Formula: BPS_value / 10_000 = decimal_percentage
-        // Examples:
-        //   2 BPS ÷ 10,000 = 0.0002 = 0.02%
-        //   15 BPS ÷ 10,000 = 0.0015 = 0.15%
-        //   30 BPS ÷ 10,000 = 0.003 = 0.30%
-        let threshold_pct = cfg.volatility_threshold_bps / 10_000.0;
-        let min_vol_pct = cfg.min_volatility_to_trade_bps / 10_000.0;
+        // ✅ V5.5 FIX: BPS → TRUE % conversion
+        // Formula: bps / 100.0
+        // Old (WRONG):  bps / 10,000 → decimal fraction (100× too small)
+        // New (CORRECT): bps / 100   → TRUE % matching regime_detection.rs V2.4
+        //
+        // 1 BPS = 0.01%
+        // 2 BPS / 100 = 0.02 (TRUE %) ← correct
+        // 2 BPS / 10,000 = 0.0002     ← was 100× off, TOML path was broken
+        let threshold_pct = cfg.volatility_threshold_bps / 100.0;
+        let min_vol_pct   = cfg.min_volatility_to_trade_bps / 100.0;
 
         info!(
-            "🔧 Converting RegimeGateConfig → RegimeConfig:\n   \
-            ├─ Volatility threshold: {} BPS → {} (0.{:.2}%)\n   \
-            ├─ Min vol to trade: {} BPS → {} (0.{:.2}%)\n   \
+            "🔧 Converting RegimeGateConfig → RegimeConfig (V5.5 TRUE-%):\n   \
+            ├─ Vol threshold:  {} BPS → {:.4}% (true %)\n   \
+            ├─ Min vol trade:  {} BPS → {:.4}% (true %)\n   \
             ├─ Trend sensitivity: {}\n   \
-            └─ Enabled: {}",
+            └─ Gate enabled: {}",
             cfg.volatility_threshold_bps,
             threshold_pct,
-            cfg.volatility_threshold_bps * 0.01,
             cfg.min_volatility_to_trade_bps,
             min_vol_pct,
-            cfg.min_volatility_to_trade_bps * 0.01,
             cfg.trend_threshold,
             cfg.enable_regime_gate
         );
 
         Self {
             thresholds: regime_detection::RegimeThresholds {
-                // Scale thresholds proportionally for regime stages
-                very_low: threshold_pct,           // Base threshold (e.g., 0.02%)
-                low: threshold_pct * 1.5,          // 1.5x (e.g., 0.03%)
-                medium: threshold_pct * 3.0,       // 3x (e.g., 0.06%)
-                high: threshold_pct * 5.0,         // 5x (e.g., 0.10%)
+                // Scale thresholds proportionally for regime stages (TRUE % world)
+                very_low: threshold_pct,         // e.g. 2 BPS → 0.02%
+                low:      threshold_pct * 1.5,   // e.g. → 0.03%
+                medium:   threshold_pct * 3.0,   // e.g. → 0.06%
+                high:     threshold_pct * 5.0,   // e.g. → 0.10%
             },
             min_volatility_to_trade: min_vol_pct,
             pause_in_very_low_vol: cfg.enable_regime_gate,
@@ -169,7 +198,7 @@ impl AnalyticsContext {
         fee_cfg: FeeFilterConfig,
         atr_cfg: Option<ATRConfig>,
     ) -> Self {
-        // ✅ Convert TOML config → internal format
+        // ✅ Convert TOML config → internal TRUE-% format (V5.5)
         let regime_cfg = RegimeConfig::from(&regime_gate_cfg);
         Self::new_with_config(vol_cfg, regime_cfg, fee_cfg, atr_cfg)
     }
@@ -179,7 +208,8 @@ impl AnalyticsContext {
     // ═══════════════════════════════════════════════════════════════════════
 
     /// Get current market volatility (non-blocking, safe for monitoring loops)
-    /// Returns None if lock is held by another task
+    /// Returns None if lock is held by another task.
+    /// Returned value is TRUE PERCENTAGE (e.g. 0.5 = 0.5%).
     pub fn get_current_volatility(&self) -> Option<f64> {
         match self.volatility_calc.try_lock() {
             Ok(guard) => Some(guard.stddev_volatility()),
@@ -200,28 +230,34 @@ impl AnalyticsContext {
 
     /// Get current detected market regime (uses public getter)
     pub fn get_current_regime(&self) -> String {
-        format!("{:?}", self.regime.get_current_regime())  // ✅ FIXED: Correct call
+        format!("{:?}", self.regime.get_current_regime())
     }
 
-    /// Print context summary for debug or live telemetry
-    /// Safe to call frequently - logs but doesn't block
+    /// Print context summary for debug or live telemetry.
+    /// Safe to call frequently - logs but doesn't block.
+    ///
+    /// V5.5 FIX: volatility values are TRUE % — do NOT multiply by 100 for display.
+    /// Old: stats.stddev_volatility * 100.0 → showed 50.0% when vol was 0.5%
+    /// New: stats.stddev_volatility          → shows  0.5% correctly
     pub async fn summarize(&self) {
         info!("═══════════════════════════════════════════════════════");
-        info!("📊 Analytics Summary (V5.4)");
+        info!("📊 Analytics Summary (V5.5)");
         info!("═══════════════════════════════════════════════════════");
 
         // Volatility snapshot
         let vol_guard = self.volatility_calc.lock().await;
         match vol_guard.stats() {
             Some(stats) => {
+                // ✅ V5.5 FIX: stddev_volatility and range_volatility are ALREADY TRUE %.
+                // BPS = true_pct * 100  (e.g. 0.5% × 100 = 50 BPS)
                 info!(
                     "📈 Volatility:\n   \
-                    ├─ StdDev: {:.4}% (0.{:02} BPS)\n   \
+                    ├─ StdDev: {:.4}% ({} BPS)\n   \
                     ├─ Range:  {:.4}%\n   \
                     └─ Samples: {}",
-                    stats.stddev_volatility * 100.0,
-                    (stats.stddev_volatility * 10_000.0) as u32,
-                    stats.range_volatility * 100.0,
+                    stats.stddev_volatility,
+                    (stats.stddev_volatility * 100.0) as u32,
+                    stats.range_volatility,
                     stats.samples
                 );
             }
@@ -265,7 +301,7 @@ pub trait SharedAnalytics {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// COMPREHENSIVE TEST SUITE (V5.4)
+// COMPREHENSIVE TEST SUITE (V5.5)
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[cfg(test)]
@@ -280,15 +316,15 @@ mod tests {
     fn toml_config() -> RegimeGateConfig {
         RegimeGateConfig {
             enable_regime_gate: true,
-            volatility_threshold_bps: 2.0,      // 2 BPS
+            volatility_threshold_bps: 2.0,      // 2 BPS = 0.02%
             trend_threshold: 3.0,
-            min_volatility_to_trade_bps: 3.0,  // 3 BPS
+            min_volatility_to_trade_bps: 3.0,  // 3 BPS = 0.03%
             pause_in_very_low_vol: true,
         }
     }
 
     // ─────────────────────────────────────────────────────────────────────
-    // CONVERTER TESTS
+    // CONVERTER TESTS (V5.5 — TRUE-% world)
     // ─────────────────────────────────────────────────────────────────────
 
     #[test]
@@ -296,32 +332,41 @@ mod tests {
         let cfg = toml_config();
         let regime_cfg = RegimeConfig::from(&cfg);
 
-        // 2 BPS should convert to 0.0002 (0.02%)
-        assert!((regime_cfg.thresholds.very_low - 0.0002).abs() < 1e-6);
+        // V5.5: 2 BPS → 0.02 (TRUE %)  [was 0.0002 in V5.4 — 100× wrong]
+        assert!(
+            (regime_cfg.thresholds.very_low - 0.02).abs() < 1e-6,
+            "2 BPS should convert to 0.02 TRUE % (got {})",
+            regime_cfg.thresholds.very_low
+        );
 
-        // 3 BPS should convert to 0.0003 (0.03%)
-        assert!((regime_cfg.thresholds.very_low * 1.5 - 0.0003).abs() < 1e-6);
+        // 3 BPS min-vol gate → 0.03 TRUE %
+        assert!(
+            (regime_cfg.min_volatility_to_trade - 0.03).abs() < 1e-6,
+            "3 BPS min_vol should convert to 0.03 TRUE % (got {})",
+            regime_cfg.min_volatility_to_trade
+        );
     }
 
     #[test]
     fn test_regime_config_conversion_from_owned() {
         let cfg = toml_config();
         let regime_cfg = RegimeConfig::from(cfg);
-
-        assert!((regime_cfg.thresholds.very_low - 0.0002).abs() < 1e-6);
+        // V5.5: 2 BPS → 0.02 TRUE %
+        assert!((regime_cfg.thresholds.very_low - 0.02).abs() < 1e-6);
     }
 
     #[test]
     fn test_bps_conversion_accuracy() {
-        // Test various BPS values
+        // V5.5: BPS / 100 = TRUE %
+        // 1 BPS = 0.01%, 100 BPS = 1.0%
         let test_cases = vec![
-            (2.0, 0.0002),      // 2 BPS → 0.02%
-            (15.0, 0.0015),     // 15 BPS → 0.15%
-            (30.0, 0.003),      // 30 BPS → 0.30%
-            (100.0, 0.01),      // 100 BPS → 1.0%
+            (2.0_f64,   0.02_f64),    // 2 BPS   → 0.02%
+            (15.0,      0.15),         // 15 BPS  → 0.15%
+            (30.0,      0.30),         // 30 BPS  → 0.30%
+            (100.0,     1.00),         // 100 BPS → 1.00%
         ];
 
-        for (bps, expected_decimal) in test_cases {
+        for (bps, expected_true_pct) in test_cases {
             let cfg = RegimeGateConfig {
                 enable_regime_gate: true,
                 volatility_threshold_bps: bps,
@@ -331,13 +376,59 @@ mod tests {
             };
             let regime_cfg = RegimeConfig::from(&cfg);
             assert!(
-                (regime_cfg.thresholds.very_low - expected_decimal).abs() < 1e-6,
-                "BPS conversion failed for {} BPS (expected {}, got {})",
-                bps,
-                expected_decimal,
-                regime_cfg.thresholds.very_low
+                (regime_cfg.thresholds.very_low - expected_true_pct).abs() < 1e-6,
+                "BPS conversion failed: {} BPS should be {} TRUE % (got {})",
+                bps, expected_true_pct, regime_cfg.thresholds.very_low
             );
         }
+    }
+
+    /// V5.5 REGRESSION: Verify TOML-derived config produces sensible
+    /// regime classifications — not always VeryHigh as the old 100× bug caused.
+    #[test]
+    fn test_toml_regime_classifies_real_sol_vol() {
+        use regime_detection::{RegimeDetector, MarketRegime};
+
+        let cfg = toml_config();  // 2 BPS very_low threshold
+        let regime_cfg = RegimeConfig::from(&cfg);
+        let detector = RegimeDetector::new(regime_cfg);
+
+        // SOL normal vol ~0.5% → should classify as VeryHigh relative to 0.02% threshold
+        // (0.5 > very_low=0.02, > low=0.03, > medium=0.06, > high=0.10 → VeryHigh)
+        // This is CORRECT — a 2 BPS gate is extremely sensitive
+        let regime = detector.classify(0.5);
+        assert_eq!(
+            regime, MarketRegime::VeryHigh,
+            "0.5% vol should be VeryHigh relative to 2 BPS (0.02%) gate"
+        );
+
+        // Vol just at the very_low threshold should be VeryLow
+        let regime_floor = detector.classify(0.01);
+        assert_eq!(
+            regime_floor, MarketRegime::VeryLow,
+            "0.01% vol should be VeryLow relative to 0.02% threshold"
+        );
+    }
+
+    /// V5.5 REGRESSION: min-vol gate must block correctly with TOML config.
+    #[test]
+    fn test_toml_min_vol_gate_fires_correctly() {
+        use regime_detection::RegimeDetector;
+
+        let cfg = toml_config();  // 3 BPS min_vol = 0.03%
+        let regime_cfg = RegimeConfig::from(&cfg);
+        let detector = RegimeDetector::new(RegimeConfig {
+            pause_in_very_low_vol: false,  // test only the min-vol path
+            ..regime_cfg
+        });
+
+        // Vol above min gate: 0.05% > 0.03% → must NOT pause
+        let (pause, _) = detector.should_pause(0.05);
+        assert!(!pause, "0.05% vol must pass 3 BPS (0.03%) gate");
+
+        // Vol below min gate: 0.01% < 0.03% → must pause
+        let (pause2, reason) = detector.should_pause(0.01);
+        assert!(pause2, "0.01% vol must be blocked by 3 BPS (0.03%) gate. Reason: {}", reason);
     }
 
     // ─────────────────────────────────────────────────────────────────────
@@ -404,7 +495,6 @@ mod tests {
     #[test]
     fn test_get_current_volatility_non_blocking() {
         let c = ctx();
-        // Should return Option, but not block or panic
         let vol = c.get_current_volatility();
         assert!(vol.is_none() || vol.is_some());
     }
@@ -421,8 +511,6 @@ mod tests {
         let c = ctx();
         let regime_str = c.get_current_regime();
         assert!(!regime_str.is_empty());
-        // Should have some regime text
-        assert!(!regime_str.is_empty());
     }
 
     // ─────────────────────────────────────────────────────────────────────
@@ -433,10 +521,8 @@ mod tests {
     fn test_full_pipeline_toml_to_trading() {
         let rt = Runtime::new().unwrap();
         rt.block_on(async {
-            // Simulate loading from TOML
             let toml_cfg = toml_config();
 
-            // Create analytics context from TOML config
             let ctx = AnalyticsContext::from_regime_gate_config(
                 VolatilityConfig::default(),
                 toml_cfg,
@@ -444,7 +530,6 @@ mod tests {
                 None,
             );
 
-            // Feed it some prices
             {
                 let mut vol = ctx.volatility_calc.lock().await;
                 for i in 0..100 {
@@ -452,14 +537,12 @@ mod tests {
                 }
             }
 
-            // Check everything works end-to-end
             let vol = ctx.get_current_volatility();
             assert!(vol.is_some(), "Should have volatility after prices added");
 
             let regime = ctx.get_current_regime();
             assert!(!regime.is_empty(), "Should have regime detection");
 
-            // Summary should run cleanly
             ctx.summarize().await;
         });
     }
