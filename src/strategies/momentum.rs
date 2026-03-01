@@ -85,14 +85,6 @@ impl MomentumStrategy {
     }
     
     /// Calculate Simple Moving Average (SMA)
-    /// 
-    /// # How it works:
-    /// ```
-    /// Prices: 
-    /// Sum: 520
-    /// Count: 5
-    /// Average: 520 / 5 = 104
-    /// ```
     fn calculate_sma(prices: &VecDeque<f64>) -> Option<f64> {
         if prices.is_empty() {
             return None;
@@ -103,11 +95,6 @@ impl MomentumStrategy {
     }
     
     /// Calculate Exponential Moving Average (EMA) - More responsive!
-    /// 
-    /// # Why EMA?
-    /// EMA gives more weight to recent prices, making it react faster to changes.
-    /// 
-    /// Formula: EMA = (Price * Multiplier) + (Previous EMA * (1 - Multiplier))
     fn calculate_ema(prices: &VecDeque<f64>, prev_ema: Option<f64>) -> Option<f64> {
         if prices.is_empty() {
             return None;
@@ -115,48 +102,30 @@ impl MomentumStrategy {
         
         let multiplier = 2.0 / (prices.len() as f64 + 1.0);
         
-        // If we have a previous EMA, use it
         if let Some(prev) = prev_ema {
             let latest_price = prices.back().unwrap();
             Some((latest_price * multiplier) + (prev * (1.0 - multiplier)))
         } else {
-            // First time: use SMA as starting point
             Self::calculate_sma(prices)
         }
     }
     
     /// Detect crossover between Fast and Slow moving averages
-    /// 
-    /// # Crossover Types:
-    /// - Golden Cross: Fast crosses ABOVE Slow = BULLISH 📈
-    /// - Death Cross: Fast crosses BELOW Slow = BEARISH 📉
     fn detect_crossover(&self, fast_ma: f64, slow_ma: f64) -> Option<Crossover> {
         if let (Some(prev_fast), Some(prev_slow)) = (self.prev_fast_ma, self.prev_slow_ma) {
-            // Golden Cross: Fast was below, now above
             if prev_fast <= prev_slow && fast_ma > slow_ma {
                 return Some(Crossover::Golden);
             }
-            
-            // Death Cross: Fast was above, now below
             if prev_fast >= prev_slow && fast_ma < slow_ma {
                 return Some(Crossover::Death);
             }
         }
-        
         None
     }
     
     /// Calculate trend strength (0.0 - 1.0)
-    /// 
-    /// # How it works:
-    /// Measures the distance between Fast MA and Slow MA.
-    /// Larger distance = Stronger trend
     fn calculate_trend_strength(&self, fast_ma: f64, slow_ma: f64) -> f64 {
         let diff_percent = ((fast_ma - slow_ma).abs() / slow_ma) * 100.0;
-        
-        // Normalize to 0.0 - 1.0 range
-        // 0.5% difference = weak (0.5)
-        // 2.0%+ difference = strong (1.0)
         (diff_percent / 2.0).min(1.0)
     }
     
@@ -170,16 +139,12 @@ impl MomentumStrategy {
     ) -> f64 {
         let mut confidence = trend_strength;
         
-        // Bonus confidence if price confirms the trend
         if fast_ma > slow_ma && price > fast_ma {
-            // Uptrend confirmed by price
             confidence += 0.2;
         } else if fast_ma < slow_ma && price < fast_ma {
-            // Downtrend confirmed by price
             confidence += 0.2;
         }
         
-        // Bonus for strong separation between MAs
         let separation = ((fast_ma - slow_ma).abs() / slow_ma) * 100.0;
         if separation > 1.0 {
             confidence += 0.1;
@@ -226,7 +191,7 @@ impl Strategy for MomentumStrategy {
         if self.slow_prices.len() < SLOW_MA_PERIOD {
             self.stats.signals_generated += 1;
             self.stats.hold_signals += 1;
-            return Ok(Signal::Hold);
+            return Ok(Signal::Hold { reason: None });
         }
         
         // STEP 3: Calculate moving averages
@@ -259,6 +224,7 @@ impl Strategy for MomentumStrategy {
                     "Golden Cross! Fast MA ${:.2} > Slow MA ${:.2} | Strength: {:.0}%",
                     fast_ma, slow_ma, trend_strength * 100.0
                 ),
+                level_id: None,
             }
         } else if let Some(Crossover::Death) = crossover {
             // 🔴 DEATH CROSS - Strong Sell Signal!
@@ -271,6 +237,7 @@ impl Strategy for MomentumStrategy {
                     "Death Cross! Fast MA ${:.2} < Slow MA ${:.2} | Strength: {:.0}%",
                     fast_ma, slow_ma, trend_strength * 100.0
                 ),
+                level_id: None,
             }
         } else if fast_ma > slow_ma && confidence >= MIN_CONFIDENCE {
             // 📈 Uptrend continues - Regular Buy
@@ -283,6 +250,7 @@ impl Strategy for MomentumStrategy {
                     "Uptrend: Fast MA ${:.2} > Slow MA ${:.2}",
                     fast_ma, slow_ma
                 ),
+                level_id: None,
             }
         } else if fast_ma < slow_ma && confidence >= MIN_CONFIDENCE {
             // 📉 Downtrend continues - Regular Sell
@@ -295,11 +263,12 @@ impl Strategy for MomentumStrategy {
                     "Downtrend: Fast MA ${:.2} < Slow MA ${:.2}",
                     fast_ma, slow_ma
                 ),
+                level_id: None,
             }
         } else {
             // ⏸️ No clear trend - Hold
             self.stats.hold_signals += 1;
-            Signal::Hold
+            Signal::Hold { reason: None }
         };
         
         // STEP 7: Update state for next iteration
@@ -358,7 +327,7 @@ mod tests {
             120.0, 121.0,
         ];
         
-        let mut last_signal = Signal::Hold;
+        let mut last_signal = Signal::Hold { reason: None };
         
         for price in prices {
             let signal = strategy.analyze(price, 0).await.unwrap();
@@ -382,7 +351,7 @@ mod tests {
             100.0, 99.0,
         ];
         
-        let mut last_signal = Signal::Hold;
+        let mut last_signal = Signal::Hold { reason: None };
         
         for price in prices {
             let signal = strategy.analyze(price, 0).await.unwrap();

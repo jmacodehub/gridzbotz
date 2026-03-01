@@ -75,7 +75,7 @@ impl MomentumMACDStrategy {
     pub fn new() -> Self {
         Self {
             name: "Momentum (MACD 12,26,9)".to_string(),
-            macd: MACDState::new(), // Standard 12, 26, 9
+            macd: MACDState::new(),
             prev_macd: None,
             periods: 0,
             stats: StrategyStats::default(),
@@ -84,37 +84,21 @@ impl MomentumMACDStrategy {
     }
     
     /// Detect MACD crossover
-    /// 
-    /// # Crossover Types:
-    /// - **Bullish**: MACD crosses above Signal line
-    /// - **Bearish**: MACD crosses below Signal line
     fn detect_crossover(&self, current: &MACD) -> Option<MACDCrossover> {
         if let Some(prev) = self.prev_macd {
-            // Bullish crossover: MACD was below Signal, now above
             if prev.macd_line <= prev.signal_line && current.macd_line > current.signal_line {
                 return Some(MACDCrossover::Bullish);
             }
-            
-            // Bearish crossover: MACD was above Signal, now below
             if prev.macd_line >= prev.signal_line && current.macd_line < current.signal_line {
                 return Some(MACDCrossover::Bearish);
             }
         }
-        
         None
     }
     
     /// Calculate momentum strength from histogram
-    /// 
-    /// # Logic:
-    /// - Larger histogram = Stronger momentum
-    /// - Positive histogram = Bullish momentum
-    /// - Negative histogram = Bearish momentum
     fn calculate_momentum_strength(&self, macd: &MACD) -> f64 {
-        // Normalize histogram magnitude to 0.0 - 1.0
         let magnitude = macd.histogram.abs();
-        
-        // Scale: 0.5 = moderate, 1.0+ = strong
         (magnitude / STRONG_HISTOGRAM_THRESHOLD).min(1.0)
     }
     
@@ -131,22 +115,17 @@ impl MomentumMACDStrategy {
     fn calculate_confidence(&self, macd: &MACD, price: f64) -> f64 {
         let mut confidence = 0.0;
         
-        // Factor 1: Momentum strength (40% weight)
         let strength = self.calculate_momentum_strength(macd);
         confidence += strength * 0.4;
         
-        // Factor 2: MACD-Signal separation (30% weight)
         let separation = (macd.macd_line - macd.signal_line).abs() / price * 100.0;
         confidence += (separation / 2.0).min(1.0) * 0.3;
         
-        // Factor 3: Zero-line position (20% weight)
-        // MACD above zero = bullish, below = bearish
         if (macd.macd_line > 0.0 && macd.histogram > 0.0) || 
            (macd.macd_line < 0.0 && macd.histogram < 0.0) {
-            confidence += 0.2; // Aligned with trend
+            confidence += 0.2;
         }
         
-        // Factor 4: Histogram expansion bonus (10% weight)
         if self.is_histogram_expanding(macd) {
             confidence += 0.1;
         }
@@ -177,10 +156,7 @@ impl MomentumMACDStrategy {
 /// MACD crossover types
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum MACDCrossover {
-    /// Bullish crossover (MACD crosses above Signal)
     Bullish,
-    
-    /// Bearish crossover (MACD crosses below Signal)
     Bearish,
 }
 
@@ -215,7 +191,7 @@ impl Strategy for MomentumMACDStrategy {
             self.prev_macd = Some(macd);
             self.stats.signals_generated += 1;
             self.stats.hold_signals += 1;
-            return Ok(Signal::Hold);
+            return Ok(Signal::Hold { reason: None });
         }
         
         // STEP 3: Detect crossovers
@@ -229,7 +205,6 @@ impl Strategy for MomentumMACDStrategy {
         // STEP 5: Generate trading signal
         let signal = match crossover {
             Some(MACDCrossover::Bullish) => {
-                // 🟢 BULLISH CROSSOVER - Strong Buy!
                 self.stats.buy_signals += 1;
                 Signal::StrongBuy {
                     price,
@@ -239,10 +214,10 @@ impl Strategy for MomentumMACDStrategy {
                         "MACD Bullish Cross! MACD: {:.4} > Signal: {:.4} | Histogram: {:.4} | Strength: {:.0}%",
                         macd.macd_line, macd.signal_line, macd.histogram, momentum_strength * 100.0
                     ),
+                    level_id: None,
                 }
             },
             Some(MACDCrossover::Bearish) => {
-                // 🔴 BEARISH CROSSOVER - Strong Sell!
                 self.stats.sell_signals += 1;
                 Signal::StrongSell {
                     price,
@@ -252,10 +227,10 @@ impl Strategy for MomentumMACDStrategy {
                         "MACD Bearish Cross! MACD: {:.4} < Signal: {:.4} | Histogram: {:.4} | Strength: {:.0}%",
                         macd.macd_line, macd.signal_line, macd.histogram, momentum_strength * 100.0
                     ),
+                    level_id: None,
                 }
             },
             None => {
-                // No crossover - check trend continuation
                 match trend {
                     Trend::StrongBullish if confidence >= MIN_CONFIDENCE => {
                         self.stats.buy_signals += 1;
@@ -267,6 +242,7 @@ impl Strategy for MomentumMACDStrategy {
                                 "Strong Uptrend: MACD {:.4} above zero, Histogram {:.4} positive",
                                 macd.macd_line, macd.histogram
                             ),
+                            level_id: None,
                         }
                     },
                     Trend::WeakBullish if confidence >= MIN_CONFIDENCE && macd.histogram > 0.0 => {
@@ -279,6 +255,7 @@ impl Strategy for MomentumMACDStrategy {
                                 "Weak Uptrend: MACD {:.4}, Histogram {:.4} (recovering)",
                                 macd.macd_line, macd.histogram
                             ),
+                            level_id: None,
                         }
                     },
                     Trend::StrongBearish if confidence >= MIN_CONFIDENCE => {
@@ -291,6 +268,7 @@ impl Strategy for MomentumMACDStrategy {
                                 "Strong Downtrend: MACD {:.4} below zero, Histogram {:.4} negative",
                                 macd.macd_line, macd.histogram
                             ),
+                            level_id: None,
                         }
                     },
                     Trend::WeakBearish if confidence >= MIN_CONFIDENCE && macd.histogram < 0.0 => {
@@ -303,12 +281,12 @@ impl Strategy for MomentumMACDStrategy {
                                 "Weak Downtrend: MACD {:.4}, Histogram {:.4} (weakening)",
                                 macd.macd_line, macd.histogram
                             ),
+                            level_id: None,
                         }
                     },
                     _ => {
-                        // Low confidence or neutral - Hold
                         self.stats.hold_signals += 1;
-                        Signal::Hold
+                        Signal::Hold { reason: None }
                     }
                 }
             }
@@ -364,14 +342,13 @@ mod tests {
             .map(|x| x as f64)
             .collect();
         
-        let mut last_signal = Signal::Hold;
+        let mut last_signal = Signal::Hold { reason: None };
         
         for price in prices {
             let signal = strategy.analyze(price, 0).await.unwrap();
             last_signal = signal;
         }
         
-        // Should detect bullish trend
         assert!(last_signal.is_bullish());
     }
     
@@ -385,14 +362,13 @@ mod tests {
             .map(|x| x as f64)
             .collect();
         
-        let mut last_signal = Signal::Hold;
+        let mut last_signal = Signal::Hold { reason: None };
         
         for price in prices {
             let signal = strategy.analyze(price, 0).await.unwrap();
             last_signal = signal;
         }
         
-        // Should detect bearish trend
         assert!(last_signal.is_bearish());
     }
     
@@ -400,7 +376,6 @@ mod tests {
     async fn test_crossover_detection() {
         let mut strategy = MomentumMACDStrategy::new();
         
-        // Create reversal: down then up
         let mut prices: Vec<f64> = (50..75).rev().map(|x| x as f64).collect();
         prices.extend((75..100).map(|x| x as f64));
         
@@ -413,7 +388,6 @@ mod tests {
             }
         }
         
-        // Should detect bullish crossover after reversal
         assert!(found_strong_buy, "Should detect strong buy signal on bullish crossover");
     }
 }

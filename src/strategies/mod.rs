@@ -13,6 +13,8 @@
 //   ✅ Monitor-friendly volatility access for live dashboards.
 //   ✅ V4.0 Grid State Machine compatible (added missing methods)
 //   ✅ V5.5 on_fill() trait method + notify_fill() fan-out
+//   ✅ Phase 1: 7 strategy modules wired (mean_reversion, rsi, momentum,
+//      momentum_macd, rsi_enhanced, consensus_wma, fee_filter)
 // ══════════════════════════════════════════════════════════════════════
 
 use anyhow::Result;
@@ -23,12 +25,26 @@ use std::fmt;
 
 pub mod arbitrage;
 pub mod consensus;
+pub mod consensus_wma;
+pub mod fee_filter;
 pub mod grid_rebalancer;
+pub mod mean_reversion;
+pub mod momentum;
+pub mod momentum_macd;
+pub mod rsi;
+pub mod rsi_enhanced;
 pub mod shared;
 
 pub use arbitrage::*;
 pub use consensus::*;
+pub use consensus_wma::*;
+pub use fee_filter::*;
 pub use grid_rebalancer::*;
+pub use mean_reversion::*;
+pub use momentum::*;
+pub use momentum_macd::*;
+pub use rsi::*;
+pub use rsi_enhanced::*;
 pub use shared::*;
 
 // ══════════════════════════════════════════════════════════════════════
@@ -95,6 +111,19 @@ impl Signal {
                 0.5 + confidence * 0.5,
             Signal::Buy { confidence, .. } | Signal::Sell { confidence, .. } =>
                 0.25 + confidence * 0.25,
+            Signal::Hold { .. } => 0.0,
+        }
+    }
+
+    /// Extract the raw confidence value from any signal.
+    /// Returns 0.0 for Hold (no directional conviction).
+    /// Used by WMAConsensusEngine for weighted voting.
+    pub fn confidence(&self) -> f64 {
+        match self {
+            Signal::StrongBuy { confidence, .. }
+            | Signal::Buy      { confidence, .. }
+            | Signal::Sell     { confidence, .. }
+            | Signal::StrongSell { confidence, .. } => *confidence,
             Signal::Hold { .. } => 0.0,
         }
     }
@@ -296,6 +325,20 @@ mod tests {
     }
 
     #[test]
+    fn test_signal_confidence_method() {
+        let buy = Signal::Buy {
+            price: 100.0, size: 1.0, reason: "test".into(), confidence: 0.75, level_id: None,
+        };
+        let hold = Signal::Hold { reason: None };
+        let strong_sell = Signal::StrongSell {
+            price: 100.0, size: 1.0, reason: "test".into(), confidence: 0.9, level_id: None,
+        };
+        assert_eq!(buy.confidence(), 0.75);
+        assert_eq!(hold.confidence(), 0.0);
+        assert_eq!(strong_sell.confidence(), 0.9);
+    }
+
+    #[test]
     fn test_notify_fill_fanout() {
         let ctx = AnalyticsContext::default();
         let mut mgr = StrategyManager::new(ctx);
@@ -303,9 +346,6 @@ mod tests {
         let fill = FillEvent::new(
             "ORDER-001", OrderSide::Buy, 142.50, 0.1, 0.0025, Some(0.05), 1_700_000_000,
         );
-        // Test intent: notify_fill() must not panic and must fan-out to all strategies.
-        // rebalances_executed is u64 — the >= 0 assert was always-true and generated
-        // an unused_comparisons warning. The panic-free call below is the real assertion.
         mgr.notify_fill(&fill);
     }
 
