@@ -5,6 +5,7 @@
 //! ✅ initialize_with_price() called between feed warm-up and trading loop
 //! ✅ Resolves Active Levels: 0 — grid now always placed before cycle 1
 //! ✅ Banner updated to V3.8
+//! ✅ use anyhow::Context added — fixes E0599 compile error
 //!
 //! V3.7 ENHANCEMENTS (Step 5C, Feb 2026):
 //! ✅ Single unified tick: process_price_update() owns signal gate,
@@ -49,7 +50,7 @@ use log::{info, warn, error, debug, trace};
 use tokio::time::{sleep, Duration};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use anyhow::Result;
+use anyhow::{Result, Context};
 use clap::Parser;
 
 // ═══════════════════════════════════════════════════════════════════════════
