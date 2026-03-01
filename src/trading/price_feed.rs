@@ -254,7 +254,7 @@ impl PriceFeed {
     #[cfg(feature = "websockets")]
     async fn init_ws_feed(&self) -> Result<()> {
         info!("⚡ Initializing WebSocket feed...");
-        let ws = PythWebSocketFeed::new(vec![self.feed_id.clone()]).await?;
+        let ws = PythWebSocketFeed::new(vec![self.feed_id.clone()])?;
         *self.ws_feed.write().await = Some(ws);
         *self.mode.write().await = FeedMode::WebSocket;
         *self.ws_failures.write().await = 0;
