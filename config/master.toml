@@ -277,7 +277,7 @@ enable_file_logging = true
 # ═══════════════════════════════════════════════════════════════════════════════
 [metrics]
 enable_metrics = true
-stats_interval = 50                  # Print stats every 50 cycles (~5 seconds)
+stats_interval = 600                 # 🆕 Print stats every 600 cycles (~60 seconds)
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  🗄️  DATABASE (Optional — disabled for paper/testing)
