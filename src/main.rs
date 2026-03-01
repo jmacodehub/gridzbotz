@@ -1,5 +1,11 @@
 //! ═══════════════════════════════════════════════════════════════════════════
-//! 🚀 PROJECT FLASH V3.8 – Production Grid Trading Bot
+//! 🚀 PROJECT FLASH V5.2 – Production Grid Trading Bot
+//!
+//! V5.2 CHANGES (PR #36 - Multi-Bot Engine Injection):
+//! ✅ Engine builder in initialize_components() creates Paper or Real engine
+//! ✅ GridBot::new(config, engine) receives injected engine
+//! ✅ Runtime --mode paper|live switching without recompilation
+//! ✅ Centralized engine lifecycle management in main.rs
 //!
 //! V3.8 ENHANCEMENTS (fix/grid-init-with-live-price):
 //! ✅ initialize_with_price() called between feed warm-up and trading loop
@@ -33,28 +39,23 @@
 //! ✅ Performance Monitoring & Diagnostics
 //! ✅ Multi-Environment Support (testing, dev, production)
 //!
-//! Stage 3 / Step 1 (Feb 2026):
-//! ✅ GridBot::new(config) builds engine internally (grid_bot.rs:54)
-//! ✅ No longer inject engine from main.rs
-//!
 //! fix/volatility-4dp (Mar 2026):
 //! ✅ Vol display: {:>5.2}% → {:>8.4}% — 4 decimal places
 //! ✅ volatility() in price_feed.rs now returns true % (×100)
 //! ✅ Fixes Vol always showing 0.00% during low-volatility sessions
 //!
-//! October 17, 2025 — MASTER V3.5 | February 2026 — V3.8 Grid Init Fix 🔥
+//! March 2026 — V5.2 Multi-Bot Engine Injection 🔥
 //! ═══════════════════════════════════════════════════════════════════════════
 
 use solana_grid_bot::init;
 use solana_grid_bot::config::Config;
 use solana_grid_bot::bots::GridBot;
-use solana_grid_bot::trading::PriceFeed;
+use solana_grid_bot::trading::{PriceFeed, PaperTradingEngine, TradingEngine};
 
-use std::{error::Error, time::Instant, path::PathBuf};
+use std::{error::Error, time::Instant, path::PathBuf, sync::Arc};
 use log::{info, warn, error, debug, trace};
 use tokio::time::{sleep, Duration};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
 use anyhow::{Result, Context};
 use clap::Parser;
 
@@ -63,7 +64,7 @@ use clap::Parser;
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[derive(Parser, Debug)]
-#[clap(name = "gridzbotz", version = "3.8.0")]
+#[clap(name = "gridzbotz", version = "5.2.0")]
 #[clap(about = "Production-grade Solana grid trading bot", long_about = None)]
 struct Args {
     /// Configuration file path
@@ -234,8 +235,8 @@ fn print_banner(config: &Config) {
     };
 
     println!("\n{}", border);
-    println!("     🚀 GRIDZBOTZ V3.8 — PRODUCTION GRID TRADING BOT");
-    println!("     ⚡ Hybrid Feeds • 10Hz Cycles • Signal-Gated Execution");
+    println!("     🚀 GRIDZBOTZ V5.2 — PRODUCTION GRID TRADING BOT");
+    println!("     ⚡ Hybrid Feeds • 10Hz Cycles • Multi-Bot Engine Injection");
     println!("{}", border);
     println!("\n   Mode:        {}", mode_label);
     println!("   Instance:    {} | v{} | {}",
@@ -259,7 +260,7 @@ fn load_configuration(args: &Args) -> Result<Config> {
 
     let mut config = Config::from_file(&args.config)?;
 
-    // ── Mode override (--paper or --mode <value>) ──────────────────────────
+    // ── Mode override (--paper or --mode <value>) ──────────────────────────────
     if let Some(mode) = args.resolved_mode() {
         let valid = ["paper", "live"];
         if !valid.contains(&mode.as_str()) {
@@ -269,7 +270,7 @@ fn load_configuration(args: &Args) -> Result<Config> {
         config.bot.execution_mode = mode;
     }
 
-    // ── Duration overrides ────────────────────────────────────────────────
+    // ── Duration overrides ────────────────────────────────────────────
     let mut override_count = 0usize;
 
     if let Some(cycles) = args.cycles {
@@ -306,13 +307,12 @@ fn load_configuration(args: &Args) -> Result<Config> {
 // COMPONENT INITIALIZATION (Modular & Robust)
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// V3.8: Price feed starts first, then GridBot is built synchronously,
-/// then initialize_with_price() places the initial grid at the real
-/// market price — BEFORE the trading loop starts.
+/// V5.2: Engine builder creates Paper or Real engine based on config.bot.execution_mode,
+/// then injects it into GridBot::new(config, engine). Price feed starts first for banner.
 async fn initialize_components(config: &Config) -> Result<(GridBot, PriceFeed)> {
     info!("🔧 Initializing core components...");
 
-    // ── 1. Price Feed — start before GridBot for banner display ────────────
+    // ── 1. Price Feed — start before GridBot for banner display ────────────────
     info!("🚀 Starting V3.5 Hybrid Price Feed (Pyth/Hermes)...");
     let price_history_size = config.trading.volatility_window as usize;
     let feed = PriceFeed::new(price_history_size);
@@ -336,17 +336,61 @@ async fn initialize_components(config: &Config) -> Result<(GridBot, PriceFeed)> 
     let mode = feed.get_mode().await;
     info!("💰 Initial SOL/USD: ${:.4}  (feed mode: {:?})", initial_price, mode);
 
-    // ── 2. GridBot (builds PaperTradingEngine internally) ──────────────────
-    info!("🤖 Initializing GridBot V4.5...");
-    let mut bot = GridBot::new(config.clone())?;
+    // ── 2. Engine Builder — Paper or Real based on execution_mode ────────────
+    info!("🛠️  Building TradingEngine for mode: {}", config.bot.execution_mode);
+    let engine: Arc<dyn TradingEngine + Send + Sync> = match config.bot.execution_mode.as_str() {
+        "paper" => {
+            info!("🟡 Constructing PaperTradingEngine...");
+            let initial_usdc = config.paper_trading.initial_usdc;
+            let initial_sol  = config.paper_trading.initial_sol;
+            if initial_usdc <= 0.0 || initial_sol <= 0.0 {
+                anyhow::bail!(
+                    "Invalid paper capital: USDC={}, SOL={}",
+                    initial_usdc, initial_sol
+                );
+            }
+
+            let maker_fee_bps = config.execution.maker_fee_bps;
+            let taker_fee_bps = config.execution.taker_fee_bps;
+            let slippage_bps  = config.execution.slippage_bps;
+
+            let maker_fee = maker_fee_bps as f64 / 10_000.0;
+            let taker_fee = taker_fee_bps as f64 / 10_000.0;
+            let slippage  = slippage_bps as f64 / 10_000.0;
+
+            info!("   Capital:  ${:.2} USDC + {:.4} SOL", initial_usdc, initial_sol);
+            info!("   Fees:     maker {:.4}%, taker {:.4}%", maker_fee * 100.0, taker_fee * 100.0);
+            info!("   Slippage: {:.4}%", slippage * 100.0);
+
+            let paper_engine = PaperTradingEngine::new(initial_usdc, initial_sol)
+                .with_fees(maker_fee, taker_fee)
+                .with_slippage(slippage);
+
+            Arc::new(paper_engine)
+        }
+        "live" => {
+            // ── RealTradingEngine placeholder — implement in PR #37 ─────────────
+            anyhow::bail!(
+                "Live mode not yet implemented. RealTradingEngine coming in PR #37.\n\
+                 For now, use --mode paper or remove --mode flag."
+            );
+        }
+        unknown => {
+            anyhow::bail!(
+                "Unknown execution_mode '{}'. Expected 'paper' or 'live'",
+                unknown
+            );
+        }
+    };
+    info!("✅ TradingEngine constructed and ready for injection");
+
+    // ── 3. GridBot with injected engine ──────────────────────────────
+    info!("🤖 Initializing GridBot V5.2 with injected engine...");
+    let mut bot = GridBot::new(config.clone(), engine)?;
     bot.initialize().await?;
     info!("✅ GridBot built (grid placement deferred until price known)");
 
-    // ── 3. V3.8 FIX: Initialize grid with live price ───────────────────────
-    // This is the critical missing step: grid_initialized is set to false
-    // in new(), and was never set to true before the trading loop started.
-    // initialize_with_price() calls reposition_grid() at the real market
-    // price, setting grid_initialized = true and placing all level orders.
+    // ── 4. Initialize grid with live price ──────────────────────────────
     info!("⚙️  Initializing grid with live price data...");
     bot.initialize_with_price(&feed).await
         .context("Failed to initialize bot grid with price feed")?;
@@ -375,7 +419,7 @@ async fn run_trading_loop(
     let stats_interval       = config.metrics.stats_interval as u32;
     let slow_cycle_threshold = cycle_interval * 3;
 
-    info!("🔥 STARTING TRADING LOOP — V4.5 GRID INIT FIX ACTIVE");
+    info!("🔥 STARTING TRADING LOOP — V5.2 MULTI-BOT ENGINE INJECTION ACTIVE");
     info!("   Total Cycles:     {}", total_cycles);
     info!("   Cycle Interval:   {}ms ({}Hz)", cycle_interval, 1000 / cycle_interval);
     info!("   Duration:         {:.1} minutes",
@@ -393,7 +437,7 @@ async fn run_trading_loop(
 
         let cycle_start = Instant::now();
 
-        // ── Price fetch ─────────────────────────────────────────────────────────
+        // ── Price fetch ────────────────────────────────────────────────────
         let price = feed.latest_price().await;
         if price <= 0.0 {
             error!("Invalid price at cycle {}: {}", cycle, price);
@@ -406,7 +450,7 @@ async fn run_trading_loop(
 
         let volatility = feed.volatility().await;
 
-        // ── Single unified tick ─────────────────────────────────────────────────
+        // ── Single unified tick ─────────────────────────────────────────────
         let ts = chrono::Utc::now().timestamp();
         match bot.process_price_update(price, ts).await {
             Ok(_) => {
@@ -512,7 +556,7 @@ fn setup_logging(args: &Args) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// MAIN ENTRY POINT — V3.8 🚀
+// MAIN ENTRY POINT — V5.2 🚀
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[tokio::main]
