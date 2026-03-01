@@ -14,7 +14,7 @@
 //!    - Update every 10 cycles
 //! 
 //! 2. **Dynamic Weight Formula:**
-//!    ```
+//!    ```text
 //!    weight = 0.6 * confidence + 0.4 * roi_performance
 //!    ```
 //! 
@@ -27,7 +27,7 @@
 //!    - Final decision = highest weighted sum
 //! 
 //! ## Example:
-//! ```
+//! ```text
 //! Grid:     BUY  (weight: 1.0, confidence: 0.5)  → Vote: 0.50
 //! Momentum: BUY  (weight: 0.8, confidence: 0.7)  → Vote: 0.56
 //! RSI:      HOLD (weight: 0.9, confidence: 0.4)  → Filtered (too low)
