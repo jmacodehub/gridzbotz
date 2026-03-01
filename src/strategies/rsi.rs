@@ -199,7 +199,7 @@ impl Strategy for RSIStrategy {
         if self.price_history.len() < RSI_PERIOD {
             self.stats.signals_generated += 1;
             self.stats.hold_signals += 1;
-            return Ok(Signal::Hold);
+            return Ok(Signal::Hold { reason: None });
         }
         
         // STEP 4: Calculate RSI
@@ -218,6 +218,7 @@ impl Strategy for RSIStrategy {
                 size: 1.0,
                 confidence,
                 reason: format!("RSI {:.1} - Extremely oversold!", rsi),
+                level_id: None,
             }
         } else if rsi < OVERSOLD_THRESHOLD {
             // 🟩 Oversold - BUY
@@ -227,6 +228,7 @@ impl Strategy for RSIStrategy {
                 size: 0.5,
                 confidence,
                 reason: format!("RSI {:.1} - Oversold", rsi),
+                level_id: None,
             }
         } else if rsi >= EXTREME_OVERBOUGHT {
             // 🔴 Extremely overbought - STRONG SELL!
@@ -236,6 +238,7 @@ impl Strategy for RSIStrategy {
                 size: 1.0,
                 confidence,
                 reason: format!("RSI {:.1} - Extremely overbought!", rsi),
+                level_id: None,
             }
         } else if rsi > OVERBOUGHT_THRESHOLD {
             // 🟥 Overbought - SELL
@@ -245,11 +248,12 @@ impl Strategy for RSIStrategy {
                 size: 0.5,
                 confidence,
                 reason: format!("RSI {:.1} - Overbought", rsi),
+                level_id: None,
             }
         } else {
             // ⏸️ Neutral zone - HOLD
             self.stats.hold_signals += 1;
-            Signal::Hold
+            Signal::Hold { reason: None }
         };
         
         // STEP 7: Update stats
@@ -305,7 +309,7 @@ mod tests {
             171.0, 168.0, 165.0, 162.0, 159.0,
         ];
         
-        let mut last_signal = Signal::Hold;
+        let mut last_signal = Signal::Hold { reason: None };
         
         for price in prices {
             let signal = strategy.analyze(price, 0).await.unwrap();
@@ -330,7 +334,7 @@ mod tests {
             190.0, 193.0, 196.0, 199.0, 202.0,
         ];
         
-        let mut last_signal = Signal::Hold;
+        let mut last_signal = Signal::Hold { reason: None };
         
         for price in prices {
             let signal = strategy.analyze(price, 0).await.unwrap();
@@ -355,7 +359,7 @@ mod tests {
             180.0, 181.0, 180.0, 181.0, 180.0,
         ];
         
-        let mut last_signal = Signal::Hold;
+        let mut last_signal = Signal::Hold { reason: None };
         
         for price in prices {
             let signal = strategy.analyze(price, 0).await.unwrap();
@@ -364,7 +368,7 @@ mod tests {
         
         // Should hold in neutral zone
         assert!(
-            matches!(last_signal, Signal::Hold),
+            matches!(last_signal, Signal::Hold { .. }),
             "Should hold when RSI is in neutral zone"
         );
     }

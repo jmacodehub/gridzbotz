@@ -119,7 +119,6 @@ impl RSIEnhancedStrategy {
         if self.avg_loss == 0.0 {
             return Some(100.0);
         }
-        
         let rs = self.avg_gain / self.avg_loss;
         Some(100.0 - (100.0 / (1.0 + rs)))
     }
@@ -128,14 +127,11 @@ impl RSIEnhancedStrategy {
     fn update_averages(&mut self, price: f64) {
         if let Some(prev_price) = self.prev_price {
             let change = price - prev_price;
-            
             if self.price_history.len() == RSI_PERIOD {
-                // Initial averages
                 let (gains, losses) = self.calculate_initial_averages();
                 self.avg_gain = gains;
                 self.avg_loss = losses;
             } else if self.price_history.len() > RSI_PERIOD {
-                // Smoothed averages (Wilder's method)
                 if change > 0.0 {
                     self.avg_gain = ((self.avg_gain * 13.0) + change) / 14.0;
                     self.avg_loss = (self.avg_loss * 13.0) / 14.0;
@@ -145,7 +141,6 @@ impl RSIEnhancedStrategy {
                 }
             }
         }
-        
         self.prev_price = Some(price);
     }
     
@@ -153,17 +148,14 @@ impl RSIEnhancedStrategy {
     fn calculate_initial_averages(&self) -> (f64, f64) {
         let mut total_gain = 0.0;
         let mut total_loss = 0.0;
-        
         for i in 1..self.price_history.len() {
             let change = self.price_history[i] - self.price_history[i - 1];
-            
             if change > 0.0 {
                 total_gain += change;
             } else {
                 total_loss += change.abs();
             }
         }
-        
         (total_gain / RSI_PERIOD as f64, total_loss / RSI_PERIOD as f64)
     }
     
@@ -171,16 +163,12 @@ impl RSIEnhancedStrategy {
     fn check_ma_trend(&self, price: f64) -> MATrend {
         if let Some(ma) = self.ma_200 {
             if price > ma * 1.01 {
-                // Price > 1% above MA = Strong bullish
                 MATrend::StrongBullish
             } else if price > ma {
-                // Price slightly above MA = Bullish
                 MATrend::Bullish
             } else if price < ma * 0.99 {
-                // Price > 1% below MA = Strong bearish
                 MATrend::StrongBearish
             } else {
-                // Price slightly below MA = Bearish
                 MATrend::Bearish
             }
         } else {
@@ -194,37 +182,34 @@ impl RSIEnhancedStrategy {
         rsi: f64,
         divergence: RSIDivergence,
         ma_trend: MATrend,
-        price: f64,
+        _price: f64,
     ) -> f64 {
         let mut confidence = 0.0;
         
-        // Factor 1: RSI extremity (40% weight)
         if rsi <= EXTREME_OVERSOLD || rsi >= EXTREME_OVERBOUGHT {
             confidence += 0.4;
         } else if rsi < OVERSOLD_THRESHOLD || rsi > OVERBOUGHT_THRESHOLD {
             confidence += 0.25;
         } else {
-            confidence += 0.1; // Weak RSI signal
+            confidence += 0.1;
         }
         
-        // Factor 2: Divergence detection (30% weight)
         match divergence {
             RSIDivergence::Bullish | RSIDivergence::Bearish => {
-                confidence += 0.3; // Strong signal!
+                confidence += 0.3;
             },
             RSIDivergence::None => {},
         }
         
-        // Factor 3: MA trend confirmation (30% weight)
         match ma_trend {
             MATrend::StrongBullish if rsi < OVERSOLD_THRESHOLD => {
-                confidence += 0.3; // Perfect alignment!
+                confidence += 0.3;
             },
             MATrend::Bullish if rsi < OVERSOLD_THRESHOLD => {
                 confidence += 0.2;
             },
             MATrend::StrongBearish if rsi > OVERBOUGHT_THRESHOLD => {
-                confidence += 0.3; // Perfect alignment!
+                confidence += 0.3;
             },
             MATrend::Bearish if rsi > OVERBOUGHT_THRESHOLD => {
                 confidence += 0.2;
@@ -259,7 +244,6 @@ impl Strategy for RSIEnhancedStrategy {
     async fn analyze(&mut self, price: f64, _timestamp: i64) -> Result<Signal> {
         // STEP 1: Add price to history
         self.price_history.push_back(price);
-        
         if self.price_history.len() > MA_PERIOD + 10 {
             self.price_history.pop_front();
         }
@@ -280,14 +264,13 @@ impl Strategy for RSIEnhancedStrategy {
         if self.price_history.len() < RSI_PERIOD {
             self.stats.signals_generated += 1;
             self.stats.hold_signals += 1;
-            return Ok(Signal::Hold);
+            return Ok(Signal::Hold { reason: None });
         }
         
         // STEP 5: Calculate RSI
         let rsi = self.calculate_rsi().unwrap_or(50.0);
         self.current_rsi = Some(rsi);
         
-        // Store RSI for divergence detection
         self.rsi_history.push_back(rsi);
         if self.rsi_history.len() > DIVERGENCE_LOOKBACK * 2 {
             self.rsi_history.pop_front();
@@ -299,12 +282,10 @@ impl Strategy for RSIEnhancedStrategy {
                 .skip(self.price_history.len().saturating_sub(DIVERGENCE_LOOKBACK))
                 .copied()
                 .collect();
-            
             let rsi_slice: Vec<f64> = self.rsi_history.iter()
                 .skip(self.rsi_history.len().saturating_sub(DIVERGENCE_LOOKBACK))
                 .copied()
                 .collect();
-            
             detect_rsi_divergence(&price_slice, &rsi_slice, DIVERGENCE_LOOKBACK)
         } else {
             RSIDivergence::None
@@ -318,7 +299,6 @@ impl Strategy for RSIEnhancedStrategy {
         
         // STEP 9: Generate signal
         let signal = match (rsi, divergence, ma_trend) {
-            // 🟢 BULLISH DIVERGENCE + OVERSOLD = VERY STRONG BUY!
             (r, RSIDivergence::Bullish, MATrend::StrongBullish) if r < OVERSOLD_THRESHOLD => {
                 self.stats.buy_signals += 1;
                 Signal::StrongBuy {
@@ -329,10 +309,9 @@ impl Strategy for RSIEnhancedStrategy {
                         "RSI {:.1} + Bullish Divergence + Strong Uptrend! Triple confirmation",
                         rsi
                     ),
+                    level_id: None,
                 }
             },
-            
-            // 🔴 BEARISH DIVERGENCE + OVERBOUGHT = VERY STRONG SELL!
             (r, RSIDivergence::Bearish, MATrend::StrongBearish) if r > OVERBOUGHT_THRESHOLD => {
                 self.stats.sell_signals += 1;
                 Signal::StrongSell {
@@ -343,10 +322,9 @@ impl Strategy for RSIEnhancedStrategy {
                         "RSI {:.1} + Bearish Divergence + Strong Downtrend! Triple confirmation",
                         rsi
                     ),
+                    level_id: None,
                 }
             },
-            
-            // 🟩 EXTREME OVERSOLD + MA CONFIRMATION
             (r, _, ma_t) if r <= EXTREME_OVERSOLD && matches!(ma_t, MATrend::Bullish | MATrend::StrongBullish) && confidence >= MIN_CONFIDENCE => {
                 self.stats.buy_signals += 1;
                 Signal::StrongBuy {
@@ -357,10 +335,9 @@ impl Strategy for RSIEnhancedStrategy {
                         "RSI {:.1} - Extremely oversold + MA confirmation",
                         rsi
                     ),
+                    level_id: None,
                 }
             },
-            
-            // 🟥 EXTREME OVERBOUGHT + MA CONFIRMATION
             (r, _, ma_t) if r >= EXTREME_OVERBOUGHT && matches!(ma_t, MATrend::Bearish | MATrend::StrongBearish) && confidence >= MIN_CONFIDENCE => {
                 self.stats.sell_signals += 1;
                 Signal::StrongSell {
@@ -371,10 +348,9 @@ impl Strategy for RSIEnhancedStrategy {
                         "RSI {:.1} - Extremely overbought + MA confirmation",
                         rsi
                     ),
+                    level_id: None,
                 }
             },
-            
-            // 🟢 BULLISH DIVERGENCE (without extreme RSI)
             (r, RSIDivergence::Bullish, _) if r < OVERSOLD_THRESHOLD && confidence >= MIN_CONFIDENCE => {
                 self.stats.buy_signals += 1;
                 Signal::Buy {
@@ -385,10 +361,9 @@ impl Strategy for RSIEnhancedStrategy {
                         "RSI {:.1} + Bullish Divergence detected",
                         rsi
                     ),
+                    level_id: None,
                 }
             },
-            
-            // 🔴 BEARISH DIVERGENCE (without extreme RSI)
             (r, RSIDivergence::Bearish, _) if r > OVERBOUGHT_THRESHOLD && confidence >= MIN_CONFIDENCE => {
                 self.stats.sell_signals += 1;
                 Signal::Sell {
@@ -399,10 +374,9 @@ impl Strategy for RSIEnhancedStrategy {
                         "RSI {:.1} + Bearish Divergence detected",
                         rsi
                     ),
+                    level_id: None,
                 }
             },
-            
-            // 🟩 OVERSOLD + MA BULLISH
             (r, _, ma_t) if r < OVERSOLD_THRESHOLD && matches!(ma_t, MATrend::Bullish | MATrend::StrongBullish) && confidence >= MIN_CONFIDENCE => {
                 self.stats.buy_signals += 1;
                 Signal::Buy {
@@ -410,10 +384,9 @@ impl Strategy for RSIEnhancedStrategy {
                     size: 0.5,
                     confidence,
                     reason: format!("RSI {:.1} - Oversold + MA uptrend", rsi),
+                    level_id: None,
                 }
             },
-            
-            // 🟥 OVERBOUGHT + MA BEARISH
             (r, _, ma_t) if r > OVERBOUGHT_THRESHOLD && matches!(ma_t, MATrend::Bearish | MATrend::StrongBearish) && confidence >= MIN_CONFIDENCE => {
                 self.stats.sell_signals += 1;
                 Signal::Sell {
@@ -421,13 +394,12 @@ impl Strategy for RSIEnhancedStrategy {
                     size: 0.5,
                     confidence,
                     reason: format!("RSI {:.1} - Overbought + MA downtrend", rsi),
+                    level_id: None,
                 }
             },
-            
-            // ⏸️ HOLD (no clear signal or low confidence)
             _ => {
                 self.stats.hold_signals += 1;
-                Signal::Hold
+                Signal::Hold { reason: None }
             },
         };
         
@@ -492,6 +464,6 @@ mod tests {
         let signal = strategy.analyze(85.0, 0).await.unwrap();
         
         // Should generate buy signal (oversold + price recovering above MA)
-        assert!(signal.is_bullish() || matches!(signal, Signal::Hold));
+        assert!(signal.is_bullish() || matches!(signal, Signal::Hold { .. }));
     }
 }

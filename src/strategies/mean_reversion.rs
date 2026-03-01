@@ -157,7 +157,7 @@ impl Strategy for MeanReversionStrategy {
         if self.price_history.len() < MEAN_PERIOD {
             self.stats.signals_generated += 1;
             self.stats.hold_signals += 1;
-            return Ok(Signal::Hold);
+            return Ok(Signal::Hold { reason: None });
         }
         
         // STEP 3: Calculate mean price
@@ -182,6 +182,7 @@ impl Strategy for MeanReversionStrategy {
                     "Price {:.1}% below mean (${:.2}) - Strong reversion expected",
                     deviation.abs(), mean
                 ),
+                level_id: None,
             }
         } else if deviation <= -BUY_THRESHOLD {
             // 🟩 Price below mean - BUY
@@ -194,6 +195,7 @@ impl Strategy for MeanReversionStrategy {
                     "Price {:.1}% below mean (${:.2})",
                     deviation.abs(), mean
                 ),
+                level_id: None,
             }
         } else if deviation >= STRONG_SELL_THRESHOLD {
             // 🔴 Price way above mean - STRONG SELL!
@@ -206,6 +208,7 @@ impl Strategy for MeanReversionStrategy {
                     "Price {:.1}% above mean (${:.2}) - Strong reversion expected",
                     deviation, mean
                 ),
+                level_id: None,
             }
         } else if deviation >= SELL_THRESHOLD {
             // 🟥 Price above mean - SELL
@@ -218,11 +221,12 @@ impl Strategy for MeanReversionStrategy {
                     "Price {:.1}% above mean (${:.2})",
                     deviation, mean
                 ),
+                level_id: None,
             }
         } else {
             // ⏸️ Price near mean - HOLD
             self.stats.hold_signals += 1;
-            Signal::Hold
+            Signal::Hold { reason: None }
         };
         
         // STEP 7: Update stats
@@ -315,6 +319,6 @@ mod tests {
         let signal = strategy.analyze(202.0, 0).await.unwrap();
         
         // Should hold (price too close to mean)
-        assert!(matches!(signal, Signal::Hold), "Should hold when price is near mean");
+        assert!(matches!(signal, Signal::Hold { .. }), "Should hold when price is near mean");
     }
 }
