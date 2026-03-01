@@ -176,7 +176,9 @@ impl RSIEnhancedStrategy {
         }
     }
     
-    /// Calculate confidence with divergence and MA confirmation
+    /// Calculate confidence with divergence and MA confirmation.
+    /// Explicit f64 annotation required — compiler cannot infer float type
+    /// for the accumulator when .min(1.0) is called.
     fn calculate_confidence(
         &self,
         rsi: f64,
@@ -184,7 +186,7 @@ impl RSIEnhancedStrategy {
         ma_trend: MATrend,
         _price: f64,
     ) -> f64 {
-        let mut confidence = 0.0;
+        let mut confidence: f64 = 0.0;
         
         if rsi <= EXTREME_OVERSOLD || rsi >= EXTREME_OVERBOUGHT {
             confidence += 0.4;
