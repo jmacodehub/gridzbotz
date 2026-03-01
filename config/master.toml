@@ -1,12 +1,18 @@
 # ═══════════════════════════════════════════════════════════════════════════════
-#  🏆 MASTER V5.1 — GRIDZBOTZ — STAGE 3 / OPTION B READY
+#  🏆 MASTER V5.1 — GRIDZBOTZ — STAGE 2: PER-STRATEGY TUNING PARAMS
 #
 #  ✅ execution_mode:         flip "paper" → "live" to go live on-chain
 #  ✅ instance_id:            unique label for multi-bot log/metrics
 #  ✅ [execution]:            all Jupiter/RPC live trading knobs in TOML
-#  ✅ reposition_threshold_pct: Option B — GridRebalancer level-crossing tuning
+#  ✅ reposition_threshold:   GridRebalancer anchor-drift tuning
 #  ✅ All silent defaults now explicit — 100% visible, zero hidden magic
 #  ✅ Future hooks documented — WebSocket, Telegram, WS URL all stubbed
+#
+#  V5.1 Stage 2 (Mar 1, 2026) — Per-strategy tuning wired to TOML:
+#  ✅ [strategies.rsi]:          extreme_oversold / extreme_overbought
+#  ✅ [strategies.mean_reversion]: strong_buy/sell thresholds + buy/sell thresholds
+#  ✅ [strategies.momentum_macd]:  full MACD config section (new strategy)
+#  All new fields have serde(default) — existing configs parse unchanged.
 #
 #  Run modes:
 #    cargo run                                        → paper, master config
@@ -19,7 +25,7 @@
 #    cargo run -- --config config/optimized/multi-v5-ai.toml &
 # ═══════════════════════════════════════════════════════════════════════════════
 
-test_name = "Master V5.1 - Stage 3 Option B Ready"
+test_name = "Master V5.1 - Stage 2 Strategy Tuning"
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  🤖 BOT CORE
@@ -204,11 +210,10 @@ enabled        = true
 weight         = 1.0                 # Highest weight — grid is the core strategy
 min_confidence = 0.5                 # Confidence threshold to act on signal
 
-# 🆕 Option B — GridRebalancer level-crossing tuning
+# Option B — GridRebalancer level-crossing tuning.
 # How far price must drift from the grid anchor (%) before a full reposition fires.
-# This is the STRATEGY-LEVEL knob — distinct from trading.reposition_threshold
-# (which is the engine-level guard). Set both consistently.
-# Lower = grid repositions more aggressively, Higher = grid stays put longer.
+# Distinct from trading.reposition_threshold (engine-level guard).
+# Lower = grid repositions more aggressively, Higher = stays put longer.
 reposition_threshold_pct = 0.50      # 0.5% anchor drift → full grid reposition
 
 # ─── Strategy 2: Momentum (Stub — ready for Stage 4) ────────────────────────
@@ -219,7 +224,10 @@ min_confidence  = 0.6
 lookback_period = 20                 # Bars to look back for momentum signal
 threshold       = 0.02               # 2% move required to trigger signal
 
-# ─── Strategy 3: Mean Reversion (Stub — ready for Stage 4) ──────────────────
+# ─── Strategy 3: Mean Reversion ──────────────────────────────────────────────
+# V5.1: Signal thresholds now TOML-tunable via to_mean_reversion_params().
+# Defaults (5.0/2.5) match the strategy's internal hardcoded values — safe to
+# leave at defaults or tune per-instance without recompiling.
 [strategies.mean_reversion]
 enabled            = false           # Enable when Phase 3 MR impl lands
 weight             = 0.7
@@ -227,14 +235,60 @@ min_confidence     = 0.6
 sma_period         = 20              # SMA lookback period
 std_dev_multiplier = 2.0             # Bollinger band width (2.0 = standard)
 
-# ─── Strategy 4: RSI (Stub — ready for Stage 4) ──────────────────────────────
+# 🆕 V5.1: Signal threshold tuning
+# Deviation % from mean required to fire each signal tier:
+#   price > mean + strong_buy_threshold%  → StrongBuy
+#   price > mean + buy_threshold%         → Buy
+#   price < mean - sell_threshold%        → Sell
+#   price < mean - strong_sell_threshold% → StrongSell
+strong_buy_threshold  = 5.0          # % deviation above mean → StrongBuy
+buy_threshold         = 2.5          # % deviation above mean → Buy
+strong_sell_threshold = 5.0          # % deviation below mean → StrongSell
+sell_threshold        = 2.5          # % deviation below mean → Sell
+
+# ─── Strategy 4: RSI ─────────────────────────────────────────────────────────
+# V5.1: Extreme zones now TOML-tunable via to_rsi_params().
+# RSI zones: oversold/overbought fire Buy/Sell;
+#            extreme zones fire StrongBuy/StrongSell (higher confidence).
 [strategies.rsi]
 enabled              = false         # Enable when Phase 3 RSI impl lands
 weight               = 0.9
 min_confidence       = 0.7
 period               = 14            # Standard RSI period
-oversold_threshold   = 30.0          # RSI < 30 → oversold → buy signal
-overbought_threshold = 70.0          # RSI > 70 → overbought → sell signal
+oversold_threshold   = 30.0          # RSI < 30 → oversold  → Buy signal
+overbought_threshold = 70.0          # RSI > 70 → overbought → Sell signal
+
+# 🆕 V5.1: Extreme zone tuning
+# Tighter zones that fire StrongBuy/StrongSell signals (higher confidence):
+#   RSI < extreme_oversold   → StrongBuy  (deeper panic → higher conviction)
+#   RSI > extreme_overbought → StrongSell (deeper euphoria → higher conviction)
+extreme_oversold   = 20.0            # RSI < 20 → StrongBuy  (default)
+extreme_overbought = 80.0            # RSI > 80 → StrongSell (default)
+
+# ─── Strategy 5: Momentum MACD ───────────────────────────────────────────────
+# 🆕 V5.1: New strategy from PR #27 — MACD histogram-based momentum signals.
+# Uses 12/26/9 EMA crossover (standard). Fires after min_warmup_periods ticks.
+#
+# Wiring: config.strategies.momentum_macd.to_momentum_macd_params()
+#         → MomentumMACDStrategy::new_from_config(params)
+#
+# To enable for multi-strategy consensus runs:
+#   1. Set enabled = true
+#   2. Add "momentum_macd" to strategies.active
+#   3. Set consensus_mode = "weighted" for blended signals
+[strategies.momentum_macd]
+enabled                    = false   # Enable when wired into bot init (Stage 3)
+weight                     = 0.8
+min_confidence             = 0.65    # Minimum MACD confidence to emit signal
+
+# Histogram threshold for signal strength classification:
+#   |histogram| > strong_histogram_threshold → StrongBuy / StrongSell
+#   |histogram| ≤ threshold                  → Buy / Sell
+strong_histogram_threshold = 0.5     # Tune down for more StrongBuy/Sell signals
+
+# Warmup guard: don't emit signals until at least this many price ticks received.
+# Must be ≥ 26 (slow EMA period) — values < 26 will produce unreliable MACD.
+min_warmup_periods         = 26      # = slow EMA period (26). Increase for extra stability.
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  🚨 RISK MANAGEMENT
@@ -282,7 +336,7 @@ enable_file_logging = true
 # ═══════════════════════════════════════════════════════════════════════════════
 [metrics]
 enable_metrics = true
-stats_interval = 600                 # 🆕 Print stats every 600 cycles (~60 seconds)
+stats_interval = 600                 # Print stats every 600 cycles (~60 seconds)
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  🗄️  DATABASE (Optional — disabled for paper/testing)
