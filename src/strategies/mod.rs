@@ -184,7 +184,6 @@ impl StrategyManager {
     pub fn add_strategy<S: Strategy + 'static>(&mut self, strategy: S) {
         let mut boxed = Box::new(strategy);
         boxed.attach_analytics(self.context.clone());
-        // FIX: was invalid \uXXXX escape; now plain ASCII
         info!("[STRATEGY] Attached {}", boxed.name());
         self.strategies.push(boxed);
     }
@@ -304,9 +303,10 @@ mod tests {
         let fill = FillEvent::new(
             "ORDER-001", OrderSide::Buy, 142.50, 0.1, 0.0025, Some(0.05), 1_700_000_000,
         );
+        // Test intent: notify_fill() must not panic and must fan-out to all strategies.
+        // rebalances_executed is u64 — the >= 0 assert was always-true and generated
+        // an unused_comparisons warning. The panic-free call below is the real assertion.
         mgr.notify_fill(&fill);
-        let stats = mgr.strategies[0].stats();
-        assert!(stats.rebalances_executed >= 0);
     }
 
     #[test]
