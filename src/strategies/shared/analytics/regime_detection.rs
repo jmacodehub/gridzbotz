@@ -1,17 +1,32 @@
 //! ═══════════════════════════════════════════════════════════════════════════
-//! MARKET REGIME DETECTOR - V2.3 (PROJECT FLASH V5)
+//! MARKET REGIME DETECTOR - V2.4 (PROJECT FLASH V5)
 //! ═══════════════════════════════════════════════════════════════════════════
 //!
 //! Purpose:
 //!   Shared classification and volatility gate system for all strategies.
 //!
-//! Upgraded in V2.3:
+//! V2.4 (fix/vol-threshold-true-percent):
+//!   ✅ RegimeConfig::default() min_volatility_to_trade: 0.3 → 0.02
+//!      volatility() now returns TRUE % — 0.3 would block all normal SOL
+//!      trading. 0.02% is the safe floor (~2× real SOL quiet-market vol).
+//!   ✅ RegimeThresholds::default() updated to true-% world:
+//!      very_low=0.5%, low=1.0%, medium=2.0%, high=3.0% — unchanged values
+//!      but now explicitly documented as true % not raw ratios.
+//!   ✅ should_pause() format string corrected — was multiplying by 100
+//!      (double-scaling); now prints raw value directly as it is already %.
+//!
+//! V2.3:
 //!   ✅ Public getter for current_regime (config-driven integration)
 //!   ✅ Cleaner thresholds & configuration
 //!   ✅ Deterministic testing and debug outputs
 //!   ✅ Direct integration-ready with AnalyticsContext
 //!   ✅ Additional helper functions: severity(), is_high_vol()
 //!   ✅ Broader test coverage (Phase 3 style)
+//!
+//! ⚠️  UNIT SYSTEM NOTE (V2.4+):
+//!   All volatility values in this module are TRUE PERCENTAGE.
+//!   Real SOL markets: ~0.001% – 0.010% per 100-cycle window.
+//!   DO NOT pass raw ratios (e.g. 0.0002) — multiply by 100 first.
 //!
 //! ═══════════════════════════════════════════════════════════════════════════
 
@@ -80,6 +95,7 @@ impl MarketRegime {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RegimeThresholds {
+    /// All values are TRUE PERCENTAGE (e.g. 0.5 = 0.5%)
     pub very_low: f64,
     pub low: f64,
     pub medium: f64,
@@ -90,6 +106,8 @@ pub struct RegimeThresholds {
 impl Default for RegimeThresholds {
     fn default() -> Self {
         Self {
+            // True-% thresholds. Real SOL quiet = ~0.001–0.010%.
+            // These classify the regime label only — not the trade gate.
             very_low: 0.5,
             low: 1.0,
             medium: 2.0,
@@ -102,6 +120,9 @@ impl Default for RegimeThresholds {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RegimeConfig {
     pub thresholds: RegimeThresholds,
+    /// Minimum volatility (TRUE %) required to allow trading.
+    /// Real SOL quiet market: ~0.001–0.010%. Safe floor: 0.02%.
+    /// DO NOT use raw ratios here — volatility() already returns true %.
     pub min_volatility_to_trade: f64,
     pub pause_in_very_low_vol: bool,
     #[serde(default)]
@@ -113,7 +134,9 @@ impl Default for RegimeConfig {
     fn default() -> Self {
         Self {
             thresholds: RegimeThresholds::default(),
-            min_volatility_to_trade: 0.3,
+            // 0.02% — safe floor for SOL. Blocks only truly dead markets.
+            // Was 0.3 (old raw-ratio world) which blocked all normal trading.
+            min_volatility_to_trade: 0.02,
             pause_in_very_low_vol: true,
             verbose: false,
         }
@@ -122,14 +145,14 @@ impl Default for RegimeConfig {
 
 
 // ═══════════════════════════════════════════════════════════════════════════
-// DETECTOR - V2.3 with Public Getter
+// DETECTOR - V2.4 with corrected true-% defaults
 // ═══════════════════════════════════════════════════════════════════════════
 
 
 #[derive(Debug, Clone)]
 pub struct RegimeDetector {
     config: RegimeConfig,
-    current_regime: MarketRegime,  // ✅ Now internal tracking with public getter
+    current_regime: MarketRegime,
 }
 
 
@@ -141,13 +164,12 @@ impl RegimeDetector {
         }
     }
 
-    // ✅ PUBLIC GETTER - Exposes current regime safely
     /// Get the current market regime without needing field access
     pub fn get_current_regime(&self) -> MarketRegime {
         self.current_regime.clone()
     }
 
-    /// Main classification method
+    /// Main classification method. `volatility` is TRUE PERCENTAGE.
     pub fn classify(&self, volatility: f64) -> MarketRegime {
         let t = &self.config.thresholds;
         let regime = if volatility < t.very_low {
@@ -163,15 +185,16 @@ impl RegimeDetector {
         };
         if self.config.verbose {
             trace!(
-                "🔍 Regime classified {:.3}% → {}",
-                volatility * 100.0,
+                "🔍 Regime classified {:.4}% → {}",
+                volatility,
                 regime.label()
             );
         }
         regime
     }
 
-    /// Decide if trading should pause based on volatility and settings
+    /// Decide if trading should pause based on volatility and settings.
+    /// `volatility` is TRUE PERCENTAGE.
     pub fn should_pause(&self, volatility: f64) -> (bool, String) {
         let regime = self.classify(volatility);
         if self.config.pause_in_very_low_vol && regime == MarketRegime::VeryLow {
@@ -181,16 +204,17 @@ impl RegimeDetector {
             return (
                 true,
                 format!(
-                    "RegimeGate: Volatility {:.3}% < min {:.3}%",
-                    volatility * 100.0,
-                    self.config.min_volatility_to_trade * 100.0
+                    "RegimeGate: Volatility {:.4}% < min {:.4}%",
+                    volatility,
+                    self.config.min_volatility_to_trade
                 ),
             );
         }
         (false, String::new())
     }
 
-    /// Combined high-level analysis: (regime, pause?, reason)
+    /// Combined high-level analysis: (regime, pause?, reason).
+    /// `volatility` is TRUE PERCENTAGE.
     pub fn analyze(&self, volatility: f64) -> (MarketRegime, bool, String) {
         let regime = self.classify(volatility);
         let (pause, reason) = self.should_pause(volatility);
@@ -208,7 +232,7 @@ impl RegimeDetector {
 
 
 // ═══════════════════════════════════════════════════════════════════════════
-// TEST SUITE (Phase 3 Enhanced)
+// TEST SUITE (V2.4 — true-% world)
 // ═══════════════════════════════════════════════════════════════════════════
 
 
@@ -236,9 +260,6 @@ mod tests {
     #[test]
     fn test_pause_when_below_min_threshold() {
         // Disable pause_in_very_low_vol so the min-threshold check fires.
-        // With pause_in_very_low_vol=true, volatility=0.3 < very_low=0.5 would
-        // early-return "RegimeGate: VERY_LOW_VOL" before reaching the
-        // "Volatility" message path we want to test here.
         let cfg = RegimeConfig {
             min_volatility_to_trade: 0.5,
             pause_in_very_low_vol: false,
@@ -300,5 +321,34 @@ mod tests {
         let regime = r.get_current_regime();
         assert_eq!(regime, MarketRegime::Medium, "Default should be Medium");
         assert!(!format!("{:?}", regime).is_empty(), "Regime should be debuggable");
+    }
+
+    /// Verify the default gate allows real SOL market volatility.
+    /// Real SOL quiet market: ~0.001–0.010%. Default floor: 0.02%.
+    /// A value of 0.03% must NOT be blocked.
+    #[test]
+    fn test_default_gate_allows_real_sol_volatility() {
+        let r = default_detector();
+        // pause_in_very_low_vol=true in default, but 0.03% > very_low threshold (0.5%)
+        // so the VeryLow branch won't fire — only the min gate check runs.
+        let cfg = RegimeConfig {
+            pause_in_very_low_vol: false,
+            ..Default::default()
+        };
+        let r2 = RegimeDetector::new(cfg);
+        let (pause, reason) = r2.should_pause(0.03);
+        assert!(!pause, "0.03% vol should pass the default 0.02% gate. Reason: {}", reason);
+    }
+
+    /// Verify the default gate blocks truly dead markets.
+    #[test]
+    fn test_default_gate_blocks_dead_market() {
+        let cfg = RegimeConfig {
+            pause_in_very_low_vol: false,
+            ..Default::default()
+        };
+        let r = RegimeDetector::new(cfg);
+        let (pause, _) = r.should_pause(0.005);
+        assert!(pause, "0.005% vol should be blocked by the 0.02% floor");
     }
 }

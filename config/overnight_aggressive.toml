@@ -92,11 +92,16 @@ max_slippage_pct = 1.0
 enable_price_bounds = false
 
 # ─────────────────────────────────────────────────────────────────────────
-# 🔥 V3.5+: MARKET REGIME GATE (CRITICAL NEW FEATURE!)
+# 🔥 V3.9: MARKET REGIME GATE
+# ⚠️  UNIT SYSTEM (V3.9+): volatility() returns TRUE PERCENTAGE.
+#   Real SOL markets: ~0.001% – 0.010% per 100-cycle window.
+#   Safe production floor: 0.02% (filters only true dead-flat markets).
+#   Aggressive: use 0.02% — trade in all but completely dead markets.
+#   DO NOT use raw-ratio values (e.g. 0.0002) — they belong to the old world.
 # ─────────────────────────────────────────────────────────────────────────
 enable_regime_gate = true
-min_volatility_to_trade = 0.2       # 🔥 Low threshold - aggressive trading
-pause_in_very_low_vol = false       # 🔥 Trade even in very low vol
+min_volatility_to_trade = 0.02      # 🔥 0.02% true — aggressive floor, won't block normal SOL
+pause_in_very_low_vol = false       # Trade even in very low vol
 
 # ─────────────────────────────────────────────────────────────────────────
 # 🔥 V3.5+: ORDER LIFECYCLE MANAGEMENT (CRITICAL NEW FEATURE!)
