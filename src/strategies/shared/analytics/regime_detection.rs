@@ -328,26 +328,22 @@ mod tests {
     /// A value of 0.03% must NOT be blocked.
     #[test]
     fn test_default_gate_allows_real_sol_volatility() {
-        let r = default_detector();
-        // pause_in_very_low_vol=true in default, but 0.03% > very_low threshold (0.5%)
-        // so the VeryLow branch won't fire — only the min gate check runs.
-        let cfg = RegimeConfig {
+        // pause_in_very_low_vol disabled so only the min gate check runs.
+        let r = RegimeDetector::new(RegimeConfig {
             pause_in_very_low_vol: false,
             ..Default::default()
-        };
-        let r2 = RegimeDetector::new(cfg);
-        let (pause, reason) = r2.should_pause(0.03);
+        });
+        let (pause, reason) = r.should_pause(0.03);
         assert!(!pause, "0.03% vol should pass the default 0.02% gate. Reason: {}", reason);
     }
 
     /// Verify the default gate blocks truly dead markets.
     #[test]
     fn test_default_gate_blocks_dead_market() {
-        let cfg = RegimeConfig {
+        let r = RegimeDetector::new(RegimeConfig {
             pause_in_very_low_vol: false,
             ..Default::default()
-        };
-        let r = RegimeDetector::new(cfg);
+        });
         let (pause, _) = r.should_pause(0.005);
         assert!(pause, "0.005% vol should be blocked by the 0.02% floor");
     }
