@@ -36,7 +36,13 @@
 //! • Environment-specific overrides
 //! • Comprehensive validation
 //!
+//! V5.1 ADDITIONS (Mar 1, 2026):
+//! ✅ RsiParams, MeanReversionParams, MomentumMACDParams in StrategiesConfig
+//! ✅ Per-strategy tuning params now 100% TOML-driven
+//! ✅ Strategies fall back to new() defaults if params omitted
+//!
 //! February 23, 2026 - V5.0 STAGE 1: EXECUTION MODE + MULTI-INSTANCE 🚀
+//! March 1, 2026 - V5.1: STRATEGY PARAMS TOML INTEGRATION 🎯
 //! ═══════════════════════════════════════════════════════════════════════════
 
 use serde::{Deserialize, Serialize};
@@ -750,6 +756,25 @@ pub struct StrategiesConfig {
     /// Require all timeframes to align
     #[serde(default)]
     pub require_timeframe_alignment: bool,
+
+    // ───────────────────────────────────────────────────────────────────────
+    // V5.1: PER-STRATEGY TUNING PARAMS 🎯
+    // ───────────────────────────────────────────────────────────────────────
+    
+    /// RSI strategy tuning parameters (optional)
+    /// If omitted, RsiStrategy::new() defaults are used
+    #[serde(default)]
+    pub rsi_params: Option<RsiParams>,
+
+    /// Mean reversion strategy tuning parameters (optional)
+    /// If omitted, MeanReversionStrategy::new() defaults are used
+    #[serde(default)]
+    pub mean_reversion_params: Option<MeanReversionParams>,
+
+    /// Momentum MACD strategy tuning parameters (optional)
+    /// If omitted, MomentumMACDStrategy::new() defaults are used
+    #[serde(default)]
+    pub momentum_macd_params: Option<MomentumMACDParams>,
 }
 
 impl StrategiesConfig {
@@ -802,6 +827,9 @@ impl Default for StrategiesConfig {
             rsi: RsiStrategyConfig::default(),
             enable_multi_timeframe: false,
             require_timeframe_alignment: false,
+            rsi_params: None,
+            mean_reversion_params: None,
+            momentum_macd_params: None,
         }
     }
 }
@@ -878,6 +906,71 @@ impl Default for RsiStrategyConfig {
             overbought_threshold: 70.0,
         }
     }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 🎯 V5.1: PER-STRATEGY TUNING PARAMETER STRUCTS
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// RSI strategy tuning parameters.
+/// Matches `RsiConfig` from `src/strategies/rsi.rs` (PR #27).
+///
+/// # Usage in TOML
+/// ```toml
+/// [strategies.rsi_params]
+/// rsi_period = 14
+/// oversold_threshold = 30.0
+/// overbought_threshold = 70.0
+/// extreme_oversold = 20.0
+/// extreme_overbought = 80.0
+/// ```
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct RsiParams {
+    pub rsi_period: usize,
+    pub oversold_threshold: f64,
+    pub overbought_threshold: f64,
+    pub extreme_oversold: f64,
+    pub extreme_overbought: f64,
+}
+
+/// Mean reversion strategy tuning parameters.
+/// Matches `MeanReversionConfig` from `src/strategies/mean_reversion.rs` (PR #27).
+///
+/// # Usage in TOML
+/// ```toml
+/// [strategies.mean_reversion_params]
+/// mean_period = 20
+/// strong_buy_threshold = 5.0
+/// buy_threshold = 2.5
+/// strong_sell_threshold = 5.0
+/// sell_threshold = 2.5
+/// min_confidence = 0.6
+/// ```
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct MeanReversionParams {
+    pub mean_period: usize,
+    pub strong_buy_threshold: f64,
+    pub buy_threshold: f64,
+    pub strong_sell_threshold: f64,
+    pub sell_threshold: f64,
+    pub min_confidence: f64,
+}
+
+/// Momentum MACD strategy tuning parameters.
+/// Matches `MomentumMACDConfig` from `src/strategies/momentum_macd.rs` (PR #27).
+///
+/// # Usage in TOML
+/// ```toml
+/// [strategies.momentum_macd_params]
+/// min_confidence = 0.65
+/// strong_histogram_threshold = 0.5
+/// min_warmup_periods = 26
+/// ```
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct MomentumMACDParams {
+    pub min_confidence: f64,
+    pub strong_histogram_threshold: f64,
+    pub min_warmup_periods: usize,
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
