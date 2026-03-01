@@ -351,7 +351,7 @@ async fn run_trading_loop(
 
     let cycle_interval       = config.performance.cycle_interval_ms;
     let stats_interval       = config.metrics.stats_interval as u32;
-    let slow_cycle_threshold = cycle_interval * 2;
+    let slow_cycle_threshold = cycle_interval * 3;  // 🆕 Raised from 2x to 3x
 
     info!("🔥 STARTING TRADING LOOP — V4.4 CROSSING DETECTION");
     info!("   Total Cycles:     {}", total_cycles);
@@ -418,7 +418,7 @@ async fn run_trading_loop(
                 };
 
                 println!(
-                    "Cycle {:>4}/{:<4} | SOL ${:>9.4} | Vol {:>6.3}% | Fills {:>3} | Repos {:>3} | {}",
+                    "Cycle {:>4}/{:<4} | SOL ${:>9.4} | Vol {:>5.2}% | Fills {:>3} | Repos {:>3} | {}",
                     cycle, total_cycles,
                     price,
                     volatility,
