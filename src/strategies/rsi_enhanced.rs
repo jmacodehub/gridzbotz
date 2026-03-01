@@ -18,7 +18,7 @@
 //!    - Weak signals filtered out
 //! 
 //! ## Example:
-//! ```
+//! ```text
 //! RSI: 28 (Oversold)
 //! Divergence: Bullish (price lower, RSI higher)
 //! Price vs 200 MA: Above (bullish confirmation)

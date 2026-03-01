@@ -25,7 +25,7 @@
 //! momentum is accelerating), not on the plateau.
 //! 
 //! ## Example:
-//! ```
+//! ```text
 //! MACD Line: 1.5
 //! Signal Line: 0.8
 //! Histogram: 0.7 (positive and growing)

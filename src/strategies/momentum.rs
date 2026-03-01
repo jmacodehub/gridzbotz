@@ -15,7 +15,7 @@
 //!    - Measures strength of the trend
 //! 
 //! ## Example:
-//! ```
+//! ```text
 //! Price: $200
 //! Fast MA (9): $198
 //! Slow MA (21): $195

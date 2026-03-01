@@ -11,7 +11,7 @@
 //! 4. When price is too far above mean → SELL (expect drop down)
 //! 
 //! ## Example:
-//! ```
+//! ```text
 //! SMA (20): $195.00
 //! Current:  $180.00
 //! 

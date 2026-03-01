@@ -12,7 +12,7 @@
 //!    - RSI > 70: Overbought → SELL
 //! 
 //! ## Example:
-//! ```
+//! ```text
 //! RSI = 25 (Oversold)
 //! Signal: STRONG BUY 🟢
 //! Reason: "Price oversold, bounce expected"
