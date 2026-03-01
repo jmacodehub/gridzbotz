@@ -66,6 +66,23 @@ impl Default for RsiConfig {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// 🆕 V5.1: TOML → RsiConfig ADAPTER
+// Zero-cost bridge — converts config::RsiParams → RsiConfig for RSIStrategy.
+// ═══════════════════════════════════════════════════════════════════════════
+
+impl From<&crate::config::RsiParams> for RsiConfig {
+    fn from(p: &crate::config::RsiParams) -> Self {
+        Self {
+            rsi_period: p.rsi_period,
+            oversold_threshold: p.oversold_threshold,
+            overbought_threshold: p.overbought_threshold,
+            extreme_oversold: p.extreme_oversold,
+            extreme_overbought: p.extreme_overbought,
+        }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // RSI STRATEGY
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -346,6 +363,23 @@ mod tests {
         assert_eq!(s.name(), "RSI (10)");
         assert_eq!(s.rsi_period, 10);
         assert!((s.oversold_threshold - 25.0).abs() < f64::EPSILON);
+    }
+
+    #[tokio::test]
+    async fn test_toml_params_adapter() {
+        use crate::config::RsiParams;
+        let toml_params = RsiParams {
+            rsi_period: 12,
+            oversold_threshold: 35.0,
+            overbought_threshold: 65.0,
+            extreme_oversold: 25.0,
+            extreme_overbought: 75.0,
+        };
+        let cfg = RsiConfig::from(&toml_params);
+        let s = RSIStrategy::new_from_config(&cfg);
+        assert_eq!(s.name(), "RSI (12)");
+        assert_eq!(s.rsi_period, 12);
+        assert!((s.oversold_threshold - 35.0).abs() < f64::EPSILON);
     }
     
     #[tokio::test]
