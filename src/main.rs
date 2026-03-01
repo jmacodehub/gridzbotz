@@ -1,5 +1,10 @@
 //! ═══════════════════════════════════════════════════════════════════════════
-//! 🚀 PROJECT FLASH V3.7 – Production Grid Trading Bot
+//! 🚀 PROJECT FLASH V3.8 – Production Grid Trading Bot
+//!
+//! V3.8 ENHANCEMENTS (fix/grid-init-with-live-price):
+//! ✅ initialize_with_price() called between feed warm-up and trading loop
+//! ✅ Resolves Active Levels: 0 — grid now always placed before cycle 1
+//! ✅ Banner updated to V3.8
 //!
 //! V3.7 ENHANCEMENTS (Step 5C, Feb 2026):
 //! ✅ Single unified tick: process_price_update() owns signal gate,
@@ -31,7 +36,7 @@
 //! ✅ GridBot::new(config) builds engine internally (grid_bot.rs:54)
 //! ✅ No longer inject engine from main.rs
 //!
-//! October 17, 2025 — MASTER V3.5 | February 2026 — V3.7 Step 5C LFG! 🔥
+//! October 17, 2025 — MASTER V3.5 | February 2026 — V3.8 Grid Init Fix 🔥
 //! ═══════════════════════════════════════════════════════════════════════════
 
 use solana_grid_bot::init;
@@ -52,7 +57,7 @@ use clap::Parser;
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[derive(Parser, Debug)]
-#[clap(name = "gridzbotz", version = "3.7.0")]
+#[clap(name = "gridzbotz", version = "3.8.0")]
 #[clap(about = "Production-grade Solana grid trading bot", long_about = None)]
 struct Args {
     /// Configuration file path
@@ -223,7 +228,7 @@ fn print_banner(config: &Config) {
     };
 
     println!("\n{}", border);
-    println!("     🚀 GRIDZBOTZ V3.7 — PRODUCTION GRID TRADING BOT");
+    println!("     🚀 GRIDZBOTZ V3.8 — PRODUCTION GRID TRADING BOT");
     println!("     ⚡ Hybrid Feeds • 10Hz Cycles • Signal-Gated Execution");
     println!("{}", border);
     println!("\n   Mode:        {}", mode_label);
@@ -295,8 +300,9 @@ fn load_configuration(args: &Args) -> Result<Config> {
 // COMPONENT INITIALIZATION (Modular & Robust)
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Stage 3/Step 1: GridBot::new(config) builds engine internally.
-/// Price feed starts first for banner display (mode, initial price).
+/// V3.8: Price feed starts first, then GridBot is built synchronously,
+/// then initialize_with_price() places the initial grid at the real
+/// market price — BEFORE the trading loop starts.
 async fn initialize_components(config: &Config) -> Result<(GridBot, PriceFeed)> {
     info!("🔧 Initializing core components...");
 
@@ -325,10 +331,20 @@ async fn initialize_components(config: &Config) -> Result<(GridBot, PriceFeed)> 
     info!("💰 Initial SOL/USD: ${:.4}  (feed mode: {:?})", initial_price, mode);
 
     // ── 2. GridBot (builds PaperTradingEngine internally) ──────────────────
-    info!("🤖 Initializing GridBot V4.4 Stage 3...");
+    info!("🤖 Initializing GridBot V4.5...");
     let mut bot = GridBot::new(config.clone())?;
     bot.initialize().await?;
-    info!("✅ GridBot ready (engine built internally)");
+    info!("✅ GridBot built (grid placement deferred until price known)");
+
+    // ── 3. V3.8 FIX: Initialize grid with live price ───────────────────────
+    // This is the critical missing step: grid_initialized is set to false
+    // in new(), and was never set to true before the trading loop started.
+    // initialize_with_price() calls reposition_grid() at the real market
+    // price, setting grid_initialized = true and placing all level orders.
+    info!("⚙️  Initializing grid with live price data...");
+    bot.initialize_with_price(&feed).await
+        .context("Failed to initialize bot grid with price feed")?;
+    info!("✅ Bot initialization sequence complete — grid ready for trading!");
 
     Ok((bot, feed))
 }
@@ -351,9 +367,9 @@ async fn run_trading_loop(
 
     let cycle_interval       = config.performance.cycle_interval_ms;
     let stats_interval       = config.metrics.stats_interval as u32;
-    let slow_cycle_threshold = cycle_interval * 3;  // 🆕 Raised from 2x to 3x
+    let slow_cycle_threshold = cycle_interval * 3;
 
-    info!("🔥 STARTING TRADING LOOP — V4.4 CROSSING DETECTION");
+    info!("🔥 STARTING TRADING LOOP — V4.5 GRID INIT FIX ACTIVE");
     info!("   Total Cycles:     {}", total_cycles);
     info!("   Cycle Interval:   {}ms ({}Hz)", cycle_interval, 1000 / cycle_interval);
     info!("   Duration:         {:.1} minutes",
@@ -361,9 +377,6 @@ async fn run_trading_loop(
     info!("   Stats Interval:   Every {} cycles", stats_interval);
     println!();
 
-    // Snapshot of bot.grid_repositions at loop start.
-    // We diff this against get_stats() after each tick to detect
-    // new repositions without holding a reference into GridBot internals.
     let mut last_reposition_count: u64 = 0;
 
     for cycle in 1..=total_cycles {
@@ -388,18 +401,11 @@ async fn run_trading_loop(
         let volatility = feed.volatility().await;
 
         // ── Single unified tick ─────────────────────────────────────────────────
-        // process_price_update owns ALL grid logic:
-        //   signal gate → circuit breaker → crossing detection →
-        //   reposition_grid → fill collection → portfolio snapshot → optimizer
-        // main.rs drives the clock and reads summary stats for display.
         let ts = chrono::Utc::now().timestamp();
         match bot.process_price_update(price, ts).await {
             Ok(_) => {
                 let stats = bot.get_stats().await;
 
-                // ── Reposition delta tracking ───────────────────────────────
-                // grid_repositions is the authoritative counter in GridBot.
-                // We diff it each tick so SessionMetrics.repositions is exact.
                 let new_repositions = stats.grid_repositions
                     .saturating_sub(last_reposition_count);
                 if new_repositions > 0 {
@@ -407,7 +413,6 @@ async fn run_trading_loop(
                     last_reposition_count = stats.grid_repositions;
                 }
 
-                // ── Cycle status line ───────────────────────────────────────
                 let status = if stats.trading_paused {
                     metrics.regime_gate_blocks += 1;
                     "🚫 Halted"
@@ -441,14 +446,12 @@ async fn run_trading_loop(
             }
         }
 
-        // ── Periodic stats log ───────────────────────────────────────────────────
         if config.metrics.enable_metrics && cycle % stats_interval == 0 {
             info!("📊 Cycle {:>5} | Avg: {:.1}ms | Repos: {} | Blocks: {} | Errors: {}",
                   cycle, metrics.avg_cycle_time(),
                   metrics.repositions, metrics.regime_gate_blocks, metrics.errors);
         }
 
-        // ── Cycle timing — sleep remainder ────────────────────────────────────────
         let cycle_time = cycle_start.elapsed().as_millis() as u64;
         if cycle_time > slow_cycle_threshold {
             warn!("⏱️  Slow cycle #{}: {}ms (threshold: {}ms)",
@@ -501,7 +504,7 @@ fn setup_logging(args: &Args) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// MAIN ENTRY POINT — V3.7 🚀
+// MAIN ENTRY POINT — V3.8 🚀
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[tokio::main]
@@ -576,12 +579,10 @@ mod tests {
 
     #[test]
     fn test_slippage_decimal_conversion() {
-        // 100 BPS → 0.01 (1%)
         let bps: u16 = 100;
         let decimal  = bps as f64 / 10_000.0;
         assert!((decimal - 0.01).abs() < 1e-9);
 
-        // 50 BPS → 0.005 (0.5%)
         let bps: u16 = 50;
         let decimal  = bps as f64 / 10_000.0;
         assert!((decimal - 0.005).abs() < 1e-9);
@@ -589,7 +590,6 @@ mod tests {
 
     #[test]
     fn test_spacing_usd_from_price_and_pct() {
-        // 0.15% spacing at $200 SOL → $0.30
         let price   = 200.0_f64;
         let pct     = 0.15_f64;
         let spacing = price * (pct / 100.0);
@@ -598,7 +598,6 @@ mod tests {
 
     #[test]
     fn test_args_resolved_mode_paper_flag() {
-        // --paper flag → "paper"
         let args = Args {
             config: PathBuf::from("config/master.toml"),
             mode: None,
@@ -614,7 +613,6 @@ mod tests {
 
     #[test]
     fn test_args_resolved_mode_explicit() {
-        // --mode live → "live"
         let args = Args {
             config: PathBuf::from("config/master.toml"),
             mode: Some("live".to_string()),
@@ -630,7 +628,6 @@ mod tests {
 
     #[test]
     fn test_args_resolved_mode_none() {
-        // No flag → None (TOML wins)
         let args = Args {
             config: PathBuf::from("config/master.toml"),
             mode: None,
@@ -650,7 +647,6 @@ mod tests {
         m.record_cycle(50, 200);
         m.record_cycle(60, 200);
         m.record_failure();
-        // 2 successful, 1 failed → 66.6%
         assert!((m.success_rate() - 66.666).abs() < 0.01);
     }
 

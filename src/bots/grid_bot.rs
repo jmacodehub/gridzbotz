@@ -1,5 +1,10 @@
 //! ═══════════════════════════════════════════════════════════════════
-//! GRID BOT V4.4 - ELITE AUTONOMOUS TRADING ORCHESTRATOR
+//! GRID BOT V4.5 - ELITE AUTONOMOUS TRADING ORCHESTRATOR
+//!
+//! V4.5 CHANGES (fix/grid-init-with-live-price):
+//! ✅ initialize_with_price(&feed) — async grid init with real price
+//! ✅ Emergency safety check in reposition_grid() — zero silent failures
+//! ✅ Grid initialized BEFORE trading loop starts — Active Levels > 0
 //!
 //! V4.4 CHANGES (Stage 3 - Fill Fan-out):
 //! ✅ spacing_mode wired to GridRebalancerConfig (VolatilityBuckets default)
@@ -15,7 +20,7 @@
 //! ✅ ADAPTIVE OPTIMIZER - Self-learning grid
 //! ✅ Smart spacing based on drawdown
 //!
-//! February 2026 - V4.4 STAGE 3 FILL FAN-OUT ACTIVE
+//! February 2026 - V4.5 GRID INIT FIX
 //! ═══════════════════════════════════════════════════════════════════
 
 use crate::strategies::{StrategyManager, GridRebalancer, GridRebalancerConfig};
@@ -26,6 +31,7 @@ use crate::trading::{
     GridStateTracker,
     EnhancedMetrics,
     AdaptiveOptimizer,
+    PriceFeed,
 };
 use crate::config::Config;
 use anyhow::{Result, Context, bail};
@@ -52,7 +58,7 @@ pub struct GridBot {
 
 impl GridBot {
     pub fn new(config: Config) -> Result<Self> {
-        info!("[BOT] Initializing GridBot V4.4 Stage 3 Fill Fan-out...");
+        info!("[BOT] Initializing GridBot V4.5 Grid-Init Fix...");
         info!("[BOT] Adaptive Intelligence: ENABLED");
         info!("[BOT] Fill Fan-out: ENABLED");
 
@@ -125,7 +131,7 @@ impl GridBot {
         let adaptive_optimizer = AdaptiveOptimizer::new(base_spacing, base_size);
         info!("[BOT] Adaptive optimizer initialized (every {} cycles)", OPTIMIZATION_INTERVAL_CYCLES);
 
-        info!("[BOT] GridBot V4.4 initialization complete!");
+        info!("[BOT] GridBot V4.5 initialization complete (grid placement deferred until price known)");
 
         Ok(Self {
             manager,
@@ -145,8 +151,54 @@ impl GridBot {
         })
     }
 
+    /// Lightweight async hook kept for backward compat — no-op since V4.5
+    /// uses initialize_with_price() for real grid placement.
     pub async fn initialize(&mut self) -> Result<()> {
-        info!("[BOT] Performing async initialization...");
+        info!("[BOT] Async pre-init hook complete (grid placement handled by initialize_with_price)");
+        Ok(())
+    }
+
+    /// ═══════════════════════════════════════════════════════════════════
+    /// V4.5 FIX: Async Grid Initialization with Live Price Feed
+    /// ═══════════════════════════════════════════════════════════════════
+    /// Initializes the grid at the real market price from the price feed.
+    /// MUST be called AFTER the price feed has warmed up and BEFORE the
+    /// trading loop starts. Separated from new() because it requires
+    /// async price access which isn't available during sync construction.
+    ///
+    /// # Arguments
+    /// * `feed` — Active, warmed-up PriceFeed instance
+    ///
+    /// # Returns
+    /// * `Ok(())` — grid placed, grid_initialized = true
+    /// * `Err`    — invalid price or order placement failure
+    pub async fn initialize_with_price(&mut self, feed: &PriceFeed) -> Result<()> {
+        info!("┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓");
+        info!("┃  V4.5 GRID INIT — awaiting live price...       ┃");
+        info!("┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛");
+
+        let initial_price = feed.latest_price().await;
+        if initial_price <= 0.0 {
+            bail!("Invalid initial price ${:.2} — cannot initialize grid", initial_price);
+        }
+
+        info!("[BOT] Live price received: ${:.4}", initial_price);
+
+        // Place initial grid — reposition_grid handles first-placement path
+        self.reposition_grid(initial_price, initial_price).await
+            .context("Initial grid placement failed")?;
+
+        if !self.grid_initialized {
+            bail!("Grid placement completed but grid_initialized flag not set — logic error");
+        }
+
+        info!("┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓");
+        info!("┃  ✅ Grid initialized — ready for trading loop   ┃");
+        info!("┃  {} levels  |  {:.3}% spacing              ┃",
+              self.config.trading.grid_levels,
+              self.config.trading.grid_spacing_percent);
+        info!("┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛");
+
         Ok(())
     }
 
@@ -178,13 +230,24 @@ impl GridBot {
     }
 
     pub async fn reposition_grid(&mut self, current_price: f64, last_price: f64) -> Result<()> {
+        // ═══════════════════════════════════════════════════════════════════
+        // V4.5 SAFETY: Emergency init guard — catches any edge case where
+        // initialize_with_price() was skipped (should never happen, but
+        // defensive programming is non-negotiable for mainnet).
+        // ═══════════════════════════════════════════════════════════════════
         if !self.grid_initialized {
-            info!("[BOT] Placing initial grid at ${:.4}", current_price);
-            self.place_grid_orders(current_price).await?;
+            warn!("⚠️  [BOT] Grid not initialized — emergency init at ${:.4}", current_price);
+            warn!("⚠️  [BOT] This should not happen — check initialize_with_price() in main.rs!");
+
+            self.place_grid_orders(current_price).await
+                .context("Emergency grid initialization failed")?;
             self.grid_initialized = true;
+
             let total_levels = self.config.trading.grid_levels as usize;
             let used_levels = self.grid_state.count().await;
             self.enhanced_metrics.update_grid_stats(total_levels, used_levels);
+
+            info!("[BOT] Emergency grid init complete — normal trading resumes next cycle");
             return Ok(());
         }
 
@@ -395,7 +458,7 @@ impl GridBot {
         let border = "=".repeat(60);
 
         println!("\n{}", border);
-        println!("   [BOT] GRID BOT V4.4 STAGE 3 - STATUS REPORT");
+        println!("   [BOT] GRID BOT V4.5 - STATUS REPORT");
         println!("{}", border);
 
         println!("\n[PERFORMANCE]");
@@ -465,7 +528,7 @@ pub struct BotStats {
 
 impl BotStats {
     pub fn display_summary(&self) {
-        println!("\n[STATS] BOT STATISTICS SUMMARY V4.4");
+        println!("\n[STATS] BOT STATISTICS SUMMARY V4.5");
         println!("   Cycles:            {}", self.total_cycles);
         println!("   Trades:            {}", self.successful_trades);
         println!("   Repositions:       {}", self.grid_repositions);
@@ -489,7 +552,7 @@ impl BotStats {
         if self.trading_paused {
             println!("   Status:            PAUSED");
         } else {
-            println!("   Status:            V4.4 STAGE 3 ACTIVE");
+            println!("   Status:            V4.5 ACTIVE");
         }
     }
 }
