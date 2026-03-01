@@ -42,17 +42,38 @@ use async_trait::async_trait;
 use anyhow::Result;
 
 // ══════════════════════════════════════════════════════════════════════
-// CONFIGURATION
+// DEFAULTS (module-private — callers use MomentumMACDConfig)
 // ══════════════════════════════════════════════════════════════════════
 
-/// Minimum confidence threshold for trend-following signals
-const MIN_CONFIDENCE: f64 = 0.65;
+const DEFAULT_MIN_CONFIDENCE: f64 = 0.65;
+const DEFAULT_STRONG_HISTOGRAM_THRESHOLD: f64 = 0.5;
+const DEFAULT_MIN_WARMUP_PERIODS: usize = 26;
 
-/// Strong signal threshold (histogram magnitude)
-const STRONG_HISTOGRAM_THRESHOLD: f64 = 0.5;
+// ══════════════════════════════════════════════════════════════════════
+// MOMENTUM MACD CONFIG
+// ══════════════════════════════════════════════════════════════════════
 
-/// Minimum periods before generating signals
-const MIN_WARMUP_PERIODS: usize = 26; // Slow EMA period
+/// Runtime-tunable parameters for the Momentum MACD strategy.
+/// Sourced from TOML at startup — zero hardcoded decisions in the hot path.
+#[derive(Debug, Clone)]
+pub struct MomentumMACDConfig {
+    /// Minimum confidence threshold for trend-following signals (default: 0.65)
+    pub min_confidence: f64,
+    /// Strong signal threshold — histogram magnitude for strong signals (default: 0.5)
+    pub strong_histogram_threshold: f64,
+    /// Minimum periods before generating signals (default: 26 = slow EMA period)
+    pub min_warmup_periods: usize,
+}
+
+impl Default for MomentumMACDConfig {
+    fn default() -> Self {
+        Self {
+            min_confidence: DEFAULT_MIN_CONFIDENCE,
+            strong_histogram_threshold: DEFAULT_STRONG_HISTOGRAM_THRESHOLD,
+            min_warmup_periods: DEFAULT_MIN_WARMUP_PERIODS,
+        }
+    }
+}
 
 // ══════════════════════════════════════════════════════════════════════
 // MOMENTUM MACD STRATEGY
@@ -77,11 +98,16 @@ pub struct MomentumMACDStrategy {
     
     /// Last signal
     last_signal: Option<Signal>,
+
+    // ── Config (captured at construction, immutable in hot path) ──────────
+    min_confidence: f64,
+    strong_histogram_threshold: f64,
+    min_warmup_periods: usize,
 }
 
 impl MomentumMACDStrategy {
-    /// Create new MACD-based momentum strategy
-    pub fn new() -> Self {
+    /// Create from explicit config — preferred in production.
+    pub fn new_from_config(cfg: &MomentumMACDConfig) -> Self {
         Self {
             name: "Momentum (MACD 12,26,9)".to_string(),
             macd: MACDState::new(),
@@ -89,7 +115,15 @@ impl MomentumMACDStrategy {
             periods: 0,
             stats: StrategyStats::default(),
             last_signal: None,
+            min_confidence: cfg.min_confidence,
+            strong_histogram_threshold: cfg.strong_histogram_threshold,
+            min_warmup_periods: cfg.min_warmup_periods,
         }
+    }
+
+    /// Create new MACD-based momentum strategy with default parameters.
+    pub fn new() -> Self {
+        Self::new_from_config(&MomentumMACDConfig::default())
     }
     
     /// Detect MACD crossover by comparing current vs previous MACDValues
@@ -108,7 +142,7 @@ impl MomentumMACDStrategy {
     /// Calculate momentum strength from histogram magnitude
     fn calculate_momentum_strength(&self, macd: &MACDValues) -> f64 {
         let magnitude = macd.histogram.abs();
-        (magnitude / STRONG_HISTOGRAM_THRESHOLD).min(1.0)
+        (magnitude / self.strong_histogram_threshold).min(1.0)
     }
     
     /// Check if histogram is expanding (momentum increasing)
@@ -197,7 +231,7 @@ impl Strategy for MomentumMACDStrategy {
         let macd = self.macd.update(price).expect("MACDState::update returned None");
         
         // STEP 2: Need warmup period for accurate MACD
-        if self.periods < MIN_WARMUP_PERIODS {
+        if self.periods < self.min_warmup_periods {
             self.prev_macd = Some(macd);
             self.stats.signals_generated += 1;
             self.stats.hold_signals += 1;
@@ -242,7 +276,7 @@ impl Strategy for MomentumMACDStrategy {
             },
             None => {
                 match trend {
-                    Trend::StrongBullish if confidence >= MIN_CONFIDENCE => {
+                    Trend::StrongBullish if confidence >= self.min_confidence => {
                         self.stats.buy_signals += 1;
                         Signal::Buy {
                             price,
@@ -255,7 +289,7 @@ impl Strategy for MomentumMACDStrategy {
                             level_id: None,
                         }
                     },
-                    Trend::WeakBullish if confidence >= MIN_CONFIDENCE && macd.histogram > 0.0 => {
+                    Trend::WeakBullish if confidence >= self.min_confidence && macd.histogram > 0.0 => {
                         self.stats.buy_signals += 1;
                         Signal::Buy {
                             price,
@@ -268,7 +302,7 @@ impl Strategy for MomentumMACDStrategy {
                             level_id: None,
                         }
                     },
-                    Trend::StrongBearish if confidence >= MIN_CONFIDENCE => {
+                    Trend::StrongBearish if confidence >= self.min_confidence => {
                         self.stats.sell_signals += 1;
                         Signal::Sell {
                             price,
@@ -281,7 +315,7 @@ impl Strategy for MomentumMACDStrategy {
                             level_id: None,
                         }
                     },
-                    Trend::WeakBearish if confidence >= MIN_CONFIDENCE && macd.histogram < 0.0 => {
+                    Trend::WeakBearish if confidence >= self.min_confidence && macd.histogram < 0.0 => {
                         self.stats.sell_signals += 1;
                         Signal::Sell {
                             price,
@@ -341,6 +375,19 @@ mod tests {
     async fn test_macd_creation() {
         let strategy = MomentumMACDStrategy::new();
         assert_eq!(strategy.name(), "Momentum (MACD 12,26,9)");
+    }
+
+    #[tokio::test]
+    async fn test_config_driven_creation() {
+        let cfg = MomentumMACDConfig {
+            min_confidence: 0.75,
+            strong_histogram_threshold: 0.7,
+            min_warmup_periods: 20,
+        };
+        let s = MomentumMACDStrategy::new_from_config(&cfg);
+        assert!((s.min_confidence - 0.75).abs() < f64::EPSILON);
+        assert!((s.strong_histogram_threshold - 0.7).abs() < f64::EPSILON);
+        assert_eq!(s.min_warmup_periods, 20);
     }
     
     /// MACD fires signals during the HISTOGRAM GROWTH PHASE — when fast_ema
