@@ -1,5 +1,11 @@
 //! ═══════════════════════════════════════════════════════════════════
-//! GRID BOT V4.5 - ELITE AUTONOMOUS TRADING ORCHESTRATOR
+//! GRID BOT V5.1 - ELITE AUTONOMOUS TRADING ORCHESTRATOR
+//!
+//! V5.1 CHANGES (feature/bot-strategy-wiring):
+//! ✅ RSI, MeanReversion, Momentum, MomentumMACD wired into bot init
+//!    All 4 strategies instantiated via new_from_config() from TOML
+//!    Zero hardcoded params — every knob lives in config/*.toml
+//!    MomentumMACD support added (was missing from V4.5 stubs)
 //!
 //! V4.5 CHANGES (fix/grid-init-with-live-price):
 //! ✅ initialize_with_price(&feed) — async grid init with real price
@@ -20,10 +26,14 @@
 //! ✅ ADAPTIVE OPTIMIZER - Self-learning grid
 //! ✅ Smart spacing based on drawdown
 //!
-//! February 2026 - V4.5 GRID INIT FIX
+//! March 2026 - V5.1 STRATEGY WIRING
 //! ═══════════════════════════════════════════════════════════════════
 
 use crate::strategies::{StrategyManager, GridRebalancer, GridRebalancerConfig};
+use crate::strategies::momentum::MomentumStrategy;
+use crate::strategies::mean_reversion::MeanReversionStrategy;
+use crate::strategies::rsi::RsiStrategy;
+use crate::strategies::momentum_macd::MomentumMACDStrategy;
 use crate::strategies::shared::analytics::AnalyticsContext;
 use crate::trading::{
     PaperTradingEngine,
@@ -58,15 +68,16 @@ pub struct GridBot {
 
 impl GridBot {
     pub fn new(config: Config) -> Result<Self> {
-        info!("[BOT] Initializing GridBot V4.5 Grid-Init Fix...");
-        info!("[BOT] Adaptive Intelligence: ENABLED");
-        info!("[BOT] Fill Fan-out: ENABLED");
+        info!("[BOT-V5.1] Initializing GridBot V5.1 Strategy Wiring...");
+        info!("[BOT-V5.1] Adaptive Intelligence: ENABLED");
+        info!("[BOT-V5.1] Fill Fan-out: ENABLED");
+        info!("[BOT-V5.1] Config-driven strategy loading: ENABLED");
 
         let analytics_ctx = AnalyticsContext::default();
         let mut manager = StrategyManager::new(analytics_ctx);
 
-        info!("[BOT] Creating grid rebalancer from config...");
-
+        // ─── Strategy 1: Grid (always primary) ────────────────────────────────
+        info!("[BOT-V5.1] Loading GridRebalancer from config...");
         let grid_config = GridRebalancerConfig {
             grid_spacing:                   config.trading.grid_spacing_percent / 100.0,
             order_size:                     config.trading.min_order_size,
@@ -85,53 +96,75 @@ impl GridBot {
             order_max_age_minutes:          config.trading.order_max_age_minutes,
             order_refresh_interval_minutes: config.trading.order_refresh_interval_minutes,
             min_orders_to_maintain:         config.trading.min_orders_to_maintain,
-            // V4.4: fill remaining new fields (spacing_mode etc.) from Default
             ..GridRebalancerConfig::default()
         };
-
-        info!("[BOT] Initializing grid rebalancer strategy...");
-
         let grid_rebalancer = GridRebalancer::new(grid_config)
             .context("Failed to create GridRebalancer")?;
-
         manager.add_strategy(grid_rebalancer);
-        info!("[BOT] Grid rebalancer strategy loaded");
+        info!("[BOT-V5.1] ✅ GridRebalancer loaded (weight={:.1})", config.strategies.grid.weight);
 
+        // ─── Strategy 2: Momentum ─────────────────────────────────────────────
         if config.strategies.momentum.enabled {
-            info!("[BOT] Momentum strategy enabled (not yet implemented)");
+            info!("[BOT-V5.1] Loading Momentum strategy from config...");
+            let strategy = MomentumStrategy::new_from_config(&config.strategies.momentum);
+            manager.add_strategy(strategy);
+            info!("[BOT-V5.1] ✅ Momentum strategy loaded (weight={:.1}, lookback={})",
+                  config.strategies.momentum.weight,
+                  config.strategies.momentum.lookback_period);
         }
+
+        // ─── Strategy 3: Mean Reversion ───────────────────────────────────────
         if config.strategies.mean_reversion.enabled {
-            info!("[BOT] Mean reversion strategy enabled (not yet implemented)");
+            info!("[BOT-V5.1] Loading MeanReversion strategy from config...");
+            let strategy = MeanReversionStrategy::new_from_config(&config.strategies.mean_reversion);
+            manager.add_strategy(strategy);
+            info!("[BOT-V5.1] ✅ MeanReversion strategy loaded (weight={:.1}, sma_period={})",
+                  config.strategies.mean_reversion.weight,
+                  config.strategies.mean_reversion.sma_period);
         }
+
+        // ─── Strategy 4: RSI ──────────────────────────────────────────────────
         if config.strategies.rsi.enabled {
-            info!("[BOT] RSI strategy enabled (not yet implemented)");
+            info!("[BOT-V5.1] Loading RSI strategy from config...");
+            let strategy = RsiStrategy::new_from_config(&config.strategies.rsi);
+            manager.add_strategy(strategy);
+            info!("[BOT-V5.1] ✅ RSI strategy loaded (weight={:.1}, period={}, zones={}/{})",
+                  config.strategies.rsi.weight,
+                  config.strategies.rsi.period,
+                  config.strategies.rsi.oversold_threshold,
+                  config.strategies.rsi.overbought_threshold);
         }
 
-        info!("[BOT] Initializing paper trading engine...");
+        // ─── Strategy 5: Momentum MACD ────────────────────────────────────────
+        if config.strategies.momentum_macd.enabled {
+            info!("[BOT-V5.1] Loading MomentumMACD strategy from config...");
+            let strategy = MomentumMACDStrategy::new_from_config(&config.strategies.momentum_macd);
+            manager.add_strategy(strategy);
+            info!("[BOT-V5.1] ✅ MomentumMACD strategy loaded (weight={:.1}, warmup={})",
+                  config.strategies.momentum_macd.weight,
+                  config.strategies.momentum_macd.min_warmup_periods);
+        }
 
+        // ─── Paper trading engine ─────────────────────────────────────────────
+        info!("[BOT-V5.1] Initializing paper trading engine...");
         let initial_usdc = config.paper_trading.initial_usdc;
-        let initial_sol = config.paper_trading.initial_sol;
-
+        let initial_sol  = config.paper_trading.initial_sol;
         if initial_usdc <= 0.0 || initial_sol <= 0.0 {
             bail!("Invalid initial capital: USDC={}, SOL={}", initial_usdc, initial_sol);
         }
-
         let engine = PaperTradingEngine::new(initial_usdc, initial_sol)
             .with_fees(0.0002, 0.0004)
             .with_slippage(0.0005);
-
-        info!("[BOT] Paper trading engine initialized");
+        info!("[BOT-V5.1] Paper trading engine initialized");
         info!("   Initial Capital: ${:.2} USDC + {} SOL", initial_usdc, initial_sol);
 
-        let grid_state = GridStateTracker::new();
-        let enhanced_metrics = EnhancedMetrics::new();
-
-        let base_spacing = config.trading.grid_spacing_percent / 100.0;
-        let base_size = config.trading.min_order_size;
+        let grid_state        = GridStateTracker::new();
+        let enhanced_metrics  = EnhancedMetrics::new();
+        let base_spacing      = config.trading.grid_spacing_percent / 100.0;
+        let base_size         = config.trading.min_order_size;
         let adaptive_optimizer = AdaptiveOptimizer::new(base_spacing, base_size);
-        info!("[BOT] Adaptive optimizer initialized (every {} cycles)", OPTIMIZATION_INTERVAL_CYCLES);
-
-        info!("[BOT] GridBot V4.5 initialization complete (grid placement deferred until price known)");
+        info!("[BOT-V5.1] Adaptive optimizer initialized (every {} cycles)", OPTIMIZATION_INTERVAL_CYCLES);
+        info!("[BOT-V5.1] GridBot V5.1 initialization complete (grid placement deferred until price known)");
 
         Ok(Self {
             manager,
@@ -174,31 +207,25 @@ impl GridBot {
     /// * `Err`    — invalid price or order placement failure
     pub async fn initialize_with_price(&mut self, feed: &PriceFeed) -> Result<()> {
         info!("┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓");
-        info!("┃  V4.5 GRID INIT — awaiting live price...       ┃");
+        info!("┃  V5.1 GRID INIT — awaiting live price...       ┃");
         info!("┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛");
 
         let initial_price = feed.latest_price().await;
         if initial_price <= 0.0 {
             bail!("Invalid initial price ${:.2} — cannot initialize grid", initial_price);
         }
-
         info!("[BOT] Live price received: ${:.4}", initial_price);
-
-        // Place initial grid — reposition_grid handles first-placement path
         self.reposition_grid(initial_price, initial_price).await
             .context("Initial grid placement failed")?;
-
         if !self.grid_initialized {
             bail!("Grid placement completed but grid_initialized flag not set — logic error");
         }
-
         info!("┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓");
         info!("┃  ✅ Grid initialized — ready for trading loop   ┃");
         info!("┃  {} levels  |  {:.3}% spacing              ┃",
               self.config.trading.grid_levels,
               self.config.trading.grid_spacing_percent);
         info!("┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛");
-
         Ok(())
     }
 
@@ -238,15 +265,12 @@ impl GridBot {
         if !self.grid_initialized {
             warn!("⚠️  [BOT] Grid not initialized — emergency init at ${:.4}", current_price);
             warn!("⚠️  [BOT] This should not happen — check initialize_with_price() in main.rs!");
-
             self.place_grid_orders(current_price).await
                 .context("Emergency grid initialization failed")?;
             self.grid_initialized = true;
-
             let total_levels = self.config.trading.grid_levels as usize;
             let used_levels = self.grid_state.count().await;
             self.enhanced_metrics.update_grid_stats(total_levels, used_levels);
-
             info!("[BOT] Emergency grid init complete — normal trading resumes next cycle");
             return Ok(());
         }
@@ -285,7 +309,6 @@ impl GridBot {
                 self.grid_state.mark_cancelled(level_id).await;
             }
         }
-
         if cancelled_count > 0 {
             info!("[BOT] Selectively cancelled {} orders", cancelled_count);
         }
@@ -297,22 +320,21 @@ impl GridBot {
         let total_levels = self.config.trading.grid_levels as usize;
         let used_levels = self.grid_state.count().await;
         self.enhanced_metrics.update_grid_stats(total_levels, used_levels);
-
         info!("[BOT] Grid repositioned in {}ms", reposition_start.elapsed().as_millis());
         Ok(())
     }
 
     async fn place_grid_orders(&mut self, current_price: f64) -> Result<()> {
         let grid_spacing = self.adaptive_optimizer.current_spacing_percent;
-        let order_size = self.adaptive_optimizer.current_position_size;
-        let num_levels = self.config.trading.grid_levels;
+        let order_size   = self.adaptive_optimizer.current_position_size;
+        let num_levels   = self.config.trading.grid_levels;
 
         debug!("[BOT] ADAPTIVE Grid params: {} levels @ {:.3}% spacing, {:.3} SOL/order",
                num_levels, grid_spacing * 100.0, order_size);
 
         let mut orders_placed = 0;
         let mut orders_failed = 0;
-        let buy_levels = num_levels / 2;
+        let buy_levels  = num_levels / 2;
         let sell_levels = num_levels - buy_levels;
 
         for i in 1..=buy_levels.min(sell_levels) {
@@ -369,7 +391,6 @@ impl GridBot {
         self.enhanced_metrics.record_signal(true);
         trace!("[BOT] Strategy signal: {}", signal.display());
 
-        // Execute paper order book fills
         let filled_orders = self.engine.process_price_update(price).await
             .context("Failed to process price update in trading engine")?;
 
@@ -386,8 +407,8 @@ impl GridBot {
             for order_id in &filled_orders {
                 debug!("   [FILL] Order {} filled", order_id);
 
-                let is_buy = order_id.to_lowercase().contains("buy");
-                let pnl = self.grid_state.total_realized_pnl().await;
+                let is_buy   = order_id.to_lowercase().contains("buy");
+                let pnl      = self.grid_state.total_realized_pnl().await;
                 let fill_size = self.adaptive_optimizer.current_position_size;
 
                 self.total_fills_tracked += 1;
@@ -399,8 +420,7 @@ impl GridBot {
                       price,
                       fill_size,
                       pnl,
-                      timestamp
-                );
+                      timestamp);
 
                 self.enhanced_metrics.record_trade(is_buy, pnl, timestamp);
             }
@@ -409,7 +429,6 @@ impl GridBot {
         let wallet = self.engine.get_wallet().await;
         self.enhanced_metrics.update_portfolio_value(wallet.total_value_usdc(price));
 
-        // Adaptive optimization every N cycles
         if self.total_cycles - self.last_optimization_cycle >= OPTIMIZATION_INTERVAL_CYCLES {
             let result = self.adaptive_optimizer.optimize(&self.enhanced_metrics);
             if result.any_changes() {
@@ -425,40 +444,40 @@ impl GridBot {
     }
 
     pub async fn get_stats(&self) -> BotStats {
-        let wallet = self.engine.get_wallet().await;
-        let perf_stats = self.engine.get_performance_stats().await;
-        let open_orders = self.engine.open_order_count().await;
+        let wallet       = self.engine.get_wallet().await;
+        let perf_stats   = self.engine.get_performance_stats().await;
+        let open_orders  = self.engine.open_order_count().await;
         let current_price = self.last_price.unwrap_or(0.0);
 
         BotStats {
-            total_cycles: self.total_cycles,
-            successful_trades: self.successful_trades,
-            grid_repositions: self.grid_repositions,
+            total_cycles:            self.total_cycles,
+            successful_trades:       self.successful_trades,
+            grid_repositions:        self.grid_repositions,
             open_orders,
-            total_value_usdc: wallet.total_value_usdc(current_price),
-            pnl_usdc: wallet.pnl_usdc(current_price),
-            roi_percent: wallet.roi(current_price),
-            win_rate: perf_stats.win_rate,
-            total_fees: perf_stats.total_fees,
-            trading_paused: false,
-            profitable_trades: self.enhanced_metrics.profitable_trades,
-            unprofitable_trades: self.enhanced_metrics.unprofitable_trades,
-            max_drawdown: self.enhanced_metrics.max_drawdown,
-            signal_execution_ratio: self.enhanced_metrics.signal_execution_ratio,
-            grid_efficiency: self.enhanced_metrics.grid_efficiency,
+            total_value_usdc:        wallet.total_value_usdc(current_price),
+            pnl_usdc:                wallet.pnl_usdc(current_price),
+            roi_percent:             wallet.roi(current_price),
+            win_rate:                perf_stats.win_rate,
+            total_fees:              perf_stats.total_fees,
+            trading_paused:          false,
+            profitable_trades:       self.enhanced_metrics.profitable_trades,
+            unprofitable_trades:     self.enhanced_metrics.unprofitable_trades,
+            max_drawdown:            self.enhanced_metrics.max_drawdown,
+            signal_execution_ratio:  self.enhanced_metrics.signal_execution_ratio,
+            grid_efficiency:         self.enhanced_metrics.grid_efficiency,
             current_spacing_percent: self.adaptive_optimizer.current_spacing_percent,
-            current_position_size: self.adaptive_optimizer.current_position_size,
-            optimization_count: self.adaptive_optimizer.adjustment_count,
-            total_fills_tracked: self.total_fills_tracked,
+            current_position_size:   self.adaptive_optimizer.current_position_size,
+            optimization_count:      self.adaptive_optimizer.adjustment_count,
+            total_fills_tracked:     self.total_fills_tracked,
         }
     }
 
     pub async fn display_status(&self, current_price: f64) {
-        let stats = self.get_stats().await;
+        let stats  = self.get_stats().await;
         let border = "=".repeat(60);
 
         println!("\n{}", border);
-        println!("   [BOT] GRID BOT V4.5 - STATUS REPORT");
+        println!("   [BOT] GRID BOT V5.1 - STATUS REPORT");
         println!("{}", border);
 
         println!("\n[PERFORMANCE]");
@@ -470,7 +489,7 @@ impl GridBot {
 
         let grid_levels = self.grid_state.count().await;
         let filled_buys = self.grid_state.get_levels_with_filled_buys().await.len();
-        let total_pnl = self.grid_state.total_realized_pnl().await;
+        let total_pnl   = self.grid_state.total_realized_pnl().await;
 
         println!("\n[GRID]");
         println!("  Active Levels:     {}", grid_levels);
@@ -505,30 +524,30 @@ impl GridBot {
 
 #[derive(Debug, Clone)]
 pub struct BotStats {
-    pub total_cycles: u64,
-    pub successful_trades: u64,
-    pub grid_repositions: u64,
-    pub open_orders: usize,
-    pub total_value_usdc: f64,
-    pub pnl_usdc: f64,
-    pub roi_percent: f64,
-    pub win_rate: f64,
-    pub total_fees: f64,
-    pub trading_paused: bool,
-    pub profitable_trades: usize,
-    pub unprofitable_trades: usize,
-    pub max_drawdown: f64,
-    pub signal_execution_ratio: f64,
-    pub grid_efficiency: f64,
+    pub total_cycles:            u64,
+    pub successful_trades:       u64,
+    pub grid_repositions:        u64,
+    pub open_orders:             usize,
+    pub total_value_usdc:        f64,
+    pub pnl_usdc:                f64,
+    pub roi_percent:             f64,
+    pub win_rate:                f64,
+    pub total_fees:              f64,
+    pub trading_paused:          bool,
+    pub profitable_trades:       usize,
+    pub unprofitable_trades:     usize,
+    pub max_drawdown:            f64,
+    pub signal_execution_ratio:  f64,
+    pub grid_efficiency:         f64,
     pub current_spacing_percent: f64,
-    pub current_position_size: f64,
-    pub optimization_count: u64,
-    pub total_fills_tracked: u64,
+    pub current_position_size:   f64,
+    pub optimization_count:      u64,
+    pub total_fills_tracked:     u64,
 }
 
 impl BotStats {
     pub fn display_summary(&self) {
-        println!("\n[STATS] BOT STATISTICS SUMMARY V4.5");
+        println!("\n[STATS] BOT STATISTICS SUMMARY V5.1");
         println!("   Cycles:            {}", self.total_cycles);
         println!("   Trades:            {}", self.successful_trades);
         println!("   Repositions:       {}", self.grid_repositions);
@@ -552,7 +571,7 @@ impl BotStats {
         if self.trading_paused {
             println!("   Status:            PAUSED");
         } else {
-            println!("   Status:            V4.5 ACTIVE");
+            println!("   Status:            V5.1 ACTIVE");
         }
     }
 }
