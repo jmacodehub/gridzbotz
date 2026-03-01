@@ -1,13 +1,12 @@
 //! ═══════════════════════════════════════════════════════════════════
 //! GRID BOT V5.1 - ELITE AUTONOMOUS TRADING ORCHESTRATOR
 //!
-//! V5.1 CHANGES (feature/bot-strategy-wiring + fix/bot-strategy-config-types):
+//! V5.1 CHANGES (PRs #29 / #30 / #31):
 //! ✅ RSI, MeanReversion, Momentum, MomentumMACD wired into bot init
-//!    All 4 strategies instantiated via new_from_config() from TOML
-//!    Zero hardcoded params — every knob lives in config/*.toml
-//!    MomentumMACD support added (was missing from V4.5 stubs)
-//! ✅ fix: RSIStrategy (not RsiStrategy), RsiConfig.rsi_period field
-//! ✅ fix: construct strategy-native *Config types from TOML *StrategyConfig fields
+//! ✅ fix: RSIStrategy caps, strategy-native *Config types
+//! ✅ fix: mean_period (not sma_period), ..default() pattern for min_confidence
+//!    Rule: always use ..Strategy::default() — native *Config structs may have
+//!    fields not present in TOML; defaults are set by the strategy, not us.
 //!
 //! V4.5 CHANGES (fix/grid-init-with-live-price):
 //! ✅ initialize_with_price(&feed) — async grid init with real price
@@ -17,15 +16,10 @@
 //! V4.4 CHANGES (Stage 3 - Fill Fan-out):
 //! ✅ spacing_mode wired to GridRebalancerConfig (VolatilityBuckets default)
 //! ✅ drain_fills() -> notify_fill() integrated in process_price_update
-//!    Full Stage 3 pipeline: tick -> fill -> drain -> fan-out -> on_fill
 //!
 //! V4.3 ENHANCEMENTS - Fill Tracking & Learning:
-//! ✅ GridLevel pairing (buy/sell orders linked)
-//! ✅ Safe reposition (preserves filled buys)
-//! ✅ Order lifecycle tracking per level
-//! ✅ ENHANCED METRICS - Trade-level analytics
-//! ✅ ADAPTIVE OPTIMIZER - Self-learning grid
-//! ✅ Smart spacing based on drawdown
+//! ✅ GridLevel pairing, safe reposition, order lifecycle, enhanced metrics
+//! ✅ Adaptive optimizer — self-learning grid spacing
 //!
 //! March 2026 - V5.1 STRATEGY WIRING
 //! ═══════════════════════════════════════════════════════════════════
@@ -105,11 +99,15 @@ impl GridBot {
         info!("[BOT-V5.1] ✅ GridRebalancer loaded (weight={:.1})", config.strategies.grid.weight);
 
         // ─── Strategy 2: Momentum ─────────────────────────────────────────────
+        // Pattern: explicit TOML fields first, ..default() for any native-only
+        // fields (e.g. min_confidence). Strategy defaults are well-tested; we
+        // only override what the user explicitly tuned in TOML.
         if config.strategies.momentum.enabled {
             info!("[BOT-V5.1] Loading Momentum strategy from config...");
             let cfg = MomentumConfig {
                 lookback_period: config.strategies.momentum.lookback_period,
                 threshold:       config.strategies.momentum.threshold,
+                ..MomentumConfig::default()
             };
             let strategy = MomentumStrategy::new_from_config(&cfg);
             manager.add_strategy(strategy);
@@ -120,34 +118,33 @@ impl GridBot {
         }
 
         // ─── Strategy 3: Mean Reversion ───────────────────────────────────────
+        // MeanReversionConfig field: mean_period (not sma_period).
+        // Threshold bands live inside MeanReversionStrategy — not exposed
+        // in the native Config; strategy owns those defaults.
         if config.strategies.mean_reversion.enabled {
             info!("[BOT-V5.1] Loading MeanReversion strategy from config...");
             let cfg = MeanReversionConfig {
-                sma_period:           config.strategies.mean_reversion.sma_period,
-                std_dev_multiplier:   config.strategies.mean_reversion.std_dev_multiplier,
-                strong_buy_threshold: config.strategies.mean_reversion.strong_buy_threshold,
-                buy_threshold:        config.strategies.mean_reversion.buy_threshold,
-                strong_sell_threshold:config.strategies.mean_reversion.strong_sell_threshold,
-                sell_threshold:       config.strategies.mean_reversion.sell_threshold,
+                mean_period: config.strategies.mean_reversion.sma_period,
+                ..MeanReversionConfig::default()
             };
             let strategy = MeanReversionStrategy::new_from_config(&cfg);
             manager.add_strategy(strategy);
-            info!("[BOT-V5.1] ✅ MeanReversion loaded (weight={:.1}, sma={}, stddev={:.1})",
+            info!("[BOT-V5.1] ✅ MeanReversion loaded (weight={:.1}, mean_period={})",
                   config.strategies.mean_reversion.weight,
-                  config.strategies.mean_reversion.sma_period,
-                  config.strategies.mean_reversion.std_dev_multiplier);
+                  config.strategies.mean_reversion.sma_period);
         }
 
-        // ─── Strategy 4: RSI ──────────────────────────────────────────────────
+        // ─── Strategy 4: RSI ──────────────────────────════════════════════════
+        // RsiConfig.rsi_period (not `period`) — field name differs from TOML.
+        // All 5 fields fully explicit: no threshold lives outside this struct.
         if config.strategies.rsi.enabled {
             info!("[BOT-V5.1] Loading RSI strategy from config...");
-            // NOTE: RsiConfig uses `rsi_period` (not `period`) — field name differs from TOML.
             let cfg = RsiConfig {
-                rsi_period:          config.strategies.rsi.period,
-                oversold_threshold:  config.strategies.rsi.oversold_threshold,
-                overbought_threshold:config.strategies.rsi.overbought_threshold,
-                extreme_oversold:    config.strategies.rsi.extreme_oversold,
-                extreme_overbought:  config.strategies.rsi.extreme_overbought,
+                rsi_period:           config.strategies.rsi.period,
+                oversold_threshold:   config.strategies.rsi.oversold_threshold,
+                overbought_threshold: config.strategies.rsi.overbought_threshold,
+                extreme_oversold:     config.strategies.rsi.extreme_oversold,
+                extreme_overbought:   config.strategies.rsi.extreme_overbought,
             };
             let strategy = RSIStrategy::new_from_config(&cfg);
             manager.add_strategy(strategy);
@@ -166,6 +163,7 @@ impl GridBot {
             let cfg = MomentumMACDConfig {
                 strong_histogram_threshold: config.strategies.momentum_macd.strong_histogram_threshold,
                 min_warmup_periods:         config.strategies.momentum_macd.min_warmup_periods,
+                ..MomentumMACDConfig::default()
             };
             let strategy = MomentumMACDStrategy::new_from_config(&cfg);
             manager.add_strategy(strategy);
@@ -214,21 +212,15 @@ impl GridBot {
         })
     }
 
-    /// Lightweight async hook kept for backward compat — no-op since V4.5
-    /// uses initialize_with_price() for real grid placement.
     pub async fn initialize(&mut self) -> Result<()> {
         info!("[BOT] Async pre-init hook complete (grid placement handled by initialize_with_price)");
         Ok(())
     }
 
-    /// ═══════════════════════════════════════════════════════════════════
-    /// V4.5 FIX: Async Grid Initialization with Live Price Feed
-    /// ═══════════════════════════════════════════════════════════════════
     pub async fn initialize_with_price(&mut self, feed: &PriceFeed) -> Result<()> {
         info!("┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓");
         info!("┃  V5.1 GRID INIT — awaiting live price...       ┃");
         info!("┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛");
-
         let initial_price = feed.latest_price().await;
         if initial_price <= 0.0 {
             bail!("Invalid initial price ${:.2} — cannot initialize grid", initial_price);
@@ -283,7 +275,7 @@ impl GridBot {
                 .context("Emergency grid initialization failed")?;
             self.grid_initialized = true;
             let total_levels = self.config.trading.grid_levels as usize;
-            let used_levels = self.grid_state.count().await;
+            let used_levels  = self.grid_state.count().await;
             self.enhanced_metrics.update_grid_stats(total_levels, used_levels);
             info!("[BOT] Emergency grid init complete — normal trading resumes next cycle");
             return Ok(());
