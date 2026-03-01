@@ -26,26 +26,50 @@ use anyhow::Result;
 use std::collections::VecDeque;
 
 // ═══════════════════════════════════════════════════════════════════════════
-// CONFIGURATION
+// DEFAULTS (module-private — callers use MeanReversionConfig)
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Period for calculating the mean (moving average)
-const MEAN_PERIOD: usize = 20;
+const DEFAULT_MEAN_PERIOD: usize = 20;
+const DEFAULT_STRONG_BUY_THRESHOLD: f64 = 5.0;
+const DEFAULT_BUY_THRESHOLD: f64 = 2.5;
+const DEFAULT_STRONG_SELL_THRESHOLD: f64 = 5.0;
+const DEFAULT_SELL_THRESHOLD: f64 = 2.5;
+const DEFAULT_MIN_CONFIDENCE: f64 = 0.6;
 
-/// Strong buy threshold (% below mean)
-const STRONG_BUY_THRESHOLD: f64 = 5.0;
+// ═══════════════════════════════════════════════════════════════════════════
+// MEAN REVERSION CONFIG
+// ═══════════════════════════════════════════════════════════════════════════
 
-/// Regular buy threshold
-const BUY_THRESHOLD: f64 = 2.5;
+/// Runtime-tunable parameters for the Mean Reversion strategy.
+/// Sourced from TOML at startup — zero hardcoded decisions in the hot path.
+#[derive(Debug, Clone)]
+pub struct MeanReversionConfig {
+    /// Period for calculating the mean (moving average) (default: 20)
+    pub mean_period: usize,
+    /// Strong buy threshold — % below mean triggers StrongBuy (default: 5.0)
+    pub strong_buy_threshold: f64,
+    /// Regular buy threshold — % below mean triggers Buy (default: 2.5)
+    pub buy_threshold: f64,
+    /// Strong sell threshold — % above mean triggers StrongSell (default: 5.0)
+    pub strong_sell_threshold: f64,
+    /// Regular sell threshold — % above mean triggers Sell (default: 2.5)
+    pub sell_threshold: f64,
+    /// Minimum confidence for signals (default: 0.6)
+    pub min_confidence: f64,
+}
 
-/// Strong sell threshold (% above mean)
-const STRONG_SELL_THRESHOLD: f64 = 5.0;
-
-/// Regular sell threshold
-const SELL_THRESHOLD: f64 = 2.5;
-
-/// Minimum confidence for signals
-const MIN_CONFIDENCE: f64 = 0.6;
+impl Default for MeanReversionConfig {
+    fn default() -> Self {
+        Self {
+            mean_period: DEFAULT_MEAN_PERIOD,
+            strong_buy_threshold: DEFAULT_STRONG_BUY_THRESHOLD,
+            buy_threshold: DEFAULT_BUY_THRESHOLD,
+            strong_sell_threshold: DEFAULT_STRONG_SELL_THRESHOLD,
+            sell_threshold: DEFAULT_SELL_THRESHOLD,
+            min_confidence: DEFAULT_MIN_CONFIDENCE,
+        }
+    }
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // MEAN REVERSION STRATEGY
@@ -67,18 +91,37 @@ pub struct MeanReversionStrategy {
     
     /// Last signal
     last_signal: Option<Signal>,
+
+    // ── Config (captured at construction, immutable in hot path) ──────────
+    mean_period: usize,
+    strong_buy_threshold: f64,
+    buy_threshold: f64,
+    strong_sell_threshold: f64,
+    sell_threshold: f64,
+    min_confidence: f64,
 }
 
 impl MeanReversionStrategy {
-    /// Create new mean reversion strategy
-    pub fn new() -> Self {
+    /// Create from explicit config — preferred in production.
+    pub fn new_from_config(cfg: &MeanReversionConfig) -> Self {
         Self {
             name: "Mean Reversion".to_string(),
-            price_history: VecDeque::with_capacity(MEAN_PERIOD),
+            price_history: VecDeque::with_capacity(cfg.mean_period),
             current_mean: None,
             stats: StrategyStats::default(),
             last_signal: None,
+            mean_period: cfg.mean_period,
+            strong_buy_threshold: cfg.strong_buy_threshold,
+            buy_threshold: cfg.buy_threshold,
+            strong_sell_threshold: cfg.strong_sell_threshold,
+            sell_threshold: cfg.sell_threshold,
+            min_confidence: cfg.min_confidence,
         }
+    }
+
+    /// Create new mean reversion strategy with default parameters.
+    pub fn new() -> Self {
+        Self::new_from_config(&MeanReversionConfig::default())
     }
     
     /// Calculate Simple Moving Average (mean price)
@@ -106,13 +149,9 @@ impl MeanReversionStrategy {
     /// Calculate confidence based on deviation magnitude
     /// 
     /// Larger deviation = Higher confidence in reversion
-    fn calculate_confidence(deviation: f64) -> f64 {
+    fn calculate_confidence(&self, deviation: f64) -> f64 {
         let abs_dev = deviation.abs();
-        
-        // Scale confidence based on deviation
-        // 0% deviation = 0% confidence
-        // 5%+ deviation = 100% confidence
-        (abs_dev / 5.0).min(1.0)
+        (abs_dev / self.strong_buy_threshold).min(1.0)
     }
     
     /// Calculate standard deviation (volatility measure)
@@ -149,12 +188,12 @@ impl Strategy for MeanReversionStrategy {
         self.price_history.push_back(price);
         
         // Keep only required number of prices
-        if self.price_history.len() > MEAN_PERIOD {
+        if self.price_history.len() > self.mean_period {
             self.price_history.pop_front();
         }
         
         // STEP 2: Need enough data to calculate mean
-        if self.price_history.len() < MEAN_PERIOD {
+        if self.price_history.len() < self.mean_period {
             self.stats.signals_generated += 1;
             self.stats.hold_signals += 1;
             return Ok(Signal::Hold { reason: None });
@@ -168,55 +207,55 @@ impl Strategy for MeanReversionStrategy {
         let deviation = Self::calculate_deviation(price, mean);
         
         // STEP 5: Calculate confidence
-        let confidence = Self::calculate_confidence(deviation);
+        let confidence = self.calculate_confidence(deviation);
         
         // STEP 6: Generate trading signal based on deviation
-        let signal = if deviation <= -STRONG_BUY_THRESHOLD {
+        let signal = if deviation <= -self.strong_buy_threshold {
             // 🟢 Price way below mean - STRONG BUY!
             self.stats.buy_signals += 1;
             Signal::StrongBuy {
                 price,
                 size: 1.0,
-                confidence: confidence.max(MIN_CONFIDENCE),
+                confidence: confidence.max(self.min_confidence),
                 reason: format!(
                     "Price {:.1}% below mean (${:.2}) - Strong reversion expected",
                     deviation.abs(), mean
                 ),
                 level_id: None,
             }
-        } else if deviation <= -BUY_THRESHOLD {
+        } else if deviation <= -self.buy_threshold {
             // 🟩 Price below mean - BUY
             self.stats.buy_signals += 1;
             Signal::Buy {
                 price,
                 size: 0.5,
-                confidence: confidence.max(MIN_CONFIDENCE * 0.7),
+                confidence: confidence.max(self.min_confidence * 0.7),
                 reason: format!(
                     "Price {:.1}% below mean (${:.2})",
                     deviation.abs(), mean
                 ),
                 level_id: None,
             }
-        } else if deviation >= STRONG_SELL_THRESHOLD {
+        } else if deviation >= self.strong_sell_threshold {
             // 🔴 Price way above mean - STRONG SELL!
             self.stats.sell_signals += 1;
             Signal::StrongSell {
                 price,
                 size: 1.0,
-                confidence: confidence.max(MIN_CONFIDENCE),
+                confidence: confidence.max(self.min_confidence),
                 reason: format!(
                     "Price {:.1}% above mean (${:.2}) - Strong reversion expected",
                     deviation, mean
                 ),
                 level_id: None,
             }
-        } else if deviation >= SELL_THRESHOLD {
+        } else if deviation >= self.sell_threshold {
             // 🟥 Price above mean - SELL
             self.stats.sell_signals += 1;
             Signal::Sell {
                 price,
                 size: 0.5,
-                confidence: confidence.max(MIN_CONFIDENCE * 0.7),
+                confidence: confidence.max(self.min_confidence * 0.7),
                 reason: format!(
                     "Price {:.1}% above mean (${:.2})",
                     deviation, mean
@@ -266,6 +305,22 @@ mod tests {
     async fn test_mean_reversion_creation() {
         let strategy = MeanReversionStrategy::new();
         assert_eq!(strategy.name(), "Mean Reversion");
+    }
+
+    #[tokio::test]
+    async fn test_config_driven_creation() {
+        let cfg = MeanReversionConfig {
+            mean_period: 15,
+            strong_buy_threshold: 7.0,
+            buy_threshold: 3.5,
+            strong_sell_threshold: 7.0,
+            sell_threshold: 3.5,
+            min_confidence: 0.7,
+        };
+        let s = MeanReversionStrategy::new_from_config(&cfg);
+        assert_eq!(s.mean_period, 15);
+        assert!((s.strong_buy_threshold - 7.0).abs() < f64::EPSILON);
+        assert!((s.min_confidence - 0.7).abs() < f64::EPSILON);
     }
     
     #[tokio::test]

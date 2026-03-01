@@ -24,23 +24,46 @@ use anyhow::Result;
 use std::collections::VecDeque;
 
 // ═══════════════════════════════════════════════════════════════════════════
-// CONFIGURATION
+// DEFAULTS (module-private — callers use RsiConfig)
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// RSI calculation period (standard is 14)
-const RSI_PERIOD: usize = 14;
+const DEFAULT_RSI_PERIOD: usize = 14;
+const DEFAULT_OVERSOLD_THRESHOLD: f64 = 30.0;
+const DEFAULT_OVERBOUGHT_THRESHOLD: f64 = 70.0;
+const DEFAULT_EXTREME_OVERSOLD: f64 = 20.0;
+const DEFAULT_EXTREME_OVERBOUGHT: f64 = 80.0;
 
-/// Oversold threshold (buy zone)
-const OVERSOLD_THRESHOLD: f64 = 30.0;
+// ═══════════════════════════════════════════════════════════════════════════
+// RSI CONFIG
+// ═══════════════════════════════════════════════════════════════════════════
 
-/// Overbought threshold (sell zone)
-const OVERBOUGHT_THRESHOLD: f64 = 70.0;
+/// Runtime-tunable parameters for the RSI strategy.
+/// Sourced from TOML at startup — zero hardcoded decisions in the hot path.
+#[derive(Debug, Clone)]
+pub struct RsiConfig {
+    /// RSI calculation period (default: 14)
+    pub rsi_period: usize,
+    /// Oversold threshold — RSI below this = potential buy (default: 30.0)
+    pub oversold_threshold: f64,
+    /// Overbought threshold — RSI above this = potential sell (default: 70.0)
+    pub overbought_threshold: f64,
+    /// Extreme oversold — triggers StrongBuy (default: 20.0)
+    pub extreme_oversold: f64,
+    /// Extreme overbought — triggers StrongSell (default: 80.0)
+    pub extreme_overbought: f64,
+}
 
-/// Extreme oversold (strong buy)
-const EXTREME_OVERSOLD: f64 = 20.0;
-
-/// Extreme overbought (strong sell)
-const EXTREME_OVERBOUGHT: f64 = 80.0;
+impl Default for RsiConfig {
+    fn default() -> Self {
+        Self {
+            rsi_period: DEFAULT_RSI_PERIOD,
+            oversold_threshold: DEFAULT_OVERSOLD_THRESHOLD,
+            overbought_threshold: DEFAULT_OVERBOUGHT_THRESHOLD,
+            extreme_oversold: DEFAULT_EXTREME_OVERSOLD,
+            extreme_overbought: DEFAULT_EXTREME_OVERBOUGHT,
+        }
+    }
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // RSI STRATEGY
@@ -71,21 +94,38 @@ pub struct RSIStrategy {
     
     /// Last signal
     last_signal: Option<Signal>,
+
+    // ── Config (captured at construction, immutable in hot path) ──────────
+    rsi_period: usize,
+    oversold_threshold: f64,
+    overbought_threshold: f64,
+    extreme_oversold: f64,
+    extreme_overbought: f64,
 }
 
 impl RSIStrategy {
-    /// Create new RSI strategy
-    pub fn new() -> Self {
+    /// Create from explicit config — preferred in production.
+    pub fn new_from_config(cfg: &RsiConfig) -> Self {
         Self {
-            name: "RSI (14)".to_string(),
-            price_history: VecDeque::with_capacity(RSI_PERIOD + 1),
+            name: format!("RSI ({})", cfg.rsi_period),
+            price_history: VecDeque::with_capacity(cfg.rsi_period + 1),
             avg_gain: 0.0,
             avg_loss: 0.0,
             current_rsi: None,
             prev_price: None,
             stats: StrategyStats::default(),
             last_signal: None,
+            rsi_period: cfg.rsi_period,
+            oversold_threshold: cfg.oversold_threshold,
+            overbought_threshold: cfg.overbought_threshold,
+            extreme_oversold: cfg.extreme_oversold,
+            extreme_overbought: cfg.extreme_overbought,
         }
+    }
+
+    /// Create new RSI strategy with default parameters.
+    pub fn new() -> Self {
+        Self::new_from_config(&RsiConfig::default())
     }
     
     /// Calculate RSI value
@@ -104,27 +144,27 @@ impl RSIStrategy {
         Some(rsi)
     }
     
-    /// Update average gain and loss with new price
-    /// 
-    /// Uses smoothed moving average (Wilder's method):
-    /// New Average = ((Previous Average × 13) + Current Change) / 14
+    /// Update average gain and loss with new price using Wilder's smoothing.
+    /// Uses (period-1)/period ratio — correct for any configured RSI period.
     fn update_averages(&mut self, price: f64) {
         if let Some(prev_price) = self.prev_price {
             let change = price - prev_price;
             
             // First RSI calculation (initial averages)
-            if self.price_history.len() == RSI_PERIOD {
+            if self.price_history.len() == self.rsi_period {
                 let (gains, losses) = self.calculate_initial_averages();
                 self.avg_gain = gains;
                 self.avg_loss = losses;
-            } else if self.price_history.len() > RSI_PERIOD {
+            } else if self.price_history.len() > self.rsi_period {
+                let smooth_prev = (self.rsi_period - 1) as f64;
+                let smooth_denom = self.rsi_period as f64;
                 // Subsequent calculations (smoothed)
                 if change > 0.0 {
-                    self.avg_gain = ((self.avg_gain * 13.0) + change) / 14.0;
-                    self.avg_loss = (self.avg_loss * 13.0) / 14.0;
+                    self.avg_gain = ((self.avg_gain * smooth_prev) + change) / smooth_denom;
+                    self.avg_loss = (self.avg_loss * smooth_prev) / smooth_denom;
                 } else {
-                    self.avg_gain = (self.avg_gain * 13.0) / 14.0;
-                    self.avg_loss = ((self.avg_loss * 13.0) + change.abs()) / 14.0;
+                    self.avg_gain = (self.avg_gain * smooth_prev) / smooth_denom;
+                    self.avg_loss = ((self.avg_loss * smooth_prev) + change.abs()) / smooth_denom;
                 }
             }
         }
@@ -147,27 +187,22 @@ impl RSIStrategy {
             }
         }
         
-        (total_gain / RSI_PERIOD as f64, total_loss / RSI_PERIOD as f64)
+        (total_gain / self.rsi_period as f64, total_loss / self.rsi_period as f64)
     }
     
     /// Calculate confidence based on RSI extremity
     /// 
     /// More extreme RSI = Higher confidence
     fn calculate_confidence(&self, rsi: f64) -> f64 {
-        if rsi <= EXTREME_OVERSOLD {
-            // Extremely oversold: 100% confidence
+        if rsi <= self.extreme_oversold {
             1.0
-        } else if rsi < OVERSOLD_THRESHOLD {
-            // Oversold: Scale confidence (70-100%)
-            0.7 + (0.3 * (OVERSOLD_THRESHOLD - rsi) / (OVERSOLD_THRESHOLD - EXTREME_OVERSOLD))
-        } else if rsi >= EXTREME_OVERBOUGHT {
-            // Extremely overbought: 100% confidence
+        } else if rsi < self.oversold_threshold {
+            0.7 + (0.3 * (self.oversold_threshold - rsi) / (self.oversold_threshold - self.extreme_oversold))
+        } else if rsi >= self.extreme_overbought {
             1.0
-        } else if rsi > OVERBOUGHT_THRESHOLD {
-            // Overbought: Scale confidence (70-100%)
-            0.7 + (0.3 * (rsi - OVERBOUGHT_THRESHOLD) / (EXTREME_OVERBOUGHT - OVERBOUGHT_THRESHOLD))
+        } else if rsi > self.overbought_threshold {
+            0.7 + (0.3 * (rsi - self.overbought_threshold) / (self.extreme_overbought - self.overbought_threshold))
         } else {
-            // Neutral zone: Low confidence
             0.5
         }
     }
@@ -188,7 +223,7 @@ impl Strategy for RSIStrategy {
         self.price_history.push_back(price);
         
         // Keep only required prices
-        if self.price_history.len() > RSI_PERIOD + 1 {
+        if self.price_history.len() > self.rsi_period + 1 {
             self.price_history.pop_front();
         }
         
@@ -196,7 +231,7 @@ impl Strategy for RSIStrategy {
         self.update_averages(price);
         
         // STEP 3: Need enough data to calculate RSI
-        if self.price_history.len() < RSI_PERIOD {
+        if self.price_history.len() < self.rsi_period {
             self.stats.signals_generated += 1;
             self.stats.hold_signals += 1;
             return Ok(Signal::Hold { reason: None });
@@ -210,7 +245,7 @@ impl Strategy for RSIStrategy {
         let confidence = self.calculate_confidence(rsi);
         
         // STEP 6: Generate trading signal
-        let signal = if rsi <= EXTREME_OVERSOLD {
+        let signal = if rsi <= self.extreme_oversold {
             // 🟢 Extremely oversold - STRONG BUY!
             self.stats.buy_signals += 1;
             Signal::StrongBuy {
@@ -220,7 +255,7 @@ impl Strategy for RSIStrategy {
                 reason: format!("RSI {:.1} - Extremely oversold!", rsi),
                 level_id: None,
             }
-        } else if rsi < OVERSOLD_THRESHOLD {
+        } else if rsi < self.oversold_threshold {
             // 🟩 Oversold - BUY
             self.stats.buy_signals += 1;
             Signal::Buy {
@@ -230,7 +265,7 @@ impl Strategy for RSIStrategy {
                 reason: format!("RSI {:.1} - Oversold", rsi),
                 level_id: None,
             }
-        } else if rsi >= EXTREME_OVERBOUGHT {
+        } else if rsi >= self.extreme_overbought {
             // 🔴 Extremely overbought - STRONG SELL!
             self.stats.sell_signals += 1;
             Signal::StrongSell {
@@ -240,7 +275,7 @@ impl Strategy for RSIStrategy {
                 reason: format!("RSI {:.1} - Extremely overbought!", rsi),
                 level_id: None,
             }
-        } else if rsi > OVERBOUGHT_THRESHOLD {
+        } else if rsi > self.overbought_threshold {
             // 🟥 Overbought - SELL
             self.stats.sell_signals += 1;
             Signal::Sell {
@@ -296,6 +331,21 @@ mod tests {
     async fn test_rsi_creation() {
         let strategy = RSIStrategy::new();
         assert_eq!(strategy.name(), "RSI (14)");
+    }
+
+    #[tokio::test]
+    async fn test_config_driven_creation() {
+        let cfg = RsiConfig {
+            rsi_period: 10,
+            oversold_threshold: 25.0,
+            overbought_threshold: 75.0,
+            extreme_oversold: 15.0,
+            extreme_overbought: 85.0,
+        };
+        let s = RSIStrategy::new_from_config(&cfg);
+        assert_eq!(s.name(), "RSI (10)");
+        assert_eq!(s.rsi_period, 10);
+        assert!((s.oversold_threshold - 25.0).abs() < f64::EPSILON);
     }
     
     #[tokio::test]
