@@ -1,6 +1,10 @@
 //! ═══════════════════════════════════════════════════════════════════════════
-//! 🚀 PRODUCTION PRICE FEED V3.0 - MASTER EDITION
+//! 🚀 PRODUCTION PRICE FEED V3.1 - MASTER EDITION
 //! 
+//! V3.1 CHANGES (fix/volatility-4dp):
+//! ✅ volatility() returns true percentage (σ/μ × 100)
+//! ✅ Was returning raw CoV ratio — displayed as 0.00% for low-vol sessions
+//!
 //! Hybrid Architecture with Industry Best Practices:
 //! ✅ HTTP Primary (Working & Reliable)
 //! ✅ WebSocket Ready (Feature-gated for future)
@@ -11,7 +15,7 @@
 //! ✅ 100% API Compatibility
 //! ✅ ZERO WARNINGS - Production Clean
 //! 
-//! Compatible with: GridBot V3.0, All Test Suites
+//! Compatible with: GridBot V4.5, All Test Suites
 //! ═══════════════════════════════════════════════════════════════════════════
 
 use chrono::{DateTime, Utc};
@@ -168,7 +172,7 @@ impl PriceFeed {
     
     /// Create with specific Pyth feed ID
     pub fn new_with_feed_id(window_size: usize, feed_id: String) -> Self {
-        info!("🚀 Initializing Production Price Feed V3.0");
+        info!("🚀 Initializing Production Price Feed V3.1");
         info!("   Architecture: HTTP-First (WebSocket-Ready)");
         info!("   Feed ID: {}...", &feed_id[..42]);
         
@@ -426,19 +430,27 @@ impl PriceFeed {
         *self.mode.read().await
     }
 
+    /// Returns volatility as a true percentage value.
+    ///
+    /// Calculation: coefficient of variation × 100 → (σ / μ) × 100
+    /// Example: if σ/μ = 0.000034, this returns 0.0034 (meaning 0.0034%)
+    ///
+    /// The caller displays this directly as `{:.4}%` — no further scaling needed.
+    /// Returns 0.0 if fewer than 2 price points exist in history.
     pub async fn volatility(&self) -> f64 {
         let hist = self.history.read().await;
         if hist.len() < 2 { return 0.0; }
-        
+
         let prices: Vec<f64> = hist.iter().map(|p| p.price).collect();
         let mean = prices.iter().sum::<f64>() / prices.len() as f64;
         if mean == 0.0 { return 0.0; }
-        
+
         let variance = prices.iter()
             .map(|p| (p - mean).powi(2))
             .sum::<f64>() / prices.len() as f64;
-        
-        (variance.sqrt() / mean).abs()
+
+        // ✅ Multiply by 100 → return as percentage, not raw ratio
+        (variance.sqrt() / mean) * 100.0
     }
     
     pub async fn get_metrics(&self) -> PriceFeedMetrics {
@@ -540,9 +552,26 @@ mod tests {
     }
     
     #[tokio::test]
-    async fn test_volatility_calculation() {
+    async fn test_volatility_empty() {
         let feed = PriceFeed::new(10);
         let vol = feed.volatility().await;
         assert_eq!(vol, 0.0); // No history yet
+    }
+
+    #[tokio::test]
+    async fn test_volatility_returns_percentage() {
+        // Manually inject history to verify ×100 scaling
+        let feed = PriceFeed::new(10);
+        {
+            let mut hist = feed.history.write().await;
+            // mean=100, small spread → CoV raw ≈ 0.01, as % ≈ 1.0
+            for p in [99.0_f64, 100.0, 101.0] {
+                hist.push_back(PricePoint { price: p, timestamp: Utc::now() });
+            }
+        }
+        let vol = feed.volatility().await;
+        // Should be ~0.816% (std_dev≈0.8165, mean=100)
+        assert!(vol > 0.5 && vol < 1.5,
+            "Expected vol ≈ 0.82%, got {:.6}", vol);
     }
 }

@@ -37,6 +37,11 @@
 //! ✅ GridBot::new(config) builds engine internally (grid_bot.rs:54)
 //! ✅ No longer inject engine from main.rs
 //!
+//! fix/volatility-4dp (Mar 2026):
+//! ✅ Vol display: {:>5.2}% → {:>8.4}% — 4 decimal places
+//! ✅ volatility() in price_feed.rs now returns true % (×100)
+//! ✅ Fixes Vol always showing 0.00% during low-volatility sessions
+//!
 //! October 17, 2025 — MASTER V3.5 | February 2026 — V3.8 Grid Init Fix 🔥
 //! ═══════════════════════════════════════════════════════════════════════════
 
@@ -423,8 +428,10 @@ async fn run_trading_loop(
                     "✓ Stable"
                 };
 
+                // Vol is now a true percentage (×100 applied in price_feed).
+                // {:>8.4}% shows 4 decimal places, e.g. "  0.0034%"
                 println!(
-                    "Cycle {:>4}/{:<4} | SOL ${:>9.4} | Vol {:>5.2}% | Fills {:>3} | Repos {:>3} | {}",
+                    "Cycle {:>4}/{:<4} | SOL ${:>9.4} | Vol {:>8.4}% | Fills {:>3} | Repos {:>3} | {}",
                     cycle, total_cycles,
                     price,
                     volatility,
