@@ -418,7 +418,7 @@ async fn run_trading_loop(
                 };
 
                 println!(
-                    "Cycle {:>4}/{:<4} | SOL ${:>9.4} | Vol {:>5.2}% | Fills {:>3} | Repos {:>3} | {}",
+                    "Cycle {:>4}/{:<4} | SOL ${:>9.4} | Vol {:>6.3}% | Fills {:>3} | Repos {:>3} | {}",
                     cycle, total_cycles,
                     price,
                     volatility,
