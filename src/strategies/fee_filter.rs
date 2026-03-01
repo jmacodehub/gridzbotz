@@ -20,7 +20,7 @@
 //! ═══════════════════════════════════════════════════════════════════════════
 
 use serde::{Deserialize, Serialize};
-use log::{debug, trace, warn};
+use log::{debug, trace};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
@@ -208,6 +208,7 @@ impl SmartFeeFilter {
         // Calculate expected gross profit
         let gross_profit = (exit_price - entry_price).abs() * position_size_sol;
         let gross_profit_pct = (gross_profit / (entry_price * position_size_sol)) * 100.0;
+        let _ = gross_profit_pct; // tracked for future analytics
         
         // Calculate net profit
         let net_profit = gross_profit - costs.total_cost;
@@ -461,43 +462,57 @@ pub struct FeeFilterStats {
 mod tests {
     use super::*;
     
+    /// Helper: build a filter with grace_period disabled so the cost/profit
+    /// logic runs immediately on the first check.
+    fn filter_no_grace() -> SmartFeeFilter {
+        SmartFeeFilter::new(SmartFeeFilterConfig {
+            grace_period_trades: 0,
+            ..SmartFeeFilterConfig::default()
+        })
+    }
+
     #[test]
     fn test_profitable_trade() {
-        let filter = SmartFeeFilter::default();
+        // grace_period_trades=0 so the cost/profit logic runs immediately.
+        // 5% gross profit at 2x multiplier with default fees + slippage
+        // produces positive net_profit well above the threshold.
+        let filter = filter_no_grace();
         
-        // Trade with good profit margin
         let entry = 100.0;
-        let exit = 105.0;  // 5% profit
+        let exit = 105.0;  // 5% gross profit
         let size = 1.0;
         
         let (should_execute, net_profit, _) = filter.should_execute_trade(
             entry, exit, size, 1.0, "MEDIUM_VOL"
         );
         
-        assert!(should_execute);
-        assert!(net_profit > 0.0);
+        assert!(should_execute, "5% profit trade should pass the fee filter");
+        assert!(net_profit > 0.0, "net_profit must be positive, got {}", net_profit);
     }
     
     #[test]
     fn test_unprofitable_trade() {
-        let filter = SmartFeeFilter::default();
+        // grace_period_trades=0 so filtering logic is active from the start.
+        // 0.1% gross profit is consumed entirely by fees+slippage (~0.16 USDC)
+        // leaving negative net_profit, well below the 2x cost threshold.
+        let filter = filter_no_grace();
         
-        // Trade with insufficient profit margin
         let entry = 100.0;
-        let exit = 100.1;  // Only 0.1% profit - fees will eat it
+        let exit = 100.1;  // Only 0.1% gross profit
         let size = 1.0;
         
         let (should_execute, _, _) = filter.should_execute_trade(
             entry, exit, size, 1.0, "MEDIUM_VOL"
         );
         
-        assert!(!should_execute);
+        assert!(!should_execute, "0.1% profit trade should be blocked by fee filter");
     }
     
     #[test]
     fn test_regime_adjustment() {
         let mut config = SmartFeeFilterConfig::default();
         config.enable_regime_adjustment = true;
+        config.grace_period_trades = 0;
         let filter = SmartFeeFilter::new(config);
         
         let entry = 100.0;
