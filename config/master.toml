@@ -294,3 +294,81 @@ enabled = false
 enabled = false
 # telegram_bot_token = "${TELEGRAM_BOT_TOKEN}"   # Set via .env
 # telegram_chat_id   = "${TELEGRAM_CHAT_ID}"     # Your chat or group ID
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  🔮 RESERVED FIELDS (Future Features — Safe to Leave Uncommented)
+#
+#  These fields are PARSED but NOT YET ACTIVE in the current release (V5.1).
+#  They're stubbed for future Stage 4+ features. Leaving them uncommented won't
+#  break anything — the bot simply ignores unused fields. This prevents "unknown
+#  field" errors when you upgrade to newer versions that activate these features.
+#
+#  You can safely include these in any config today. When the feature lands in a
+#  future release, just flip the `enable_*` flag to true — no config migration needed.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# ─── WebSocket Price Feed (Stage 4+) ─────────────────────────────────────────
+# Real-time streaming price updates (lower latency than HTTP polling).
+# Status: Stubbed in pyth_proxy.js, auto-reconnect logic ready.
+# [pyth]
+# enable_websocket = true                        # Switch from HTTP poll to WS stream
+# websocket_endpoint = "wss://hermes.pyth.network/ws"
+
+# ─── Telegram Alerts (Stage 4+) ──────────────────────────────────────────────
+# Push notifications for fills, circuit breaker trips, daily P&L summaries.
+# Status: Alert module stubbed, Telegram bot API integration pending.
+# [alerts]
+# enabled = true
+# telegram_bot_token = "${TELEGRAM_BOT_TOKEN}"   # Set via .env file
+# telegram_chat_id = "${TELEGRAM_CHAT_ID}"       # Your Telegram user/group ID
+
+# ─── Database Persistence (Stage 4+) ─────────────────────────────────────────
+# Store fills, performance metrics, and grid state in PostgreSQL.
+# Status: Schema design complete, ORM integration pending.
+# [database]
+# enabled = true
+# url = "postgres://user:pass@localhost:5432/gridzbotz"
+# pool_size = 5                                  # Max DB connection pool size
+
+# ─── AI-Driven Features (Stage 4+) ───────────────────────────────────────────
+# Adaptive grid spacing and confidence-based position sizing.
+# Status: RL model trained, production integration pending.
+# [trading]
+# enable_adaptive_spacing = true                 # ATR-driven dynamic spacing
+# enable_smart_position_sizing = true            # Confidence-based order sizing
+
+# ─── Multi-Timeframe Analysis (Stage 4+) ─────────────────────────────────────
+# Require strategy signals to align across multiple timeframes (e.g., 1m, 5m, 15m).
+# Status: Multi-timeframe indicator engine stubbed, consensus logic pending.
+# [strategies]
+# enable_multi_timeframe = true                  # Enable cross-timeframe checks
+# require_timeframe_alignment = true             # ALL timeframes must agree (stricter)
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  🤖 MULTI-BOT DEPLOYMENT NOTES
+#
+#  Run N independent bot instances with separate configs — no shared state.
+#
+#  Launch Pattern:
+#    gridzbotz --config config/sol_usdc_aggressive.toml --bot-id sol_agg &
+#    gridzbotz --config config/sol_usdc_conservative.toml --bot-id sol_con &
+#    gridzbotz --config config/bonk_usdc.toml --bot-id bonk_1 &
+#
+#  Per-Bot Config Requirements:
+#    - bot.instance_id:  unique label (appears in all logs and metrics)
+#    - pair:             token mints + symbols
+#    - strategy.mode:    grid_rebalancing | atr_dynamic | mean_reversion | ...
+#    - risk:             independent max_drawdown, daily_loss_cap, kill_switch
+#    - rpc:              primary + fallback pool (can be shared OR per-instance)
+#
+#  Isolation Guarantees:
+#    ✅ No shared mutable state between instances
+#    ✅ Each bot has its own config, risk limits, metrics port
+#    ✅ One bot's kill-switch never affects others
+#    ✅ Independent RPC pools (no cross-bot rate-limit bleed)
+#
+#  Monitoring:
+#    tail -f logs/*.log                          # All bot logs
+#    curl http://localhost:9090/metrics          # bot_id=sol_agg
+#    curl http://localhost:9091/metrics          # bot_id=sol_con
+# ═══════════════════════════════════════════════════════════════════════════════
