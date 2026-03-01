@@ -28,7 +28,9 @@
 //! ```
 
 use super::{Strategy, Signal, StrategyStats};
-use crate::indicators::{MACDState, MACD};
+// MACDState::update() returns MACDValues (pub fields: macd_line, signal_line, histogram).
+// macd::MACD is the object-based calculator — NOT what we need here.
+use crate::indicators::{MACDState, MACDValues};
 use async_trait::async_trait;
 use anyhow::Result;
 
@@ -54,11 +56,11 @@ pub struct MomentumMACDStrategy {
     /// Strategy name
     name: String,
     
-    /// MACD calculator state
+    /// MACD incremental calculator
     macd: MACDState,
     
-    /// Previous MACD values for crossover detection
-    prev_macd: Option<MACD>,
+    /// Previous MACD values for crossover detection (MACDValues, not macd::MACD)
+    prev_macd: Option<MACDValues>,
     
     /// Number of periods processed
     periods: usize,
@@ -83,8 +85,8 @@ impl MomentumMACDStrategy {
         }
     }
     
-    /// Detect MACD crossover
-    fn detect_crossover(&self, current: &MACD) -> Option<MACDCrossover> {
+    /// Detect MACD crossover by comparing current vs previous MACDValues
+    fn detect_crossover(&self, current: &MACDValues) -> Option<MACDCrossover> {
         if let Some(prev) = self.prev_macd {
             if prev.macd_line <= prev.signal_line && current.macd_line > current.signal_line {
                 return Some(MACDCrossover::Bullish);
@@ -96,14 +98,14 @@ impl MomentumMACDStrategy {
         None
     }
     
-    /// Calculate momentum strength from histogram
-    fn calculate_momentum_strength(&self, macd: &MACD) -> f64 {
+    /// Calculate momentum strength from histogram magnitude
+    fn calculate_momentum_strength(&self, macd: &MACDValues) -> f64 {
         let magnitude = macd.histogram.abs();
         (magnitude / STRONG_HISTOGRAM_THRESHOLD).min(1.0)
     }
     
     /// Check if histogram is expanding (momentum increasing)
-    fn is_histogram_expanding(&self, current: &MACD) -> bool {
+    fn is_histogram_expanding(&self, current: &MACDValues) -> bool {
         if let Some(prev) = self.prev_macd {
             current.histogram.abs() > prev.histogram.abs()
         } else {
@@ -112,8 +114,8 @@ impl MomentumMACDStrategy {
     }
     
     /// Calculate confidence based on multiple MACD factors
-    fn calculate_confidence(&self, macd: &MACD, price: f64) -> f64 {
-        let mut confidence = 0.0;
+    fn calculate_confidence(&self, macd: &MACDValues, price: f64) -> f64 {
+        let mut confidence: f64 = 0.0;
         
         let strength = self.calculate_momentum_strength(macd);
         confidence += strength * 0.4;
@@ -133,8 +135,8 @@ impl MomentumMACDStrategy {
         confidence.min(1.0)
     }
     
-    /// Determine trend from MACD position
-    fn get_trend(&self, macd: &MACD) -> Trend {
+    /// Determine trend from MACD position (uses MACDValues fields directly)
+    fn get_trend(&self, macd: &MACDValues) -> Trend {
         if macd.macd_line > 0.0 {
             if macd.histogram > 0.0 {
                 Trend::StrongBullish
@@ -183,8 +185,9 @@ impl Strategy for MomentumMACDStrategy {
     async fn analyze(&mut self, price: f64, _timestamp: i64) -> Result<Signal> {
         self.periods += 1;
         
-        // STEP 1: Update MACD with new price
-        let macd = self.macd.update(price).unwrap();
+        // STEP 1: Update MACD with new price.
+        // MACDState::update() always returns Some(MACDValues) — never None.
+        let macd = self.macd.update(price).expect("MACDState::update returned None");
         
         // STEP 2: Need warmup period for accurate MACD
         if self.periods < MIN_WARMUP_PERIODS {
