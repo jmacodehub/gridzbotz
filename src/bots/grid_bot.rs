@@ -1,25 +1,25 @@
 //! ═══════════════════════════════════════════════════════════════════
 //! GRID BOT V5.1 - ELITE AUTONOMOUS TRADING ORCHESTRATOR
 //!
-//! V5.1 CHANGES (PRs #29 / #30 / #31):
+//! V5.1 CHANGES (PRs #29 / #30 / #31 / #32):
 //! ✅ RSI, MeanReversion, Momentum, MomentumMACD wired into bot init
 //! ✅ fix: RSIStrategy caps, strategy-native *Config types
-//! ✅ fix: mean_period (not sma_period), ..default() pattern for min_confidence
-//!    Rule: always use ..Strategy::default() — native *Config structs may have
-//!    fields not present in TOML; defaults are set by the strategy, not us.
+//! ✅ fix: mean_period (not sma_period), ..default() for min_confidence
+//! ✅ fix: MomentumConfig.fast_period (not lookback_period/threshold)
 //!
-//! V4.5 CHANGES (fix/grid-init-with-live-price):
-//! ✅ initialize_with_price(&feed) — async grid init with real price
-//! ✅ Emergency safety check in reposition_grid() — zero silent failures
-//! ✅ Grid initialized BEFORE trading loop starts — Active Levels > 0
+//! Native *Config field mapping (TOML name -> strategy field name):
+//!   RsiStrategyConfig.period          -> RsiConfig.rsi_period
+//!   MomentumStrategyConfig.lookback_period -> MomentumConfig.fast_period
+//!   MeanReversionStrategyConfig.sma_period -> MeanReversionConfig.mean_period
+//!   MomentumMACDStrategyConfig.*      -> MomentumMACDConfig.* (match 1:1)
 //!
-//! V4.4 CHANGES (Stage 3 - Fill Fan-out):
-//! ✅ spacing_mode wired to GridRebalancerConfig (VolatilityBuckets default)
-//! ✅ drain_fills() -> notify_fill() integrated in process_price_update
+//! Rule: always use ..Strategy::default() -- native *Config structs may have
+//!   fields not in TOML (slow_period, min_confidence, etc.); strategy defaults
+//!   are well-tested. Only override what the user explicitly set in TOML.
 //!
-//! V4.3 ENHANCEMENTS - Fill Tracking & Learning:
-//! ✅ GridLevel pairing, safe reposition, order lifecycle, enhanced metrics
-//! ✅ Adaptive optimizer — self-learning grid spacing
+//! V4.5: initialize_with_price(&feed), emergency grid safety check
+//! V4.4: Fill fan-out (drain_fills -> notify_fill)
+//! V4.3: GridLevel pairing, adaptive optimizer, enhanced metrics
 //!
 //! March 2026 - V5.1 STRATEGY WIRING
 //! ═══════════════════════════════════════════════════════════════════
@@ -99,28 +99,26 @@ impl GridBot {
         info!("[BOT-V5.1] ✅ GridRebalancer loaded (weight={:.1})", config.strategies.grid.weight);
 
         // ─── Strategy 2: Momentum ─────────────────────────────────────────────
-        // Pattern: explicit TOML fields first, ..default() for any native-only
-        // fields (e.g. min_confidence). Strategy defaults are well-tested; we
-        // only override what the user explicitly tuned in TOML.
+        // TOML: lookback_period  ->  MomentumConfig.fast_period
+        // TOML: threshold        ->  internal constant (not in native Config)
+        // slow_period + min_confidence covered by ..default()
         if config.strategies.momentum.enabled {
             info!("[BOT-V5.1] Loading Momentum strategy from config...");
             let cfg = MomentumConfig {
-                lookback_period: config.strategies.momentum.lookback_period,
-                threshold:       config.strategies.momentum.threshold,
+                fast_period: config.strategies.momentum.lookback_period,
                 ..MomentumConfig::default()
             };
             let strategy = MomentumStrategy::new_from_config(&cfg);
             manager.add_strategy(strategy);
-            info!("[BOT-V5.1] ✅ Momentum loaded (weight={:.1}, lookback={}, threshold={:.3})",
+            info!("[BOT-V5.1] ✅ Momentum loaded (weight={:.1}, fast_period={})",
                   config.strategies.momentum.weight,
-                  config.strategies.momentum.lookback_period,
-                  config.strategies.momentum.threshold);
+                  config.strategies.momentum.lookback_period);
         }
 
         // ─── Strategy 3: Mean Reversion ───────────────────────────────────────
-        // MeanReversionConfig field: mean_period (not sma_period).
-        // Threshold bands live inside MeanReversionStrategy — not exposed
-        // in the native Config; strategy owns those defaults.
+        // TOML: sma_period  ->  MeanReversionConfig.mean_period
+        // Threshold bands are internal to the strategy; not in native Config.
+        // min_confidence covered by ..default()
         if config.strategies.mean_reversion.enabled {
             info!("[BOT-V5.1] Loading MeanReversion strategy from config...");
             let cfg = MeanReversionConfig {
@@ -134,9 +132,8 @@ impl GridBot {
                   config.strategies.mean_reversion.sma_period);
         }
 
-        // ─── Strategy 4: RSI ──────────────────────────════════════════════════
-        // RsiConfig.rsi_period (not `period`) — field name differs from TOML.
-        // All 5 fields fully explicit: no threshold lives outside this struct.
+        // ─── Strategy 4: RSI ──────────────────────────────────────────────────
+        // TOML: period -> RsiConfig.rsi_period (all 5 fields explicit, no unknowns)
         if config.strategies.rsi.enabled {
             info!("[BOT-V5.1] Loading RSI strategy from config...");
             let cfg = RsiConfig {
@@ -158,6 +155,7 @@ impl GridBot {
         }
 
         // ─── Strategy 5: Momentum MACD ────────────────────────────────────────
+        // TOML fields match 1:1; min_confidence covered by ..default()
         if config.strategies.momentum_macd.enabled {
             info!("[BOT-V5.1] Loading MomentumMACD strategy from config...");
             let cfg = MomentumMACDConfig {
