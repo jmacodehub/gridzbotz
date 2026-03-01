@@ -167,9 +167,14 @@ upper_price_bound   = 300.0          # USD — adjust to current SOL range
 # Guards against trading in ultra-flat / zero-volatility markets.
 # IMPORTANT: disabled here for paper/testing. Enable for production.
 #
+# ⚠️  UNIT SYSTEM (V3.9+): volatility() returns TRUE PERCENTAGE.
+#   Real SOL markets: ~0.001% – 0.010% per 100-cycle window.
+#   Safe production floor: 0.02% (filters only true dead-flat markets).
+#   DO NOT use raw-ratio values (e.g. 0.0002) — they belong to the old world.
+#
 #   enable_regime_gate = false  → always trade (demos, paper runs)
 #   enable_regime_gate = true   → respect min_volatility_to_trade
-#   min_volatility_to_trade     → 0.02 (2 BPS) is safe for real SOL markets
+#   min_volatility_to_trade     → 0.02 (= 0.02% true) is safe for real SOL markets
 #   pause_in_very_low_vol       → set true in production for extra safety
 enable_regime_gate       = false     # 🔥 DISABLED for paper/testing
 min_volatility_to_trade  = 0.0       # 0.0 = no minimum (any vol trades)
