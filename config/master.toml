@@ -7,6 +7,7 @@
 #  ✅ reposition_threshold_pct: Option B — GridRebalancer level-crossing tuning
 #  ✅ All silent defaults now explicit — 100% visible, zero hidden magic
 #  ✅ Future hooks documented — WebSocket, Telegram, WS URL all stubbed
+#  🆕 V5.1: Per-strategy tuning params (rsi_params, mean_reversion_params, momentum_macd_params)
 #
 #  Run modes:
 #    cargo run                                        → paper, master config
@@ -19,7 +20,7 @@
 #    cargo run -- --config config/optimized/multi-v5-ai.toml &
 # ═══════════════════════════════════════════════════════════════════════════════
 
-test_name = "Master V5.1 - Stage 3 Option B Ready"
+test_name = "Master V5.1 - Stage 3 Option B Ready + Strategy Params"
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  🤖 BOT CORE
@@ -235,6 +236,53 @@ min_confidence       = 0.7
 period               = 14            # Standard RSI period
 oversold_threshold   = 30.0          # RSI < 30 → oversold → buy signal
 overbought_threshold = 70.0          # RSI > 70 → overbought → sell signal
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  🎯 STRATEGY TUNING PARAMS (V5.1+) — Optional TOML overrides
+#
+#  When a strategy is enabled, you can override its internal tuning params here.
+#  If the section is omitted, the strategy falls back to its coded new() defaults.
+#
+#  🔧 RSI, MeanReversion, and MomentumMACD now read from TOML:
+#     - Uncomment the relevant [strategies.*_params] section below
+#     - Adjust thresholds / periods to taste
+#     - Run → strategy uses YOUR values instead of hardcoded defaults
+#
+#  This is the TOML bridge for PR #27 (new_from_config constructors).
+#  Zero code recompiles to tune — pure config-driven strategy behavior.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# ─── RSI Strategy Tuning ──────────────────────────────────────────────────────
+# Uncomment to override RsiStrategy::new() defaults.
+# These params control RSI threshold triggers and confidence scaling.
+#
+# [strategies.rsi_params]
+# rsi_period            = 14     # RSI calculation window (standard = 14)
+# oversold_threshold    = 30.0   # RSI < 30 → strong buy signal
+# overbought_threshold  = 70.0   # RSI > 70 → strong sell signal
+# extreme_oversold      = 20.0   # RSI < 20 → EXTREME buy (higher confidence)
+# extreme_overbought    = 80.0   # RSI > 80 → EXTREME sell (higher confidence)
+
+# ─── Mean Reversion Strategy Tuning ───────────────────────────────────────────
+# Uncomment to override MeanReversionStrategy::new() defaults.
+# These params control SMA-based band thresholds for entry/exit.
+#
+# [strategies.mean_reversion_params]
+# mean_period            = 20    # SMA lookback period (20 = default)
+# strong_buy_threshold   = 5.0   # Deviation > 5% below SMA → strong buy
+# buy_threshold          = 2.5   # Deviation > 2.5% below SMA → buy
+# strong_sell_threshold  = 5.0   # Deviation > 5% above SMA → strong sell
+# sell_threshold         = 2.5   # Deviation > 2.5% above SMA → sell
+# min_confidence         = 0.6   # Minimum confidence to act on signal
+
+# ─── Momentum MACD Strategy Tuning ────────────────────────────────────────────
+# Uncomment to override MomentumMACDStrategy::new() defaults.
+# These params control MACD crossover detection and signal confidence.
+#
+# [strategies.momentum_macd_params]
+# min_confidence             = 0.65   # Minimum confidence to act on MACD signal
+# strong_histogram_threshold = 0.5    # Histogram > 0.5 → strong buy/sell
+# min_warmup_periods         = 26     # Minimum bars before MACD is valid
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  🚨 RISK MANAGEMENT
