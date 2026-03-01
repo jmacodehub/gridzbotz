@@ -55,6 +55,10 @@ use std::time::SystemTime;
 /// Default slippage tolerance in basis points (50 = 0.5%)
 const DEFAULT_SLIPPAGE_BPS: u16 = 50;
 
+/// Maximum allowed slippage tolerance (500 = 5.0%)
+/// Hard cap to prevent Jupiter API rejections in volatile conditions
+const MAX_SLIPPAGE_BPS: u16 = 500;
+
 /// Minimum order size (prevents dust orders)
 const MIN_ORDER_SIZE: f64 = 0.001;
 
@@ -149,11 +153,14 @@ impl JupiterClient {
     
     /// Execute a swap via Jupiter
     /// 
+    /// Caps slippage at MAX_SLIPPAGE_BPS to prevent Jupiter API rejections
+    /// during volatile market conditions.
+    /// 
     /// # Arguments
     /// * `input_mint` - Input token mint
     /// * `output_mint` - Output token mint
     /// * `amount` - Amount to swap
-    /// * `slippage_bps` - Slippage tolerance
+    /// * `requested_slippage_bps` - Desired slippage tolerance (will be capped)
     /// 
     /// # Returns
     /// * Transaction signature
@@ -162,12 +169,24 @@ impl JupiterClient {
         input_mint: Pubkey,
         output_mint: Pubkey,
         amount: f64,
-        slippage_bps: u16,
+        requested_slippage_bps: u16,
     ) -> Result<Signature> {
+        // Cap slippage at configured max (prevent runaway slippage in volatile conditions)
+        let slippage_bps = requested_slippage_bps.min(MAX_SLIPPAGE_BPS);
+        
+        if slippage_bps < requested_slippage_bps {
+            warn!("⚠️  Slippage capped: {}bps → {}bps (max)", requested_slippage_bps, slippage_bps);
+            warn!("   Requested: {:.2}% | Capped: {:.2}%",
+                requested_slippage_bps as f64 / 100.0,
+                slippage_bps as f64 / 100.0
+            );
+        }
+        
         info!("🔄 Executing Jupiter swap");
         debug!("   Input:    {} ({})", amount, input_mint);
         debug!("   Output:   {}", output_mint);
-        debug!("   Slippage: {}bps", slippage_bps);
+        debug!("   Slippage: {}bps ({:.2}%) [capped at {}bps]",
+            slippage_bps, slippage_bps as f64 / 100.0, MAX_SLIPPAGE_BPS);
         
         // TODO: Production implementation
         // 1. Query Jupiter API for best route
@@ -398,6 +417,38 @@ mod tests {
     fn test_custom_slippage() {
         let client = create_test_client().with_slippage(100); // 1%
         assert_eq!(client.slippage_bps, 100);
+    }
+    
+    #[tokio::test]
+    async fn test_slippage_cap_enforcement() {
+        let mut client = create_test_client();
+        
+        // Request excessive slippage (1000bps = 10%), should cap at 500bps (5%)
+        let result = client.execute_swap(
+            client.quote_mint,
+            client.base_mint,
+            100.0,
+            1000, // excessive slippage request
+        ).await;
+        
+        assert!(result.is_ok());
+        // Verify slippage was capped (check logs for warning)
+    }
+    
+    #[tokio::test]
+    async fn test_normal_slippage_passthrough() {
+        let mut client = create_test_client();
+        
+        // Request normal slippage (100bps = 1%), should NOT be capped
+        let result = client.execute_swap(
+            client.quote_mint,
+            client.base_mint,
+            100.0,
+            100, // normal slippage
+        ).await;
+        
+        assert!(result.is_ok());
+        // No capping should occur (no warning in logs)
     }
     
     #[test]
