@@ -1,0 +1,51 @@
+# Battle Royale V6 - Config 1: Night Owl
+# Ultra Conservative Dead Zone Specialist
+# Edge Case: Survive vol <0.01% with tight gate + wide spacing
+
+bot_id = "night_owl_v6"
+execution_mode = "paper"
+
+[pair]
+base = "SOL"
+quote = "USDC"
+base_mint = "So11111111111111111111111111111111111111112"
+quote_mint = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+
+[strategy]
+mode = "grid_rebalancing"
+enable_regime_gate = true
+enable_adaptive_spacing = true
+
+# ULTRA tight gate - only trade if vol >3 bps
+min_volatility_to_trade = 0.03
+volatility_lookback_periods = 50
+
+# Wide spacing for safety during low vol
+grid_spacing_percent = 0.15     # 15 bps base
+adaptive_spacing_min = 0.12     # 12 bps minimum
+adaptive_spacing_max = 0.30     # 30 bps maximum
+grid_levels = 6
+capital_per_level_percent = 15.0  # 15% × 6 = 90% deployed
+
+[risk]
+max_drawdown_pct = 2.5
+daily_loss_cap_pct = 1.5
+max_position_size_pct = 18.0
+kill_switch_enabled = true
+kill_switch_threshold_pct = 4.0
+
+[execution]
+slippage_tolerance_min = 0.002  # 0.2% USDC floor
+slippage_tolerance_max = 0.025  # 2.5% cap
+dynamic_slippage_enabled = true
+jito_enabled = false  # Wide grids don't need MEV protection
+
+[rpc]
+primary_url = "https://solana-mainnet.core.chainstack.com/YOUR_KEY"
+fallback_url = "https://api.mainnet-beta.solana.com"
+pool_size = 6
+timeout_ms = 2000
+
+[observability]
+log_level = "info"
+metrics_port = 9091

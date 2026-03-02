@@ -1,0 +1,52 @@
+# Battle Royale V6 - Config 3: Scalper Pro
+# High-Frequency Assassin
+# Edge Case: Max fills during 0.05%-0.15% vol spikes
+
+bot_id = "scalper_pro_v6"
+execution_mode = "paper"
+
+[pair]
+base = "SOL"
+quote = "USDC"
+base_mint = "So11111111111111111111111111111111111111112"
+quote_mint = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+
+[strategy]
+mode = "grid_rebalancing"
+enable_regime_gate = true
+enable_adaptive_spacing = true
+
+# Loose gate - trade if vol >1 bps (aggressive)
+min_volatility_to_trade = 0.01
+volatility_lookback_periods = 20
+
+# TIGHT spacing for high-frequency fills
+grid_spacing_percent = 0.10     # 10 bps base
+adaptive_spacing_min = 0.06     # 6 bps ultra-tight
+adaptive_spacing_max = 0.15     # 15 bps maximum
+grid_levels = 10
+capital_per_level_percent = 9.0   # 9% × 10 = 90% deployed
+
+[risk]
+max_drawdown_pct = 5.0
+daily_loss_cap_pct = 3.0
+max_position_size_pct = 15.0  # Smaller per-trade for more fills
+kill_switch_enabled = true
+kill_switch_threshold_pct = 7.0
+
+[execution]
+slippage_tolerance_min = 0.002  # 0.2%
+slippage_tolerance_max = 0.050  # 5.0% for volatile moves
+dynamic_slippage_enabled = true
+jito_enabled = true
+jito_tip_sol = 0.0002  # $0.02 tips for MEV protection
+
+[rpc]
+primary_url = "https://solana-mainnet.core.chainstack.com/YOUR_KEY"
+fallback_url = "https://api.mainnet-beta.solana.com"
+pool_size = 10
+timeout_ms = 1000  # Faster for scalping
+
+[observability]
+log_level = "info"
+metrics_port = 9093

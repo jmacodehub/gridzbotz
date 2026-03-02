@@ -1,0 +1,50 @@
+# Battle Royale V6 - Config 5: Momentum Rider
+# Trend Follower
+# Edge Case: Catch 0.5%+ directional moves, ignore chop
+
+bot_id = "momentum_rider_v6"
+execution_mode = "paper"
+
+[pair]
+base = "SOL"
+quote = "USDC"
+base_mint = "So11111111111111111111111111111111111111112"
+quote_mint = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+
+[strategy]
+mode = "grid_rebalancing"
+enable_regime_gate = true
+enable_adaptive_spacing = false  # Static wide spacing
+
+# Wide gate - only strong trends (5 bps minimum)
+min_volatility_to_trade = 0.05
+volatility_lookback_periods = 100
+
+# WIDE spacing to ride big moves
+grid_spacing_percent = 0.25     # 25 bps
+grid_levels = 5
+capital_per_level_percent = 18.0  # 18% × 5 = 90%
+
+[risk]
+max_drawdown_pct = 6.0
+daily_loss_cap_pct = 4.0
+max_position_size_pct = 30.0  # Larger positions for trends
+kill_switch_enabled = true
+kill_switch_threshold_pct = 8.0
+
+[execution]
+slippage_tolerance_min = 0.005  # 0.5% allow more for momentum
+slippage_tolerance_max = 0.080  # 8.0% for large moves
+dynamic_slippage_enabled = true
+jito_enabled = true
+jito_tip_sol = 0.0003  # Higher tips for large trades
+
+[rpc]
+primary_url = "https://solana-mainnet.core.chainstack.com/YOUR_KEY"
+fallback_url = "https://api.mainnet-beta.solana.com"
+pool_size = 8
+timeout_ms = 2000
+
+[observability]
+log_level = "info"
+metrics_port = 9095

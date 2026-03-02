@@ -1,0 +1,52 @@
+# Battle Royale V6 - Config 7: Max Levels Titan
+# 15-Grid Monster
+# Edge Case: Test max grid capacity + capital efficiency
+
+bot_id = "max_levels_titan_v6"
+execution_mode = "paper"
+
+[pair]
+base = "SOL"
+quote = "USDC"
+base_mint = "So11111111111111111111111111111111111111112"
+quote_mint = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+
+[strategy]
+mode = "grid_rebalancing"
+enable_regime_gate = true
+enable_adaptive_spacing = true
+
+# Balanced gate
+min_volatility_to_trade = 0.02
+volatility_lookback_periods = 40
+
+# Tight spacing + MAX levels
+grid_spacing_percent = 0.10     # 10 bps
+adaptive_spacing_min = 0.08     # 8 bps
+adaptive_spacing_max = 0.15     # 15 bps
+grid_levels = 15  # 🔥 MAX GRIDS
+capital_per_level_percent = 6.0  # 6% × 15 = 90%
+
+[risk]
+max_drawdown_pct = 5.0
+daily_loss_cap_pct = 3.0
+max_position_size_pct = 10.0  # Small per-trade, high frequency
+kill_switch_enabled = true
+kill_switch_threshold_pct = 7.0
+
+[execution]
+slippage_tolerance_min = 0.002
+slippage_tolerance_max = 0.045
+dynamic_slippage_enabled = true
+jito_enabled = true
+jito_tip_sol = 0.00012
+
+[rpc]
+primary_url = "https://solana-mainnet.core.chainstack.com/YOUR_KEY"
+fallback_url = "https://api.mainnet-beta.solana.com"
+pool_size = 10
+timeout_ms = 1200
+
+[observability]
+log_level = "info"
+metrics_port = 9097
