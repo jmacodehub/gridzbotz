@@ -289,6 +289,59 @@ impl SecurityConfig {
         }
         Ok(())
     }
+        /// 🆕 V5.2 PR #45: Live mode security validation
+    pub fn validate_for_live_mode(&self) -> Result<()> {
+        use std::path::PathBuf;
+
+        // Step 1: Expand ~ if present
+        let expanded_path = if self.wallet_path.starts_with('~') {
+            let home = std::env::var("HOME")
+                .or_else(|_| std::env::var("USERPROFILE"))
+                .context("Cannot determine home directory for ~ expansion")?;
+            PathBuf::from(self.wallet_path.replacen('~', &home, 1))
+        } else {
+            PathBuf::from(&self.wallet_path)
+        };
+
+        // Step 2: Check file exists
+        if !expanded_path.exists() {
+            bail!(
+                "Wallet file not found: {}\n\
+                 Ensure security.wallet_path in your config points to a valid keypair file.",
+                expanded_path.display()
+            );
+        }
+
+        // Step 3: Check file is readable
+        if let Err(e) = fs::File::open(&expanded_path) {
+            bail!(
+                "Wallet file exists but cannot be read: {}\n\
+                 Error: {}\n\
+                 Check file permissions and ownership.",
+                expanded_path.display(), e
+            );
+        }
+
+        // Step 4: Check for insecure permissions on Unix
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if let Ok(metadata) = fs::metadata(&expanded_path) {
+                let mode = metadata.permissions().mode();
+                if mode & 0o004 != 0 {
+                    warn!(
+                        "⚠️ SECURITY: Wallet file is world-readable: {}\n\
+                         Fix with: chmod 600 {}",
+                        expanded_path.display(), expanded_path.display()
+                    );
+                }
+            }
+        }
+
+        info!("✅ Wallet file validated: {}", expanded_path.display());
+        Ok(())
+    }
+
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1578,6 +1631,10 @@ impl Config {
             info!("🔴 LIVE MODE DETECTED — validating execution config");
             self.execution.validate()
                 .context("Execution config validation failed")?;
+
+                        // 🆕 V5.2: Validate wallet file exists and is readable
+            self.security.validate_for_live_mode()
+                .context("Security config validation failed for live mode")?;
 
             // Extra safety: live mode requires production environment
             if self.network.cluster != "mainnet-beta" {
