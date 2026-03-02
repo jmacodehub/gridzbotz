@@ -1,5 +1,16 @@
 //! ═══════════════════════════════════════════════════════════════════════════
-//! 🚀 PROJECT FLASH V5.2 – Production Grid Trading Bot
+//! 🚀 PROJECT FLASH V5.3 – Production Grid Trading Bot
+//!
+//! V5.3 CHANGES (PR #39 - Security Config Wiring):
+//! ✅ config.security.keypair_path now passed to RealTradingEngine
+//! ✅ Each bot instance uses its configured keypair (not hardcoded default)
+//! ✅ Keypair path error messages show configured path for debugging
+//!
+//! V5.3 CHANGES (PR #38 - Real Execution Wiring):
+//! ✅ RealTradingEngine construction enabled for --mode live
+//! ✅ Capital safety validation (min $10 for live trading)
+//! ✅ Live SOL price passed to RealEngine for accurate NAV tracking
+//! ✅ Paper mode remains default, live is explicit opt-in
 //!
 //! V5.2 CHANGES (PR #36 - Multi-Bot Engine Injection):
 //! ✅ Engine builder in initialize_components() creates Paper or Real engine
@@ -26,7 +37,7 @@
 //! ✅ --mode paper|live CLI flag overrides bot.execution_mode in TOML
 //! ✅ Price feed starts BEFORE engine build — spacing_usd uses real price
 //! ✅ Engine builder branches: paper → PaperTradingEngine (fills + spacing)
-//!                             live  → honest bail! stub for Step 5
+//!                             live  → RealTradingEngine (Jupiter swaps)
 //! ✅ Slippage + fees driven from [execution] config, no hardcoded values
 //! ✅ Banner shows active mode, instance name, cluster, spacing
 //!
@@ -44,7 +55,7 @@
 //! ✅ volatility() in price_feed.rs now returns true % (×100)
 //! ✅ Fixes Vol always showing 0.00% during low-volatility sessions
 //!
-//! March 2026 — V5.2 Multi-Bot Engine Injection 🔥
+//! March 2026 — V5.3 Real Execution Wiring 🔥
 //! ═══════════════════════════════════════════════════════════════════════════
 
 use solana_grid_bot::init;
@@ -64,7 +75,7 @@ use clap::Parser;
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[derive(Parser, Debug)]
-#[clap(name = "gridzbotz", version = "5.2.0")]
+#[clap(name = "gridzbotz", version = "5.3.0")]
 #[clap(about = "Production-grade Solana grid trading bot", long_about = None)]
 struct Args {
     /// Configuration file path
@@ -235,8 +246,8 @@ fn print_banner(config: &Config) {
     };
 
     println!("\n{}", border);
-    println!("     🚀 GRIDZBOTZ V5.2 — PRODUCTION GRID TRADING BOT");
-    println!("     ⚡ Hybrid Feeds • 10Hz Cycles • Multi-Bot Engine Injection");
+    println!("     🚀 GRIDZBOTZ V5.3 — PRODUCTION GRID TRADING BOT");
+    println!("     ⚡ Hybrid Feeds • 10Hz Cycles • Real Execution Wired");
     println!("{}", border);
     println!("\n   Mode:        {}", mode_label);
     println!("   Instance:    {} | v{} | {}",
@@ -307,7 +318,7 @@ fn load_configuration(args: &Args) -> Result<Config> {
 // COMPONENT INITIALIZATION (Modular & Robust)
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// V5.2: Engine builder creates Paper or Real engine based on config.bot.execution_mode,
+/// V5.3: Engine builder creates Paper or Real engine based on config.bot.execution_mode,
 /// then injects it into GridBot::new(config, engine). Price feed starts first for banner.
 async fn initialize_components(config: &Config) -> Result<(GridBot, PriceFeed)> {
     info!("🔧 Initializing core components...");
@@ -351,9 +362,8 @@ async fn initialize_components(config: &Config) -> Result<(GridBot, PriceFeed)> 
             }
 
             let maker_fee_bps = 2.0;  // Default maker fee (0.02%)
-let taker_fee_bps = 4.0;  // Default taker fee (0.04%)
-let slippage_bps  = config.execution.max_slippage_bps;
-
+            let taker_fee_bps = 4.0;  // Default taker fee (0.04%)
+            let slippage_bps  = config.execution.max_slippage_bps;
 
             let maker_fee = maker_fee_bps as f64 / 10_000.0;
             let taker_fee = taker_fee_bps as f64 / 10_000.0;
@@ -370,11 +380,53 @@ let slippage_bps  = config.execution.max_slippage_bps;
             Arc::new(paper_engine)
         }
         "live" => {
-            // ── RealTradingEngine placeholder — implement in PR #37 ─────────────
-            anyhow::bail!(
-                "Live mode not yet implemented. RealTradingEngine coming in PR #37.\n\
-                 For now, use --mode paper or remove --mode flag."
-            );
+            info!("🔴 Constructing RealTradingEngine...");
+            
+            // ── Safety: Capital validation ─────────────────────────────────────
+            let initial_usdc = config.paper_trading.initial_usdc;
+            let initial_sol  = config.paper_trading.initial_sol;
+            let capital_usd  = initial_usdc + (initial_sol * initial_price);
+            
+            if capital_usd < 10.0 {
+                anyhow::bail!(
+                    "Live mode requires minimum $10 capital for safety.\n\
+                     Current: ${:.2} (USDC: ${:.2} + SOL: {:.4} @ ${:.4})\n\
+                     Increase initial_usdc or initial_sol in config.",
+                    capital_usd, initial_usdc, initial_sol, initial_price
+                );
+            }
+            
+            warn!("⚠️  LIVE MODE ACTIVE — Real money at risk!");
+            info!("   Capital:  ${:.2} USD (USDC: ${:.2} + SOL: {:.4} @ ${:.4})",
+                  capital_usd, initial_usdc, initial_sol, initial_price);
+            
+            // ── Build RealTradingEngine with config.security.keypair_path ──────
+            use solana_grid_bot::trading::real_trader::{RealTradingEngine, RealTradingConfig};
+            use solana_grid_bot::security::keystore::KeystoreConfig;
+            
+            // Create RealTradingConfig with keypair_path from [security] section
+            let mut real_config = RealTradingConfig::from_execution_config(&config.execution);
+            real_config.keystore = KeystoreConfig {
+                keypair_path: config.security.keypair_path.clone(),
+                max_transaction_amount_usdc: Some(config.execution.max_trade_size_usdc),
+                max_daily_trades: None,  // TODO: wire from config if needed
+                max_daily_volume_usdc: None,  // TODO: wire from config if needed
+            };
+            
+            info!("   Slippage: {:.4}%", real_config.slippage_bps.unwrap_or(50) as f64 / 100.0);
+            info!("   Keypair:  {}", config.security.keypair_path);
+            
+            let real_engine = RealTradingEngine::new(
+                real_config,
+                config,
+                initial_usdc,
+                initial_sol,
+                initial_price,  // Live price from feed for accurate NAV
+            ).await
+                .context("Failed to construct RealTradingEngine")?;
+            
+            info!("✅ RealTradingEngine initialized — Jupiter swaps active");
+            Arc::new(real_engine)
         }
         unknown => {
             anyhow::bail!(
@@ -386,7 +438,7 @@ let slippage_bps  = config.execution.max_slippage_bps;
     info!("✅ TradingEngine constructed and ready for injection");
 
     // ── 3. GridBot with injected engine ──────────────────────────────
-    info!("🤖 Initializing GridBot V5.2 with injected engine...");
+    info!("🤖 Initializing GridBot V5.3 with injected engine...");
     let mut bot = GridBot::new(config.clone(), engine)?;
     bot.initialize().await?;
     info!("✅ GridBot built (grid placement deferred until price known)");
@@ -420,7 +472,7 @@ async fn run_trading_loop(
     let stats_interval       = config.metrics.stats_interval as u32;
     let slow_cycle_threshold = cycle_interval * 3;
 
-    info!("🔥 STARTING TRADING LOOP — V5.2 MULTI-BOT ENGINE INJECTION ACTIVE");
+    info!("🔥 STARTING TRADING LOOP — V5.3 REAL EXECUTION WIRED");
     info!("   Total Cycles:     {}", total_cycles);
     info!("   Cycle Interval:   {}ms ({}Hz)", cycle_interval, 1000 / cycle_interval);
     info!("   Duration:         {:.1} minutes",
@@ -557,7 +609,7 @@ fn setup_logging(args: &Args) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// MAIN ENTRY POINT — V5.2 🚀
+// MAIN ENTRY POINT — V5.3 🚀
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[tokio::main]
