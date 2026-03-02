@@ -35,6 +35,19 @@ rpc_url = "https://api.devnet.solana.com"
 commitment = "confirmed"
 
 # ═══════════════════════════════════════════════════════════════════════════
+#  🔐 SECURITY — Keystore Configuration
+# ═══════════════════════════════════════════════════════════════════════════
+[security]
+# Devnet keypair with ~6 SOL for testing
+# Address: Ap57C2mt1aNpiS2JhMZFfxDPV4PNyQif4wvTHV3Ap4cq
+keystore_path = "~/.config/solana/devnet-keypair.json"
+
+# Safety limits for live testing (minimal capital)
+max_transaction_amount_usdc = 50.0
+max_daily_trades = 100
+max_daily_volume_usdc = 500.0
+
+# ═══════════════════════════════════════════════════════════════════════════
 #  ⚡ EXECUTION — Live trading knobs
 # ═══════════════════════════════════════════════════════════════════════════
 [execution]
