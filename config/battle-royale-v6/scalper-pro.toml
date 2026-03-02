@@ -1,52 +1,171 @@
-# Battle Royale V6 - Config 3: Scalper Pro
-# High-Frequency Assassin
-# Edge Case: Max fills during 0.05%-0.15% vol spikes
+# ═══════════════════════════════════════════════════════════════════════════
+#  ⚡ BATTLE ROYALE V6 — CONFIG 3: SCALPER PRO
+#
+#  Strategy: Aggressive 1 bps gate with tight spacing
+#  Edge Case: Maximum fills, catches micro-moves
+#  Grid: 50 levels × 0.08% spacing (ultra-tight)
+#
+#  Expected Behavior:
+#    - Pauses when vol < 0.01% (filters 30% of dead time)
+#    - Trades almost constantly during active hours
+#    - Target: 80-120 fills in 18h, 15-25 repositions
+#    - Risk: Overtrading, high fees
+# ═══════════════════════════════════════════════════════════════════════════
 
-bot_id = "scalper_pro_v6"
+test_name = "Battle Royale V6 - Scalper Pro (1bps gate)"
+
+[bot]
+name    = "GridzBot-ScalperPro"
+version = "5.3.0"
+environment = "testing"
 execution_mode = "paper"
+instance_id = "scalper-pro-v6"
 
-[pair]
-base = "SOL"
-quote = "USDC"
-base_mint = "So11111111111111111111111111111111111111112"
-quote_mint = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+[network]
+cluster    = "devnet"
+rpc_url    = "https://api.devnet.solana.com"
+commitment = "confirmed"
 
-[strategy]
-mode = "grid_rebalancing"
-enable_regime_gate = true
-enable_adaptive_spacing = true
-
-# Loose gate - trade if vol >1 bps (aggressive)
-min_volatility_to_trade = 0.01
-volatility_lookback_periods = 20
-
-# TIGHT spacing for high-frequency fills
-grid_spacing_percent = 0.10     # 10 bps base
-adaptive_spacing_min = 0.06     # 6 bps ultra-tight
-adaptive_spacing_max = 0.15     # 15 bps maximum
-grid_levels = 10
-capital_per_level_percent = 9.0   # 9% × 10 = 90% deployed
-
-[risk]
-max_drawdown_pct = 5.0
-daily_loss_cap_pct = 3.0
-max_position_size_pct = 15.0  # Smaller per-trade for more fills
-kill_switch_enabled = true
-kill_switch_threshold_pct = 7.0
+[security]
+wallet_path = "~/.config/solana/id.json"
+require_password = false
+max_trade_size_usdc = 50.0
+max_transaction_amount_usdc = 50.0
+max_daily_trades = 50
+max_daily_volume_usdc = 200.0
 
 [execution]
-slippage_tolerance_min = 0.002  # 0.2%
-slippage_tolerance_max = 0.050  # 5.0% for volatile moves
-dynamic_slippage_enabled = true
-jito_enabled = true
-jito_tip_sol = 0.0002  # $0.02 tips for MEV protection
+max_trade_sol = 0.5
+priority_fee_microlamports = 50000
+max_slippage_bps = 100
+confirmation_timeout_secs = 60
+max_retries = 3
 
-[rpc]
-primary_url = "https://solana-mainnet.core.chainstack.com/YOUR_KEY"
-fallback_url = "https://api.mainnet-beta.solana.com"
-pool_size = 10
-timeout_ms = 1000  # Faster for scalping
+[paper_trading]
+initial_usdc = 5000.0
+initial_sol  = 10.0
+test_duration_hours = 18
 
-[observability]
-log_level = "info"
-metrics_port = 9093
+[trading]
+grid_levels          = 50
+grid_spacing_percent = 0.08
+min_order_size       = 0.1
+max_position_size    = 100.0
+
+min_usdc_reserve = 300.0
+min_sol_reserve  = 2.0
+
+enable_dynamic_grid  = true
+volatility_window    = 100
+enable_adaptive_spacing = false
+reposition_threshold = 0.30
+
+enable_auto_rebalance    = true
+enable_smart_rebalance   = true
+rebalance_threshold_pct  = 5.0
+rebalance_cooldown_secs  = 60
+
+max_orders_per_side          = 10
+order_refresh_interval_secs  = 300
+enable_market_orders         = false
+enable_fee_optimization      = true
+
+enable_order_lifecycle         = true
+order_max_age_minutes          = 5
+order_refresh_interval_minutes = 2
+min_orders_to_maintain         = 8
+
+min_profit_threshold_pct = 0.1
+max_slippage_pct         = 1.0
+
+enable_price_bounds = false
+lower_price_bound   = 100.0
+upper_price_bound   = 300.0
+
+# ⚡ SCALPER PRO: 1 bps gate (aggressive)
+enable_regime_gate       = true
+min_volatility_to_trade  = 0.01
+pause_in_very_low_vol    = true
+
+enable_smart_position_sizing = false
+
+[strategies]
+active         = ["grid"]
+consensus_mode = "single"
+enable_multi_timeframe       = false
+require_timeframe_alignment  = false
+
+[strategies.grid]
+enabled        = true
+weight         = 1.0
+min_confidence = 0.5
+reposition_threshold_pct = 0.30
+
+[strategies.momentum]
+enabled         = false
+weight          = 0.8
+min_confidence  = 0.6
+lookback_period = 20
+threshold       = 0.02
+
+[strategies.mean_reversion]
+enabled            = false
+weight             = 0.7
+min_confidence     = 0.6
+sma_period         = 20
+std_dev_multiplier = 2.0
+strong_buy_threshold  = 5.0
+buy_threshold         = 2.5
+strong_sell_threshold = 5.0
+sell_threshold        = 2.5
+
+[strategies.rsi]
+enabled              = false
+weight               = 0.9
+min_confidence       = 0.7
+period               = 14
+oversold_threshold   = 30.0
+overbought_threshold = 70.0
+extreme_oversold   = 20.0
+extreme_overbought = 80.0
+
+[strategies.momentum_macd]
+enabled                    = false
+weight                     = 0.8
+min_confidence             = 0.65
+strong_histogram_threshold = 0.5
+min_warmup_periods         = 26
+
+[risk]
+max_position_size_pct         = 30.0
+max_drawdown_pct              = 10.0
+stop_loss_pct                 = 5.0
+take_profit_pct               = 10.0
+enable_circuit_breaker        = true
+circuit_breaker_threshold_pct = 8.0
+circuit_breaker_cooldown_secs = 300
+
+[pyth]
+http_endpoint    = "https://hermes.pyth.network"
+feed_ids         = ["0xef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d"]
+update_interval_ms = 500
+
+[performance]
+cycle_interval_ms  = 100
+startup_delay_ms   = 1000
+request_timeout_ms = 5000
+
+[logging]
+level              = "info"
+file_path          = "logs/battle-royale-v6/scalper-pro.log"
+enable_file_logging = true
+
+[metrics]
+enable_metrics = true
+stats_interval = 600
+
+[database]
+enabled = false
+
+[alerts]
+enabled = false
