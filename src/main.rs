@@ -381,12 +381,12 @@ async fn initialize_components(config: &Config) -> Result<(GridBot, PriceFeed)> 
         }
         "live" => {
             info!("🔴 Constructing RealTradingEngine...");
-            
+
             // ── Safety: Capital validation ─────────────────────────────────────
             let initial_usdc = config.paper_trading.initial_usdc;
             let initial_sol  = config.paper_trading.initial_sol;
             let capital_usd  = initial_usdc + (initial_sol * initial_price);
-            
+
             if capital_usd < 10.0 {
                 anyhow::bail!(
                     "Live mode requires minimum $10 capital for safety.\n\
@@ -395,32 +395,31 @@ async fn initialize_components(config: &Config) -> Result<(GridBot, PriceFeed)> 
                     capital_usd, initial_usdc, initial_sol, initial_price
                 );
             }
-            
+
             warn!("⚠️  LIVE MODE ACTIVE — Real money at risk!");
             info!("   Capital:  ${:.2} USD (USDC: ${:.2} + SOL: {:.4} @ ${:.4})",
                   capital_usd, initial_usdc, initial_sol, initial_price);
-            
+
             // ── Build RealTradingEngine ────────────────────────────────────────
             use solana_grid_bot::trading::real_trader::{RealTradingEngine, RealTradingConfig};
-            
+
             let real_config = RealTradingConfig::from_execution_config(&config.execution);
             info!("   Slippage: {:.4}%", real_config.slippage_bps.unwrap_or(50) as f64 / 100.0);
             // ── Build RealTradingEngine with config.security.keypair_path ──────
-            use solana_grid_bot::trading::real_trader::{RealTradingEngine, RealTradingConfig};
-            use solana_grid_bot::security::keystore::KeystoreConfig;
-            
+                        use solana_grid_bot::security::keystore::KeystoreConfig;
+
             // Create RealTradingConfig with keypair_path from [security] section
             let mut real_config = RealTradingConfig::from_execution_config(&config.execution);
             real_config.keystore = KeystoreConfig {
-                keypair_path: config.security.keypair_path.clone(),
+                 keypair_path: config.security.wallet_path.clone(),
                 max_transaction_amount_usdc: Some(config.execution.max_trade_size_usdc),
                 max_daily_trades: None,  // TODO: wire from config if needed
                 max_daily_volume_usdc: None,  // TODO: wire from config if needed
             };
-            
+
             info!("   Slippage: {:.4}%", real_config.slippage_bps.unwrap_or(50) as f64 / 100.0);
-            info!("   Keypair:  {}", config.security.keypair_path);
-            
+            info!("   Keypair:  {}", config.security.wallet_path);
+
             let real_engine = RealTradingEngine::new(
                 real_config,
                 config,
@@ -429,7 +428,7 @@ async fn initialize_components(config: &Config) -> Result<(GridBot, PriceFeed)> 
                 initial_price,  // Live price from feed for accurate NAV
             ).await
                 .context("Failed to construct RealTradingEngine")?;
-            
+
             info!("✅ RealTradingEngine initialized — Jupiter swaps active");
             Arc::new(real_engine)
         }
