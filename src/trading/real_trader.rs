@@ -32,6 +32,7 @@ pub struct RealTradingConfig {
     pub keystore: KeystoreConfig,
     pub executor: ExecutorConfig,
     pub slippage_bps: Option<u16>,
+    pub max_trade_size_usdc: Option<f64>,  // 🆕 V5.4 (PR #44): Dual safety cap
     pub circuit_breaker_loss_pct: Option<f64>,
     pub stop_loss_pct: Option<f64>,
     pub profit_take_threshold: Option<f64>,
@@ -47,6 +48,7 @@ impl Default for RealTradingConfig {
             keystore: KeystoreConfig::default(),
             executor: ExecutorConfig::default(),
             slippage_bps: Some(50),
+            max_trade_size_usdc: Some(250.0),  // 🆕 V5.4 (PR #44)
             circuit_breaker_loss_pct: Some(5.0),
             stop_loss_pct: Some(10.0),
             profit_take_threshold: Some(3.0),
@@ -85,6 +87,7 @@ impl RealTradingConfig {
     pub fn from_execution_config(exec: &crate::config::ExecutionConfig) -> Self {
         Self {
             slippage_bps: Some(exec.max_slippage_bps),
+            max_trade_size_usdc: Some(exec.max_trade_size_usdc),  // 🆕 V5.4 (PR #44)
             ..Default::default()
         }
     }
@@ -238,6 +241,19 @@ impl RealTradingEngine {
         }
 
         let amount_usdc = price * size;
+        
+        // 🆕 V5.4 (PR #44): DUAL CAP ENFORCEMENT
+        // Check max_trade_size_usdc before keystore validation.
+        // Whichever cap hits first (max_trade_sol or max_trade_size_usdc) blocks the trade.
+        if let Some(max_usdc) = self.config.max_trade_size_usdc {
+            if amount_usdc > max_usdc {
+                bail!(
+                    "[RealEngine] Trade blocked: ${:.2} exceeds max_trade_size_usdc=${:.2}",
+                    amount_usdc, max_usdc
+                );
+            }
+        }
+        
         self.keystore.validate_transaction(amount_usdc).await?;
 
         let order_id = format!("REAL-{:06}", self.next_id.fetch_add(1, Ordering::SeqCst));
