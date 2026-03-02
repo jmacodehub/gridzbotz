@@ -1,12 +1,18 @@
-# ═══════════════════════════════════════════════════════════════════════════════
-#  🏆 MASTER V5.1 — GRIDZBOTZ — STAGE 2: PER-STRATEGY TUNING PARAMS
+# ═══════════════════════════════════════════════════════════════════════════
+#  🏆 MASTER V5.3 — GRIDZBOTZ — REAL EXECUTION WIRED
 #
-#  ✅ execution_mode:         flip "paper" → "live" to go live on-chain
+#  ✅ execution_mode:         "paper" (safe) | "live" (real Jupiter swaps)
 #  ✅ instance_id:            unique label for multi-bot log/metrics
 #  ✅ [execution]:            all Jupiter/RPC live trading knobs in TOML
 #  ✅ reposition_threshold:   GridRebalancer anchor-drift tuning
 #  ✅ All silent defaults now explicit — 100% visible, zero hidden magic
 #  ✅ Future hooks documented — WebSocket, Telegram, WS URL all stubbed
+#
+#  V5.3 (PR #38 - Mar 2, 2026) — Live Execution Wiring:
+#  ✅ RealTradingEngine activated for --mode live
+#  ✅ Capital safety validation (min $10 enforced)
+#  ✅ Live SOL price passed to engine for accurate NAV tracking
+#  ✅ See config/live_test.toml for minimal-risk testing template
 #
 #  V5.1 Stage 2 (Mar 1, 2026) — Per-strategy tuning wired to TOML:
 #  ✅ [strategies.rsi]:          extreme_oversold / extreme_overbought
@@ -18,37 +24,51 @@
 #    cargo run                                        → paper, master config
 #    cargo run -- --config config/master.toml         → explicit
 #    cargo run -- --config config/overnight_aggressive.toml
-#    cargo run -- --mode live                         → live (Step 5)
+#    cargo run -- --mode live                         → live (REAL MONEY!)
+#    cargo run -- --config config/live_test.toml      → minimal live test
 #
 #  Multi-bot example:
 #    cargo run -- --config config/optimized/conservative-v4.1.toml &
 #    cargo run -- --config config/optimized/multi-v5-ai.toml &
-# ═══════════════════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════════
 
-test_name = "Master V5.1 - Stage 2 Strategy Tuning"
+test_name = "Master V5.3 - Real Execution Wired"
 
-# ═══════════════════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════════
 #  🤖 BOT CORE
-# ═══════════════════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════════
 [bot]
 name    = "GridzBot-Master"
-version = "5.1.0"
+version = "5.3.0"
 environment = "testing"              # testing | development | production
 
 # 🔑 EXECUTION MODE — The single most important knob:
-#   "paper" → PaperTradingEngine (simulation, no real funds at risk)
-#   "live"  → RealTradingEngine  (real Jupiter swaps, real SOL)
-# Change to "live" + environment = "production" when ready to go on-chain.
-execution_mode = "paper"
+#
+#   🟡 "paper" → PaperTradingEngine
+#      - Simulated fills with realistic slippage + fees
+#      - No real funds at risk
+#      - Safe for testing strategies and grid tuning
+#      - Fills logged to CSV for analysis
+#
+#   🔴 "live" → RealTradingEngine
+#      - Real Jupiter atomic swaps on Solana
+#      - Real SOL/USDC at risk
+#      - Circuit breaker active (trips at 5% drawdown)
+#      - Requires min $10 capital for safety
+#
+# CLI override: --mode live or --paper (takes precedence over this setting)
+# For first live test: cargo run -- --config config/live_test.toml
+#
+execution_mode = "paper"             # Default: paper (safe)
 
 # Unique instance name — appears in all logs, CSV fills, and metrics.
 # Change this when running multiple bots simultaneously so you can tell them apart.
 # e.g., "live-aggressive", "paper-shadow", "conservative-1"
 instance_id = "master-paper-1"
 
-# ═══════════════════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════════
 #  🌐 NETWORK
-# ═══════════════════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════════
 [network]
 cluster    = "devnet"
 rpc_url    = "https://api.devnet.solana.com"
@@ -63,11 +83,11 @@ commitment = "confirmed"             # processed | confirmed | finalized
 # rpc_url    = "${CHAINSTACK_RPC_URL}"   # injected from .env at runtime
 # ws_url     = "${CHAINSTACK_WS_URL}"
 
-# ═══════════════════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════════
 #  ⚡ EXECUTION (Live Trading Knobs)
 #  Only enforced when execution_mode = "live"
 #  Safe to leave in any config — parsed but ignored in paper mode
-# ═══════════════════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════════
 [execution]
 # Hard cap per single Jupiter swap (SOL).
 # Guards against runaway position-sizing bugs — no single trade exceeds this.
@@ -97,9 +117,9 @@ confirmation_timeout_secs = 60
 # Retry attempts per failed transaction (uses exponential backoff).
 max_retries = 3
 
-# ═══════════════════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════════
 #  💰 PAPER TRADING
-# ═══════════════════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════════
 [paper_trading]
 initial_usdc = 5000.0
 initial_sol  = 10.0
@@ -114,22 +134,22 @@ test_duration_hours = 1
 # Method 4: Exact cycle count        → uncomment to use (expert mode)
 # test_cycles = 3000
 
-# ═══════════════════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════════
 #  📊 TRADING — Core Grid + Behaviour Knobs
-# ═══════════════════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════════
 [trading]
 
-# ─── Core Grid ───────────────────────────────────────────────────────────────
+# ─── Core Grid ─────────────────────────────────────────────────────────────
 grid_levels          = 35            # 🏆 Battle-royale champion level count
 grid_spacing_percent = 0.15          # 🏆 0.15% spacing — giga winner
 min_order_size       = 0.1           # Minimum order size in SOL
 max_position_size    = 100.0         # Hard cap on total position (SOL)
 
-# ─── Reserves (Never trade below these balances) ─────────────────────────────
+# ─── Reserves (Never trade below these balances) ─────────────────────────
 min_usdc_reserve = 300.0             # Keep ≥ $300 USDC at all times
 min_sol_reserve  = 2.0               # Keep ≥ 2 SOL at all times
 
-# ─── Dynamic Grid ────────────────────────────────────────────────────────────
+# ─── Dynamic Grid ──────────────────────────────────────────────────────
 enable_dynamic_grid  = true          # Adjust spacing based on ATR/volatility
 volatility_window    = 100           # Rolling window (cycles) for vol calc
 
@@ -139,37 +159,37 @@ volatility_window    = 100           # Rolling window (cycles) for vol calc
 # Lower = more repositions (responsive but expensive), Higher = fewer (stable but stale)
 reposition_threshold = 0.5           # 0.5% anchor drift → full reposition
 
-# ─── Auto-Rebalancing ────────────────────────────────────────────────────────
+# ─── Auto-Rebalancing ────────────────────────────────────────────────
 enable_auto_rebalance    = true      # Rebalance SOL/USDC portfolio when skewed
 enable_smart_rebalance   = true      # ML-enhanced rebalancing decisions
 rebalance_threshold_pct  = 5.0       # Trigger rebalance if portfolio drifts >5%
 rebalance_cooldown_secs  = 60        # Min seconds between rebalance operations
 
-# ─── Order Management ────────────────────────────────────────────────────────
+# ─── Order Management ────────────────────────────────────────────────
 max_orders_per_side          = 10    # Max open buy orders OR sell orders at once
 order_refresh_interval_secs  = 300   # Stale order refresh (seconds)
 enable_market_orders         = false # Limit orders only (safer, cheaper)
 enable_fee_optimization      = true  # Prefer maker fills to reduce fees
 
-# ─── Order Lifecycle ─────────────────────────────────────────────────────────
+# ─── Order Lifecycle ─────────────────────────────────────────────────
 # Ensures stale orders are cancelled and replaced — prevents zombie orders
 enable_order_lifecycle         = true
 order_max_age_minutes          = 10   # Cancel orders older than 10 min
 order_refresh_interval_minutes = 5    # Check lifecycle every 5 min
 min_orders_to_maintain         = 8    # Always keep ≥8 active orders per side
 
-# ─── Risk Limits ─────────────────────────────────────────────────────────────
+# ─── Risk Limits ───────────────────────────────────────────────────
 min_profit_threshold_pct = 0.1       # Skip orders below 0.1% net profit
 max_slippage_pct         = 1.0       # Reject fills with >1% slippage
 
-# ─── Price Bounds (Optional Safety Rails) ────────────────────────────────────
+# ─── Price Bounds (Optional Safety Rails) ────────────────────────────
 # Prevents the bot from placing orders outside a sane price range.
 # Useful on mainnet to guard against flash crashes / oracle manipulation.
 enable_price_bounds = false          # Set true + tweak bounds for production
 lower_price_bound   = 100.0          # USD — adjust to current SOL range
 upper_price_bound   = 300.0          # USD — adjust to current SOL range
 
-# ─── 🔥 Regime Gate ──────────────────────────────────────────────────────────
+# ─── 🔥 Regime Gate ──────────────────────────────────────────────
 # Guards against trading in ultra-flat / zero-volatility markets.
 # IMPORTANT: disabled here for paper/testing. Enable for production.
 #
@@ -186,16 +206,16 @@ enable_regime_gate       = false     # 🔥 DISABLED for paper/testing
 min_volatility_to_trade  = 0.0       # 0.0 = no minimum (any vol trades)
 pause_in_very_low_vol    = false     # Never pause (set true in production)
 
-# ─── Advanced / Future Features ──────────────────────────────────────────────
+# ─── Advanced / Future Features ────────────────────────────────────
 # Off by default — flip on when Stage 4 AI features are enabled
 enable_adaptive_spacing      = false # Stage 4: ATR-driven dynamic spacing
 enable_smart_position_sizing = false # Stage 4: Confidence-based order sizing
 
-# ═══════════════════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════════
 #  🎯 STRATEGIES
 #  consensus_mode options: "single" | "weighted" | "majority" | "unanimous"
 #  active: list the strategies that should be instantiated (others are ignored)
-# ═══════════════════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════════
 [strategies]
 active         = ["grid"]            # 🎯 Grid only for now — add "momentum", "rsi" for multi
 consensus_mode = "single"            # single = grid is sole decision maker
@@ -204,7 +224,7 @@ consensus_mode = "single"            # single = grid is sole decision maker
 enable_multi_timeframe       = false # Require signal agreement across timeframes
 require_timeframe_alignment  = false # Stricter: ALL timeframes must agree
 
-# ─── Strategy 1: Grid (Primary — always on) ──────────────────────────────────
+# ─── Strategy 1: Grid (Primary — always on) ────────────────────────────
 [strategies.grid]
 enabled        = true
 weight         = 1.0                 # Highest weight — grid is the core strategy
@@ -224,7 +244,7 @@ min_confidence  = 0.6
 lookback_period = 20                 # Bars to look back for momentum signal
 threshold       = 0.02               # 2% move required to trigger signal
 
-# ─── Strategy 3: Mean Reversion ──────────────────────────────────────────────
+# ─── Strategy 3: Mean Reversion ────────────────────────────────────
 # V5.1: Signal thresholds now TOML-tunable via to_mean_reversion_params().
 # Defaults (5.0/2.5) match the strategy's internal hardcoded values — safe to
 # leave at defaults or tune per-instance without recompiling.
@@ -246,7 +266,7 @@ buy_threshold         = 2.5          # % deviation above mean → Buy
 strong_sell_threshold = 5.0          # % deviation below mean → StrongSell
 sell_threshold        = 2.5          # % deviation below mean → Sell
 
-# ─── Strategy 4: RSI ─────────────────────────────────────────────────────────
+# ─── Strategy 4: RSI ─────────────────────────────────────────────
 # V5.1: Extreme zones now TOML-tunable via to_rsi_params().
 # RSI zones: oversold/overbought fire Buy/Sell;
 #            extreme zones fire StrongBuy/StrongSell (higher confidence).
@@ -265,7 +285,7 @@ overbought_threshold = 70.0          # RSI > 70 → overbought → Sell signal
 extreme_oversold   = 20.0            # RSI < 20 → StrongBuy  (default)
 extreme_overbought = 80.0            # RSI > 80 → StrongSell (default)
 
-# ─── Strategy 5: Momentum MACD ───────────────────────────────────────────────
+# ─── Strategy 5: Momentum MACD ───────────────────────────────────────
 # 🆕 V5.1: New strategy from PR #27 — MACD histogram-based momentum signals.
 # Uses 12/26/9 EMA crossover (standard). Fires after min_warmup_periods ticks.
 #
@@ -287,12 +307,12 @@ min_confidence             = 0.65    # Minimum MACD confidence to emit signal
 strong_histogram_threshold = 0.5     # Tune down for more StrongBuy/Sell signals
 
 # Warmup guard: don't emit signals until at least this many price ticks received.
-# Must be ≥ 26 (slow EMA period) — values < 26 will produce unreliable MACD.
+# Must be ≥26 (slow EMA period) — values < 26 will produce unreliable MACD.
 min_warmup_periods         = 26      # = slow EMA period (26). Increase for extra stability.
 
-# ═══════════════════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════════
 #  🚨 RISK MANAGEMENT
-# ═══════════════════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════════
 [risk]
 max_position_size_pct         = 30.0  # Max portfolio % in any single position
 max_drawdown_pct              = 10.0  # Halt bot if drawdown exceeds 10%
@@ -302,9 +322,9 @@ enable_circuit_breaker        = true  # Kill-switch on rapid loss
 circuit_breaker_threshold_pct = 8.0   # Trip breaker at 8% loss burst
 circuit_breaker_cooldown_secs = 300   # 5-min cooldown before re-enabling
 
-# ═══════════════════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════════
 #  📡 PYTH PRICE FEED
-# ═══════════════════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════════
 [pyth]
 http_endpoint    = "https://hermes.pyth.network"
 feed_ids         = ["0xef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d"]
@@ -315,40 +335,40 @@ update_interval_ms = 500             # Poll interval ms (500 = 2Hz, 100 = 10Hz)
 # enable_websocket      = false
 # websocket_endpoint    = "wss://hermes.pyth.network/ws"
 
-# ═══════════════════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════════
 #  ⚙️  PERFORMANCE
-# ═══════════════════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════════
 [performance]
 cycle_interval_ms  = 100             # Main loop tick rate — 100ms = 10Hz
 startup_delay_ms   = 1000            # Wait 1s at startup for feeds to stabilise
 request_timeout_ms = 5000            # HTTP request timeout (Pyth, Jupiter)
 
-# ═══════════════════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════════
 #  📋 LOGGING
-# ═══════════════════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════════
 [logging]
 level              = "info"           # trace | debug | info | warn | error
-file_path          = "logs/master_v5.1.log"
+file_path          = "logs/master_v5.3.log"
 enable_file_logging = true
 
-# ═══════════════════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════════
 #  📈 METRICS
-# ═══════════════════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════════
 [metrics]
 enable_metrics = true
 stats_interval = 600                 # Print stats every 600 cycles (~60 seconds)
 
-# ═══════════════════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════════
 #  🗄️  DATABASE (Optional — disabled for paper/testing)
-# ═══════════════════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════════
 [database]
 enabled = false
 # url = "postgres://user:pass@localhost/gridzbotz"  # Uncomment for persistence
 
-# ═══════════════════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════════
 #  🔔 ALERTS (Optional — disabled for paper/testing)
 #  Telegram bot alerts for fills, circuit breaker trips, and daily P&L
-# ═══════════════════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════════
 [alerts]
 enabled = false
 # telegram_bot_token = "${TELEGRAM_BOT_TOKEN}"   # Set via .env
