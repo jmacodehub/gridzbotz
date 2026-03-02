@@ -71,6 +71,10 @@ pub struct Config {
     /// Network and blockchain settings
     pub network: NetworkConfig,
 
+      /// Security and wallet configuration
+    #[serde(default)]
+    pub security: SecurityConfig,
+
     /// Core trading configuration
     pub trading: TradingConfig,
 
@@ -238,6 +242,54 @@ impl NetworkConfig {
         Ok(())
     }
 }
+// ═══════════════════════════════════════════════════════════════════════════
+// 🔐 SECURITY CONFIGURATION (New in PR #41 - Step 1/3)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Security and wallet configuration.
+///
+/// Controls keypair loading, encryption, and hot wallet access.
+/// Future: hardware wallet support, multi-sig, whitelisting.
+///
+/// # Example (config/master.toml)
+/// ```toml
+/// [security]
+/// wallet_path = "~/.config/solana/id.json"
+/// require_password = false
+/// ```
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct SecurityConfig {
+    /// Path to Solana keypair file (JSON format)
+    #[serde(default = "default_wallet_path")]
+    pub wallet_path: String,
+
+    /// Require password to decrypt keypair (future)
+    #[serde(default)]
+    pub require_password: bool,
+
+    /// Optional list of authorized program IDs (future whitelisting)
+    #[serde(default)]
+    pub authorized_programs: Option<Vec<String>>,
+}
+
+impl Default for SecurityConfig {
+    fn default() -> Self {
+        Self {
+            wallet_path: default_wallet_path(),
+            require_password: false,
+            authorized_programs: None,
+        }
+    }
+}
+
+impl SecurityConfig {
+    pub fn validate(&self) -> Result<()> {
+        if self.wallet_path.is_empty() {
+            bail!("security.wallet_path cannot be empty");
+        }
+        Ok(())
+    }
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 🆕 V5.0: EXECUTION CONFIGURATION (Stage 1)
@@ -265,6 +317,11 @@ pub struct ExecutionConfig {
     /// Hard safety cap — no single trade exceeds this regardless of grid sizing.
     #[serde(default = "default_max_trade_sol")]
     pub max_trade_sol: f64,
+
+      /// Maximum USDC amount per single Jupiter swap.
+    /// Complementary cap — whichever limit hits first wins.
+    #[serde(default = "default_max_trade_size_usdc")]
+    pub max_trade_size_usdc: f64,
 
     /// Priority fee in microlamports added to each transaction.
     /// Higher = faster inclusion, higher cost.
@@ -304,6 +361,7 @@ impl Default for ExecutionConfig {
     fn default() -> Self {
         Self {
             max_trade_sol: default_max_trade_sol(),
+            max_trade_size_usdc: default_max_trade_size_usdc(),
             priority_fee_microlamports: default_priority_fee_microlamports(),
             max_slippage_bps: default_slippage_bps(),
             jito_tip_lamports: None,
@@ -1435,6 +1493,8 @@ fn default_normal_threshold() -> f64 { 2.5 }
 fn default_macd_min_confidence() -> f64 { 0.65 }
 fn default_macd_histogram_threshold() -> f64 { 0.5 }
 fn default_macd_warmup_periods() -> usize { 26 }
+fn default_wallet_path() -> String { "~/.config/solana/id.json".to_string() }
+fn default_max_trade_size_usdc() -> f64 { 250.0 }
 
 // ═══════════════════════════════════════════════════════════════════════════
 // MAIN CONFIG IMPLEMENTATION - V5.1 PRODUCTION GRADE! 🚀
@@ -1664,6 +1724,7 @@ impl ConfigBuilder {
                     commitment: "confirmed".to_string(),
                     ws_url: None,
                 },
+                 security: SecurityConfig::default(),
                 trading: TradingConfig {
                     grid_levels: 35,
                     grid_spacing_percent: 0.15,
