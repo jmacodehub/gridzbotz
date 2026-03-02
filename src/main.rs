@@ -400,6 +400,11 @@ async fn initialize_components(config: &Config) -> Result<(GridBot, PriceFeed)> 
             info!("   Capital:  ${:.2} USD (USDC: ${:.2} + SOL: {:.4} @ ${:.4})",
                   capital_usd, initial_usdc, initial_sol, initial_price);
             
+            // ── Build RealTradingEngine ────────────────────────────────────────
+            use solana_grid_bot::trading::real_trader::{RealTradingEngine, RealTradingConfig};
+            
+            let real_config = RealTradingConfig::from_execution_config(&config.execution);
+            info!("   Slippage: {:.4}%", real_config.slippage_bps.unwrap_or(50) as f64 / 100.0);
             // ── Build RealTradingEngine with config.security.keypair_path ──────
             use solana_grid_bot::trading::real_trader::{RealTradingEngine, RealTradingConfig};
             use solana_grid_bot::security::keystore::KeystoreConfig;
