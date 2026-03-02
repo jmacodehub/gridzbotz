@@ -27,6 +27,7 @@ use log::{info, debug, warn};
 
 use super::{TradingEngine, TradingResult, FillEvent};
 
+
 // ═══════════════════════════════════════════════════════════════════════════
 // CONSTANTS
 // ═══════════════════════════════════════════════════════════════════════════
@@ -504,13 +505,8 @@ impl TradingEngine for PaperTradingEngine {
         self.cancel_all_orders().await
     }
 
-    /// V5.2: Returns Vec<FillEvent> to match trait signature.
-    /// Implementation accumulates fills in `pending_fills`;
-    /// callers should use `drain_fills()` to retrieve and fan-out to strategies.
     async fn process_price_update(&self, current_price: f64) -> TradingResult<Vec<FillEvent>> {
-        // Process price update (fills orders, accumulates FillEvents)
         let _filled_order_ids = self.process_price_update(current_price).await?;
-        // Return accumulated FillEvents (drains pending_fills)
         Ok(self.drain_fills().await)
     }
 
@@ -519,7 +515,19 @@ impl TradingEngine for PaperTradingEngine {
     }
 
     async fn is_trading_allowed(&self) -> bool { true }
+
+    // ── V5.2.2: Add these two methods (PR #37) ────────────────────────────
+    async fn get_wallet(&self) -> VirtualWallet {
+        self.get_wallet().await
+    }
+
+    async fn get_performance_stats(&self) -> PerformanceStats {
+
+        self.get_performance_stats().await
+    }
+
 }
+
 
 // ═══════════════════════════════════════════════════════════════════════════
 // TESTS
