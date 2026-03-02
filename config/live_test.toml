@@ -1,0 +1,65 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# LIVE TEST CONFIG — Safe Testing with Minimal Capital
+# ═══════════════════════════════════════════════════════════════════════════
+# 
+# Purpose: Template for live Jupiter swap testing with minimal risk
+# Capital: $10 USDC + 0.05 SOL (~$14 total at SOL=$80)
+# Grid:    Wide spacing (0.5%) → fewer trades
+# 
+# Usage:
+#   cargo run --release -- --config config/live_test.toml --duration-minutes 15
+# 
+# Safety: Always test on devnet first before mainnet!
+# ═══════════════════════════════════════════════════════════════════════════
+
+[bot]
+instance_name = "live-test"
+execution_mode = "live"  # Real Jupiter swaps
+version = "5.3"
+environment = "testing"
+
+[network]
+cluster = "devnet"  # Start with devnet!
+rpc_url = "https://api.devnet.solana.com"
+ws_url = "wss://api.devnet.solana.com"
+
+[paper_trading]
+# Minimal capital for live testing (min $10 enforced)
+initial_usdc = 10.0   # Just above minimum threshold
+initial_sol = 0.05    # ~$4 at SOL=$80
+
+# Default to 1-hour test cycles
+test_duration_hours = 1
+
+[grid]
+levels = 10               # Balanced grid
+spacing_pct = 0.5         # Wide spacing → fewer triggers
+auto_rebalance = true
+rebalance_threshold = 0.03  # 3% drift before reposition
+
+[execution]
+max_slippage_bps = 100    # 1% slippage (2x normal for safety)
+jito_enabled = false      # Disable MEV protection for testing
+jito_tip_sol = 0.0001
+
+[risk]
+max_position_size = 5.0   # Small positions
+max_drawdown_pct = 10.0   # Trip breaker at 10% loss
+daily_loss_cap = 5.0      # Max $5 loss per day
+kill_switch_threshold = 15.0  # Emergency halt at 15% loss
+
+[trading]
+volatility_window = 20
+min_volatility = 0.0
+max_volatility = 100.0
+
+[strategy]
+mode = "grid_rebalancing"
+
+[performance]
+cycle_interval_ms = 100   # 10Hz refresh
+startup_delay_ms = 3000   # 3s warm-up
+
+[metrics]
+enable_metrics = true
+stats_interval = 100      # Log every 100 cycles
