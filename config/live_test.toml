@@ -1,14 +1,14 @@
 # ═══════════════════════════════════════════════════════════════════════════
 # LIVE TEST CONFIG — Safe Testing with Minimal Capital
 # ═══════════════════════════════════════════════════════════════════════════
-# 
+#
 # Purpose: Template for live Jupiter swap testing with minimal risk
 # Capital: $10 USDC + 0.05 SOL (~$14 total at SOL=$80)
 # Grid:    Wide spacing (0.5%) → fewer trades
-# 
+#
 # Usage:
 #   cargo run --release -- --config config/live_test.toml --duration-minutes 15
-# 
+#
 # Safety: Always test on devnet first before mainnet!
 # ═══════════════════════════════════════════════════════════════════════════
 
@@ -35,15 +35,20 @@ rpc_url = "https://api.devnet.solana.com"
 commitment = "confirmed"
 
 # ═══════════════════════════════════════════════════════════════════════════
-#  🔐 SECURITY — Keystore Configuration
+#  🔐 SECURITY — Wallet & Transaction Limits (V5.4 - PR #43)
 # ═══════════════════════════════════════════════════════════════════════════
 [security]
 # Devnet keypair with ~6 SOL for testing
 # Address: Ap57C2mt1aNpiS2JhMZFfxDPV4PNyQif4wvTHV3Ap4cq
-keystore_path = "~/.config/solana/devnet-keypair.json"
+wallet_path = "~/.config/solana/devnet-keypair.json"
+
+# Future features (Stage 4)
+require_password = false
+# authorized_programs = []
 
 # Safety limits for live testing (minimal capital)
-max_transaction_amount_usdc = 50.0
+max_trade_size_usdc = 50.0           # 🆕 V5.4: Dual cap with max_trade_sol
+max_transaction_amount_usdc = 50.0   # Legacy cap (TODO: deprecate)
 max_daily_trades = 100
 max_daily_volume_usdc = 500.0
 

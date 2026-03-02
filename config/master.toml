@@ -93,20 +93,40 @@ commitment = "confirmed"             # processed | confirmed | finalized
 # ws_url     = "${CHAINSTACK_WS_URL}"
 
 # ═══════════════════════════════════════════════════════════════════════════
-#  🔐 SECURITY — Keystore & Transaction Limits
+#  🔐 SECURITY — Wallet & Transaction Limits (V5.4 - PR #43)
 #  Required when execution_mode = "live"
 #  Ignored in paper mode (safe to leave in all configs)
 # ═══════════════════════════════════════════════════════════════════════════
 [security]
-# Path to Solana keypair file.
+# Path to Solana keypair file (JSON format).
 # - Devnet:  ~/.config/solana/devnet-keypair.json
 # - Mainnet: ~/.config/solana/id.json (or hardware wallet path)
 # - NEVER commit mainnet keys to git!
-# - Use environment variable override for production: ${KEYPAIR_PATH}
-keystore_path = "~/.config/solana/id.json"
+# - Use environment variable override for production: ${WALLET_PATH}
+wallet_path = "~/.config/solana/id.json"
+
+# 🆕 V5.4 (PR #42): Future encrypted keypair support
+# When true, bot will prompt for password to decrypt wallet_path
+# (Not yet implemented — coming in Stage 4)
+require_password = false
+
+# 🆕 V5.4 (PR #42): Optional whitelist of authorized Solana program IDs
+# When set, RealTradingEngine will reject transactions to unlisted programs
+# Leave empty/commented for now — Stage 4 feature
+# authorized_programs = [
+#   "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4",  # Jupiter V6
+#   "whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc"   # Orca Whirlpools
+# ]
 
 # Transaction safety limits (enforced by RealTradingEngine):
-# Max USD value per single trade — guards against runaway sizing bugs
+
+# 🆕 V5.4 (PR #42): Max USDC value per single trade
+# Complements max_trade_sol — whichever limit hits first wins
+# Example: max_trade_sol=0.5 AND max_trade_size_usdc=250 → never exceed either
+max_trade_size_usdc = 250.0
+
+# Max USD value per single trade (legacy SOL-based cap)
+# TODO: Deprecate in favor of max_trade_size_usdc once fully wired
 max_transaction_amount_usdc = 50.0
 
 # Max number of trades per 24-hour period
