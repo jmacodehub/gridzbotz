@@ -1,6 +1,11 @@
 //! ═══════════════════════════════════════════════════════════════════════════
 //! 🚀 PROJECT FLASH V5.3 – Production Grid Trading Bot
 //!
+//! V5.3 CHANGES (PR #39 - Security Config Wiring):
+//! ✅ config.security.keypair_path now passed to RealTradingEngine
+//! ✅ Each bot instance uses its configured keypair (not hardcoded default)
+//! ✅ Keypair path error messages show configured path for debugging
+//!
 //! V5.3 CHANGES (PR #38 - Real Execution Wiring):
 //! ✅ RealTradingEngine construction enabled for --mode live
 //! ✅ Capital safety validation (min $10 for live trading)
@@ -395,11 +400,21 @@ async fn initialize_components(config: &Config) -> Result<(GridBot, PriceFeed)> 
             info!("   Capital:  ${:.2} USD (USDC: ${:.2} + SOL: {:.4} @ ${:.4})",
                   capital_usd, initial_usdc, initial_sol, initial_price);
             
-            // ── Build RealTradingEngine ────────────────────────────────────────
+            // ── Build RealTradingEngine with config.security.keypair_path ──────
             use solana_grid_bot::trading::real_trader::{RealTradingEngine, RealTradingConfig};
+            use solana_grid_bot::security::keystore::KeystoreConfig;
             
-            let real_config = RealTradingConfig::from_execution_config(&config.execution);
+            // Create RealTradingConfig with keypair_path from [security] section
+            let mut real_config = RealTradingConfig::from_execution_config(&config.execution);
+            real_config.keystore = KeystoreConfig {
+                keypair_path: config.security.keypair_path.clone(),
+                max_transaction_amount_usdc: Some(config.execution.max_trade_size_usdc),
+                max_daily_trades: None,  // TODO: wire from config if needed
+                max_daily_volume_usdc: None,  // TODO: wire from config if needed
+            };
+            
             info!("   Slippage: {:.4}%", real_config.slippage_bps.unwrap_or(50) as f64 / 100.0);
+            info!("   Keypair:  {}", config.security.keypair_path);
             
             let real_engine = RealTradingEngine::new(
                 real_config,
