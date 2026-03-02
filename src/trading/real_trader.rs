@@ -19,7 +19,7 @@ use crate::risk::circuit_breaker::{CircuitBreaker, TripReason};
 use crate::Config;
 use super::executor::{TransactionExecutor, ExecutorConfig};
 use super::trade::Trade;
-use super::paper_trader::{Order, OrderSide};
+use super::paper_trader::{Order, OrderSide, VirtualWallet, PerformanceStats as PaperPerformanceStats};
 use super::jupiter_client::{JupiterClient, JupiterConfig, SOL_MINT, USDC_MINT};
 use super::{TradingEngine, TradingResult, FillEvent};
 use solana_sdk::transaction::VersionedTransaction;
@@ -542,6 +542,32 @@ impl TradingEngine for RealTradingEngine {
     /// and set the atomic halt flag (not just cancel_all_orders).
     async fn emergency_shutdown(&self, reason: &str) -> TradingResult<()> {
         self.trigger_emergency_shutdown(reason).await
+    }
+
+    // ── V5.2.2: Wallet and performance queries (PR #37) ─────────────────
+    async fn get_wallet(&self) -> VirtualWallet {
+        // TODO(PR #38): Query real on-chain balances
+        // For now, return local balance tracker state
+        let (usdc, sol) = self.balance_tracker.get_balances().await;
+        VirtualWallet::new(usdc, sol)
+    }
+
+    async fn get_performance_stats(&self) -> PaperPerformanceStats {
+        // Map RealPerformanceStats → PaperPerformanceStats
+        let stats = self.get_performance_stats().await;
+        PaperPerformanceStats {
+            total_trades: stats.total_trades,
+            winning_trades: stats.winning_trades,
+            losing_trades: stats.losing_trades,
+            total_pnl: stats.total_pnl,
+            total_fees: stats.total_fees,
+            win_rate: stats.win_rate,
+            avg_win: stats.avg_win,
+            avg_loss: stats.avg_loss,
+            largest_win: stats.largest_win,
+            largest_loss: stats.largest_loss,
+            profit_factor: stats.profit_factor,
+        }
     }
 }
 

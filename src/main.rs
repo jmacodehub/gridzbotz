@@ -350,9 +350,10 @@ async fn initialize_components(config: &Config) -> Result<(GridBot, PriceFeed)> 
                 );
             }
 
-            let maker_fee_bps = config.execution.maker_fee_bps;
-            let taker_fee_bps = config.execution.taker_fee_bps;
-            let slippage_bps  = config.execution.slippage_bps;
+            let maker_fee_bps = 2.0;  // Default maker fee (0.02%)
+let taker_fee_bps = 4.0;  // Default taker fee (0.04%)
+let slippage_bps  = config.execution.max_slippage_bps;
+
 
             let maker_fee = maker_fee_bps as f64 / 10_000.0;
             let taker_fee = taker_fee_bps as f64 / 10_000.0;

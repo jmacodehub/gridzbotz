@@ -379,7 +379,17 @@ pub trait TradingEngine: Send + Sync {
     async fn open_order_count(&self) -> usize;
     async fn is_trading_allowed(&self) -> bool;
 
+    // ── V5.2.2: Wallet and performance queries (PR #37) ──────────────────────
+    /// Get the current wallet state (balances, P&L).
+    /// Used by GridBot to display portfolio value and track performance.
+    async fn get_wallet(&self) -> VirtualWallet;
+
+    /// Get trading performance statistics (win rate, fees, P&L).
+    /// Used by GridBot's get_stats() to report comprehensive metrics.
+    async fn get_performance_stats(&self) -> PaperPerformanceStats;
+
     async fn health_check(&self) -> EngineHealthStatus {
+
         EngineHealthStatus {
             is_healthy: true,
             trading_allowed: self.is_trading_allowed().await,
