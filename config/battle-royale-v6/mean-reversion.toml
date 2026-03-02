@@ -1,0 +1,50 @@
+# Battle Royale V6 - Config 6: Mean Reversion
+# Contrarian Fade Strategy
+# Edge Case: Buy dips, sell rips with symmetric grids
+
+bot_id = "mean_reversion_v6"
+execution_mode = "paper"
+
+[pair]
+base = "SOL"
+quote = "USDC"
+base_mint = "So11111111111111111111111111111111111111112"
+quote_mint = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+
+[strategy]
+mode = "grid_rebalancing"
+enable_regime_gate = true
+enable_adaptive_spacing = false  # Symmetric spacing
+
+# Moderate gate for mean reversion signals
+min_volatility_to_trade = 0.02
+volatility_lookback_periods = 60
+
+# Medium spacing, symmetric grids
+grid_spacing_percent = 0.12     # 12 bps
+grid_levels = 7
+capital_per_level_percent = 13.0  # 13% × 7 = 91%
+
+[risk]
+max_drawdown_pct = 4.0
+daily_loss_cap_pct = 2.5
+max_position_size_pct = 20.0
+kill_switch_enabled = true
+kill_switch_threshold_pct = 6.0
+
+[execution]
+slippage_tolerance_min = 0.002
+slippage_tolerance_max = 0.040
+dynamic_slippage_enabled = true
+jito_enabled = true
+jito_tip_sol = 0.00015
+
+[rpc]
+primary_url = "https://solana-mainnet.core.chainstack.com/YOUR_KEY"
+fallback_url = "https://api.mainnet-beta.solana.com"
+pool_size = 7
+timeout_ms = 1500
+
+[observability]
+log_level = "info"
+metrics_port = 9096

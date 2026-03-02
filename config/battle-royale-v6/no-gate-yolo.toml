@@ -1,0 +1,46 @@
+# Battle Royale V6 - Config 4: No Gate YOLO
+# Control Group - NO Regime Gate
+# Edge Case: Prove regime gate value by trading EVERYTHING
+
+bot_id = "no_gate_yolo_v6"
+execution_mode = "paper"
+
+[pair]
+base = "SOL"
+quote = "USDC"
+base_mint = "So11111111111111111111111111111111111111112"
+quote_mint = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+
+[strategy]
+mode = "grid_rebalancing"
+enable_regime_gate = false  # ❌ NO GATE - TRADES ALWAYS
+enable_adaptive_spacing = false  # Static spacing only
+
+# NO gate enforcement
+grid_spacing_percent = 0.12     # 12 bps static
+grid_levels = 8
+capital_per_level_percent = 12.0  # 12% × 8 = 96%
+
+[risk]
+max_drawdown_pct = 6.0
+daily_loss_cap_pct = 4.0
+max_position_size_pct = 20.0
+kill_switch_enabled = true
+kill_switch_threshold_pct = 8.0
+
+[execution]
+slippage_tolerance_min = 0.002
+slippage_tolerance_max = 0.040
+dynamic_slippage_enabled = true
+jito_enabled = true
+jito_tip_sol = 0.0001
+
+[rpc]
+primary_url = "https://solana-mainnet.core.chainstack.com/YOUR_KEY"
+fallback_url = "https://api.mainnet-beta.solana.com"
+pool_size = 8
+timeout_ms = 1500
+
+[observability]
+log_level = "info"
+metrics_port = 9094
