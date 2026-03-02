@@ -1,0 +1,52 @@
+# Battle Royale V6 - Config 2: Adaptive Hunter
+# Proven Balanced Champion
+# Edge Case: Stress-test current winner across all market regimes
+
+bot_id = "adaptive_hunter_v6"
+execution_mode = "paper"
+
+[pair]
+base = "SOL"
+quote = "USDC"
+base_mint = "So11111111111111111111111111111111111111112"
+quote_mint = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+
+[strategy]
+mode = "grid_rebalancing"
+enable_regime_gate = true
+enable_adaptive_spacing = true
+
+# Balanced gate - trade if vol >2 bps
+min_volatility_to_trade = 0.02
+volatility_lookback_periods = 30
+
+# Adaptive spacing based on ATR
+grid_spacing_percent = 0.12     # 12 bps base
+adaptive_spacing_min = 0.08     # 8 bps tight (high vol)
+adaptive_spacing_max = 0.20     # 20 bps wide (low vol)
+grid_levels = 8
+capital_per_level_percent = 12.0  # 12% × 8 = 96% deployed
+
+[risk]
+max_drawdown_pct = 4.0
+daily_loss_cap_pct = 2.0
+max_position_size_pct = 25.0
+kill_switch_enabled = true
+kill_switch_threshold_pct = 5.0
+
+[execution]
+slippage_tolerance_min = 0.002  # 0.2%
+slippage_tolerance_max = 0.035  # 3.5%
+dynamic_slippage_enabled = true
+jito_enabled = true
+jito_tip_sol = 0.0001  # $0.01 tips for trades >$100
+
+[rpc]
+primary_url = "https://solana-mainnet.core.chainstack.com/YOUR_KEY"
+fallback_url = "https://api.mainnet-beta.solana.com"
+pool_size = 8
+timeout_ms = 1500
+
+[observability]
+log_level = "info"
+metrics_port = 9092
