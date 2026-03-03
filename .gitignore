@@ -38,7 +38,6 @@ mainnet-address.txt
 # Analysis files
 analysis/
 typescript/
-*.sh
 *.csv
 
 # Development configs (don't commit test configs)
@@ -71,3 +70,11 @@ config/production/v6.0_dev/
 
 # Binary builds
 src/bin/
+
+# Shell scripts - ALLOW production scripts, ignore temp/test scripts
+# Allow: scripts/ directory (launchers, monitors, etc.)
+!scripts/**/*.sh
+# But ignore: temp test scripts in root
+test_*.sh
+quick_*.sh
+temp_*.sh
