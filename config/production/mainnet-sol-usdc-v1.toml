@@ -1,0 +1,223 @@
+# ═══════════════════════════════════════════════════════════════════════════
+#  🚀 GRIDZBOTZ MAINNET V1.0 — SOL/USDC PRODUCTION
+#
+#  Strategy: max-levels-titan (battle-tested winner)
+#  Tuning: Based on 18.4h Battle Royale V6 results
+#  Capital: $100-500 conservative start
+#
+#  Key Changes from Paper Trading:
+#    ✅ Stricter fee filter (2.0x → 2.5x)
+#    ✅ Wider grid spacing (0.06% → 0.18%)
+#    ✅ Higher regime gate (0.02% → 0.05%)
+#    ✅ Jito disabled (enable when scaling >$500)
+#    ✅ Circuit breakers tightened
+#
+#  Expected Performance (normal vol 0.1-0.5%):
+#    - Fills: 10-30 per day
+#    - Target ROI: +0.5-2.0% daily
+#    - Max drawdown: <5%
+# ═══════════════════════════════════════════════════════════════════════════
+
+test_name = "Mainnet SOL/USDC Grid Trading V1.0"
+
+[bot]
+name    = "GridzBot-Mainnet-Titan"
+version = "5.4.0"
+environment = "production"
+execution_mode = "live"  # 🔥 LIVE TRADING
+instance_id = "mainnet-sol-usdc-v1"
+bot_id = "mainnet-titan-1"  # For multi-bot tracking
+
+[network]
+cluster    = "mainnet-beta"  # 🔥 MAINNET
+rpc_url    = "https://solana-mainnet.core.chainstack.com/6ab9c5a91b372ea63ecf3fd08560b281"  # 🔴 UPDATE THIS
+commitment = "confirmed"
+# Backup RPC pool (add your QuickNode endpoint)
+fallback_rpc_urls = [
+    "https://YOUR-QUICKNODE-ENDPOINT.quiknode.pro/YOUR_KEY/"  # 🔴 UPDATE THIS
+]
+
+[security]
+WALLET_PATH = "/Users/j-mc/.config/solana/id.json" # 🔴 UPDATE THIS
+require_password = false  # Set true if you want prompt on startup
+max_trade_size_usdc = 50.0  # Per-trade cap
+max_transaction_amount_usdc = 100.0  # Per-transaction cap
+max_daily_trades = 100  # Safety limit
+max_daily_volume_usdc = 1000.0  # Daily cap
+
+# 🆕 Emergency kill-switch
+enable_kill_switch = true
+max_consecutive_losses = 5  # Stop after 5 losses in a row
+
+[execution]
+max_trade_sol = 0.5  # Max 0.5 SOL per trade (~$40-50)
+priority_fee_microlamports = 100000  # 0.0001 SOL priority fee
+max_slippage_bps = 150  # 1.5% max slippage (up from 1.0% for mainnet)
+confirmation_timeout_secs = 60
+max_retries = 3
+
+# 🆕 Jito MEV protection (disabled initially)
+jito_enabled = false  # Enable when capital >$500
+jito_tip_lamports = 100000  # 0.0001 SOL tip (~$0.01)
+jito_min_trade_usd = 500.0  # Only use Jito for large trades
+
+[paper_trading]
+# Not used in live mode, but keep for reference
+initial_usdc = 200.0  # 🔴 START SMALL!
+initial_sol  = 0.0
+
+[trading]
+# 🏔️ TUNED GRID PARAMETERS (Battle Royale Winner)
+grid_levels          = 20  # Reduced from 100 (more manageable)
+grid_spacing_percent = 0.18  # Increased from 0.06% (0.15% BR test + 20% buffer)
+min_order_size       = 0.05  # Smaller size for $100 capital
+max_position_size    = 50.0  # Cap total position
+
+min_usdc_reserve = 20.0  # Keep 20% reserve
+min_sol_reserve  = 0.0
+
+enable_dynamic_grid  = true
+volatility_window    = 100
+enable_adaptive_spacing = true  # 🆕 Enable for mainnet
+reposition_threshold = 0.30
+
+enable_auto_rebalance    = true
+enable_smart_rebalance   = true
+rebalance_threshold_pct  = 5.0
+rebalance_cooldown_secs  = 120  # Increased cooldown
+
+max_orders_per_side          = 10
+order_refresh_interval_secs  = 120  # Faster refresh for mainnet
+enable_market_orders         = false  # Maker-only for fee savings
+enable_fee_optimization      = true
+
+enable_order_lifecycle         = true
+order_max_age_minutes          = 5
+order_refresh_interval_minutes = 2
+min_orders_to_maintain         = 8
+
+# 🔥 CRITICAL: Tuned Fee Filter (Battle Royale Learning)
+min_profit_threshold_pct = 0.25  # 2.5x multiplier (0.1% base × 2.5)
+max_slippage_pct         = 1.5   # Increased for mainnet reality
+
+enable_price_bounds = false  # Disabled for full market coverage
+
+# 🆕 TUNED REGIME GATE (Battle Royale + 150%)
+enable_regime_gate       = true
+min_volatility_to_trade  = 0.05  # Up from 0.02% (avoids dead markets)
+pause_in_very_low_vol    = true
+
+enable_smart_position_sizing = true  # 🆕 Enable adaptive sizing
+
+# 🆕 SmartFeeFilter V2.0 settings
+[trading.fee_filter]
+enabled = true
+min_profit_multiplier = 2.5  # 🔥 KEY TUNING (up from 2.0)
+base_fee_estimate_pct = 0.06  # Maker 0.02% + Taker 0.04%
+slippage_buffer_pct = 0.05    # Extra safety margin
+
+[strategies]
+active         = ["grid"]  # Single strategy for mainnet start
+consensus_mode = "single"
+enable_multi_timeframe       = false
+require_timeframe_alignment  = false
+
+[strategies.grid]
+enabled        = true
+weight         = 1.0
+min_confidence = 0.5
+reposition_threshold_pct = 0.30
+
+# Disabled for mainnet v1 (wire in v2 after validation)
+[strategies.momentum]
+enabled         = false
+weight          = 0.8
+
+[strategies.mean_reversion]
+enabled            = false
+weight             = 0.7
+
+[strategies.rsi]
+enabled              = false
+weight               = 0.9
+
+[strategies.momentum_macd]
+enabled                    = false
+weight                     = 0.8
+
+[risk]
+# 🛡️ TIGHTENED RISK MANAGEMENT
+max_position_size_pct         = 30.0
+max_drawdown_pct              = 8.0   # Tighter (was 10%)
+stop_loss_pct                 = 3.0   # Tighter (was 5%)
+take_profit_pct               = 10.0
+enable_circuit_breaker        = true
+circuit_breaker_threshold_pct = 5.0   # Tighter (was 8%)
+circuit_breaker_cooldown_secs = 600   # 10min cooldown
+
+# 🆕 Additional risk controls
+daily_loss_cap_usd = 20.0  # Stop if lose $20 in one day
+max_consecutive_losses = 5
+enable_emergency_exit = true
+
+[pyth]
+# Mainnet Pyth endpoints
+http_endpoint    = "https://hermes.pyth.network"
+ws_endpoint      = "wss://hermes.pyth.network/ws"  # 🆕 WebSocket (optional)
+feed_ids         = [
+    "0xef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d"  # SOL/USD
+]
+update_interval_ms = 500
+enable_staleness_check = true
+max_staleness_secs = 10  # Alert if price >10s old
+
+# 🆕 Backup price feeds (redundancy)
+[binance_feed]
+enabled = true
+endpoint = "https://api.binance.com/api/v3/ticker/price"
+symbol = "SOLUSDT"
+update_interval_ms = 1000
+
+[performance]
+cycle_interval_ms  = 100  # 10 cycles/sec
+startup_delay_ms   = 2000 # Wait 2s on startup
+request_timeout_ms = 5000
+enable_performance_monitoring = true
+
+[logging]
+level              = "info"
+file_path          = "logs/mainnet/sol-usdc-v1.log"
+enable_file_logging = true
+enable_console_logging = true
+# 🆕 Structured logging for analysis
+enable_csv_export = true
+csv_path = "logs/mainnet/fills_sol-usdc-v1.csv"
+
+[metrics]
+enable_metrics = true
+stats_interval = 300  # Log stats every 5min
+# 🆕 Prometheus metrics (optional)
+enable_prometheus = false
+prometheus_port = 9090
+
+[database]
+enabled = false  # Enable later for historical analysis
+
+[alerts]
+# 🆕 Alert system (implement in Phase 2)
+enabled = false
+# Future: Telegram/Discord webhooks
+telegram_bot_token = ""
+telegram_chat_id = ""
+alert_on_error = true
+alert_on_large_loss = true
+alert_threshold_pct = 2.0
+
+# 🆕 OBSERVABILITY
+[observability]
+enable_healthcheck = true
+healthcheck_interval_secs = 60
+log_every_n_cycles = 100  # Reduce log spam
+enable_fill_tracking = true
+enable_performance_profiling = false  # Enable for debugging only
+
