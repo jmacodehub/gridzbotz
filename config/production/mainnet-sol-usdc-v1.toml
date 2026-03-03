@@ -33,12 +33,12 @@ cluster    = "mainnet-beta"  # 🔥 MAINNET
 rpc_url    = "https://solana-mainnet.core.chainstack.com/6ab9c5a91b372ea63ecf3fd08560b281"  # 🔴 UPDATE THIS
 commitment = "confirmed"
 # Backup RPC pool (add your QuickNode endpoint)
-fallback_rpc_urls = [
-    "https://YOUR-QUICKNODE-ENDPOINT.quiknode.pro/YOUR_KEY/"  # 🔴 UPDATE THIS
+# fallback_rpc_urls = [
+#     "https://YOUR-QUICKNODE-ENDPOINT.quiknode.pro/YOUR_KEY/"  # 🔴 UPDATE THIS
 ]
 
 [security]
-WALLET_PATH = "/Users/j-mc/.config/solana/id.json" # 🔴 UPDATE THIS
+wallet_path = "/Users/j-mc/.config/solana/id.json" # 🔴 UPDATE THIS
 require_password = false  # Set true if you want prompt on startup
 max_trade_size_usdc = 50.0  # Per-trade cap
 max_transaction_amount_usdc = 100.0  # Per-transaction cap
