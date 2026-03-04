@@ -285,6 +285,7 @@ mod tests {
                 commitment: "confirmed".to_string(),
                 ws_url: None,
             },
+            security: SecurityConfig::default(),
             trading: TradingConfig {
                 grid_levels: 10,
                 grid_spacing_percent: 0.2,
