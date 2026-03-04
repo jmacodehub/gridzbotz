@@ -97,12 +97,27 @@ pub struct VirtualWallet {
 }
 
 impl VirtualWallet {
+    /// Create a new wallet and log its initial balances at INFO level.
+    /// Use this when starting a new paper trading session.
     pub fn new(initial_usdc: f64, initial_sol: f64) -> Self {
         let mut balances = HashMap::new();
         balances.insert("USDC".to_string(), initial_usdc);
         balances.insert("SOL".to_string(), initial_sol);
         info!("[WALLET] Initialized: ${:.2} USDC, {:.4} SOL",
               initial_usdc, initial_sol);
+        Self { balances, initial_balance_usdc: initial_usdc, initial_balance_sol: initial_sol }
+    }
+
+    /// Create a wallet snapshot without emitting a log line.
+    ///
+    /// Use this when reconstructing a view of current balances from an
+    /// already-running engine (e.g. `RealTradingEngine::get_wallet`).
+    /// Calling `new()` in that path would log "[WALLET] Initialized" on
+    /// every price cycle, flooding the output.
+    pub fn new_silent(initial_usdc: f64, initial_sol: f64) -> Self {
+        let mut balances = HashMap::new();
+        balances.insert("USDC".to_string(), initial_usdc);
+        balances.insert("SOL".to_string(), initial_sol);
         Self { balances, initial_balance_usdc: initial_usdc, initial_balance_sol: initial_sol }
     }
 
@@ -542,6 +557,16 @@ mod tests {
         let wallet = VirtualWallet::new(10000.0, 10.0);
         assert_eq!(wallet.get_balance("USDC"), 10000.0);
         assert_eq!(wallet.get_balance("SOL"), 10.0);
+    }
+
+    #[tokio::test]
+    async fn test_wallet_new_silent_no_log() {
+        // new_silent must produce the same balances as new() without panicking.
+        let w = VirtualWallet::new_silent(500.0, 2.5);
+        assert_eq!(w.get_balance("USDC"), 500.0);
+        assert_eq!(w.get_balance("SOL"), 2.5);
+        assert_eq!(w.initial_balance_usdc, 500.0);
+        assert_eq!(w.initial_balance_sol, 2.5);
     }
 
     #[tokio::test]

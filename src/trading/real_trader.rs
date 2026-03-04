@@ -1,5 +1,15 @@
 //! =============================================================================
-//! REAL TRADER ENGINE V2.1 - MODULAR & BULLETPROOF
+//! REAL TRADER ENGINE V2.2 - MODULAR & BULLETPROOF
+//!
+//! V2.2 CHANGES (fix/live-mode-circuit-breaker-wallet-noise):
+//! ✅ CircuitBreaker::with_balance() now receives full portfolio NAV
+//!    (USDC + SOL*price) instead of only initial_usdc (was 0.0 for SOL wallets).
+//!    Peak-balance drawdown and daily-loss maths are now correct.
+//! ✅ process_price_update() ticks is_trading_allowed() before reconcile
+//!    so the cooldown reset fires even when fills == 0 (i.e. no execute_trade
+//!    calls are made).  Previously the breaker could stay tripped forever.
+//! ✅ get_wallet() uses VirtualWallet::new_silent() — stops the double
+//!    "[WALLET] Initialized" log line firing on every price cycle.
 //! =============================================================================
 
 use anyhow::{bail, Context, Result};
@@ -185,15 +195,18 @@ impl RealTradingEngine {
         initial_balance_sol: f64,
         initial_sol_price_usd: f64,
     ) -> Result<Self> {
-        info!("[RealEngine] Initializing V2.1");
+        info!("[RealEngine] Initializing V2.2");
 
         config.validate()?;
 
         let keystore = Arc::new(SecureKeystore::from_file(config.keystore.clone())?);
         let executor = Arc::new(RwLock::new(TransactionExecutor::new(config.executor.clone())?));
 
+        // Pass full portfolio NAV so peak_balance, drawdown, and daily-loss
+        // calculations are correct even when USDC balance is zero.
+        let initial_nav = initial_balance_usdc + (initial_balance_sol * initial_sol_price_usd);
         let circuit_breaker = Arc::new(RwLock::new(
-            CircuitBreaker::with_balance(global_config, initial_balance_usdc)
+            CircuitBreaker::with_balance(global_config, initial_nav)
         ));
 
         let balance_tracker = Arc::new(BalanceTracker::new(
@@ -202,7 +215,7 @@ impl RealTradingEngine {
             initial_sol_price_usd,
         ));
 
-        info!("[RealEngine] Initialized");
+        info!("[RealEngine] Initialized V2.2");
         info!("  Wallet : {}",        keystore.pubkey());
         info!("  NAV    : ${:.2} (SOL @ ${:.4})",
             balance_tracker.initial_balance_usd(), initial_sol_price_usd);
@@ -431,7 +444,7 @@ impl RealTradingEngine {
 
         println!();
         println!("=======================================================");
-        println!("  REAL TRADING ENGINE V2.1 - STATUS");
+        println!("  REAL TRADING ENGINE V2.2 - STATUS");
         println!("=======================================================");
         println!();
         println!("Balances:");
@@ -532,10 +545,13 @@ impl TradingEngine for RealTradingEngine {
 
     /// Reconcile expected balances against circuit breaker thresholds.
     ///
-    /// Stage 3 / Step 2: returns `Vec<FillEvent>` (empty) -- real engine
-    /// executes Jupiter swaps atomically at level-crossing time, so fills
-    /// are not detected via polling an order book.
+    /// Ticks `is_trading_allowed()` first so the cooldown reset fires on
+    /// every cycle, not just when a trade is attempted.  Without this tick
+    /// the breaker would stay permanently tripped when fills == 0.
     async fn process_price_update(&self, current_price: f64) -> TradingResult<Vec<FillEvent>> {
+        // Tick the cooldown gate so is_tripped resets after cooldown expires
+        // even when no trades are being placed (fills == 0).
+        let _ = self.circuit_breaker.write().await.is_trading_allowed();
         self.reconcile_balances(current_price).await?;
         Ok(vec![])
     }
@@ -560,12 +576,12 @@ impl TradingEngine for RealTradingEngine {
         self.trigger_emergency_shutdown(reason).await
     }
 
-    // ── V5.2.2: Wallet and performance queries (PR #37) ─────────────────
+    // ── V5.2.2 / V2.2: Wallet and performance queries ───────────────────
     async fn get_wallet(&self) -> VirtualWallet {
-        // TODO(PR #38): Query real on-chain balances
-        // For now, return local balance tracker state
+        // Use new_silent to avoid logging "[WALLET] Initialized" on every
+        // price cycle.  new() is only appropriate at session start.
         let (usdc, sol) = self.balance_tracker.get_balances().await;
-        VirtualWallet::new(usdc, sol)
+        VirtualWallet::new_silent(usdc, sol)
     }
 
     async fn get_performance_stats(&self) -> PaperPerformanceStats {
