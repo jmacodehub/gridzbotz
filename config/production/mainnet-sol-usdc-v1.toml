@@ -11,6 +11,7 @@
 #    ✅ Higher regime gate (0.02% → 0.05%)
 #    ✅ Jito disabled (enable when scaling >$500)
 #    ✅ Circuit breakers tightened
+#    ✅ max_trade_size_usdc moved to [execution] (was silently ignored in [security])
 #
 #  Expected Performance (normal vol 0.1-0.5%):
 #    - Fills: 10-30 per day
@@ -21,12 +22,11 @@
 test_name = "Mainnet SOL/USDC Grid Trading V1.0"
 
 [bot]
-name    = "GridzBot-Mainnet-Titan"
-version = "5.4.0"
-environment = "production"
-execution_mode = "live"  # 🔥 LIVE TRADING
-instance_id = "mainnet-sol-usdc-v1"
-bot_id = "mainnet-titan-1"  # For multi-bot tracking
+name            = "GridzBot-Mainnet-Titan"
+version         = "5.4.0"
+environment     = "production"
+execution_mode  = "live"  # 🔥 LIVE TRADING
+instance_id     = "mainnet-sol-usdc-v1"
 
 [network]
 cluster    = "mainnet-beta"  # 🔥 MAINNET
@@ -38,31 +38,28 @@ commitment = "confirmed"
 # ]
 
 [security]
-wallet_path = "/Users/j-mc/.config/solana/id.json"
+# Verify file exists and permissions are correct before first live run:
+#   ls -la /Users/j-mc/.config/solana/id.json
+#   chmod 600 /Users/j-mc/.config/solana/id.json
+wallet_path      = "/Users/j-mc/.config/solana/id.json"
 require_password = false
-max_trade_size_usdc = 50.0
-max_transaction_amount_usdc = 100.0
-max_daily_trades = 100
-max_daily_volume_usdc = 1000.0
-
-# 🆕 Emergency kill-switch
-enable_kill_switch = true
-max_consecutive_losses = 5
 
 [execution]
-max_trade_sol = 0.5
-priority_fee_microlamports = 100000
-max_slippage_bps = 150
-confirmation_timeout_secs = 60
-max_retries = 3
+# Hard safety caps — whichever hits first wins
+max_trade_sol          = 0.5
+max_trade_size_usdc    = 50.0    # ✅ Effective cap: $50 per trade (was silently $250)
 
-# 🆕 Jito MEV protection (disabled initially)
-jito_enabled = false
-jito_tip_lamports = 100000
-jito_min_trade_usd = 500.0
+priority_fee_microlamports = 100000
+max_slippage_bps           = 150
+confirmation_timeout_secs  = 60
+max_retries                = 3
+
+# 🛡️ Jito MEV protection — DISABLED for initial live run
+# Enable when scaling above $500 capital by uncommenting the line below.
+# jito_tip_lamports = 100000    # ← uncomment to enable (~0.0001 SOL/tx tip)
 
 [paper_trading]
-initial_usdc = 200.0  # 🔴 START SMALL!
+initial_usdc = 200.0  # Reference only — ignored in live mode
 initial_sol  = 1.0
 
 [trading]
@@ -75,20 +72,20 @@ max_position_size    = 50.0
 min_usdc_reserve = 20.0
 min_sol_reserve  = 0.0
 
-enable_dynamic_grid  = true
-volatility_window    = 100
-enable_adaptive_spacing = true
-reposition_threshold = 0.30
+enable_dynamic_grid      = true
+volatility_window        = 100
+enable_adaptive_spacing  = true
+reposition_threshold     = 0.30
 
 enable_auto_rebalance    = true
 enable_smart_rebalance   = true
 rebalance_threshold_pct  = 5.0
 rebalance_cooldown_secs  = 120
 
-max_orders_per_side          = 10
-order_refresh_interval_secs  = 120
-enable_market_orders         = false
-enable_fee_optimization      = true
+max_orders_per_side         = 10
+order_refresh_interval_secs = 120
+enable_market_orders        = false
+enable_fee_optimization     = true
 
 enable_order_lifecycle         = true
 order_max_age_minutes          = 5
@@ -102,30 +99,22 @@ max_slippage_pct         = 1.5
 enable_price_bounds = false
 
 # 🆕 TUNED REGIME GATE (Battle Royale + 150%)
-enable_regime_gate       = true
-min_volatility_to_trade  = 0.05
-pause_in_very_low_vol    = true
+enable_regime_gate      = true
+min_volatility_to_trade = 0.05
+pause_in_very_low_vol   = true
 
 enable_smart_position_sizing = true
-
-# 🆕 SmartFeeFilter V2.0 settings
-[trading.fee_filter]
-enabled = true
-min_profit_multiplier = 2.5
-base_fee_estimate_pct = 0.06
-slippage_buffer_pct = 0.05
 
 [strategies]
 active         = ["grid"]
 consensus_mode = "single"
-enable_multi_timeframe       = false
-require_timeframe_alignment  = false
+enable_multi_timeframe      = false
+require_timeframe_alignment = false
 
 [strategies.grid]
 enabled        = true
 weight         = 1.0
 min_confidence = 0.5
-reposition_threshold_pct = 0.30
 
 [strategies.momentum]
 enabled         = false
@@ -140,10 +129,6 @@ weight             = 0.7
 min_confidence     = 0.6
 sma_period         = 20
 std_dev_multiplier = 2.0
-strong_buy_threshold  = 5.0
-buy_threshold         = 2.5
-strong_sell_threshold = 5.0
-sell_threshold        = 2.5
 
 [strategies.rsi]
 enabled              = false
@@ -152,81 +137,31 @@ min_confidence       = 0.7
 period               = 14
 oversold_threshold   = 30.0
 overbought_threshold = 70.0
-extreme_oversold   = 20.0
-extreme_overbought = 80.0
-
-[strategies.momentum_macd]
-enabled                    = false
-weight                     = 0.8
-min_confidence             = 0.65
-strong_histogram_threshold = 0.5
-min_warmup_periods         = 26
 
 [risk]
-# 🛡️ TIGHTENED RISK MANAGEMENT
-max_position_size_pct         = 30.0
-max_drawdown_pct              = 8.0
-stop_loss_pct                 = 3.0
-take_profit_pct               = 10.0
-enable_circuit_breaker        = true
-circuit_breaker_threshold_pct = 5.0
-circuit_breaker_cooldown_secs = 600
-
-# 🆕 Additional risk controls
-daily_loss_cap_usd = 20.0
-max_consecutive_losses = 5
-enable_emergency_exit = true
+max_position_size_pct        = 30.0
+max_drawdown_pct             = 5.0
+stop_loss_pct                = 3.0
+take_profit_pct              = 8.0
+enable_circuit_breaker       = true
+circuit_breaker_threshold_pct = 4.0
+circuit_breaker_cooldown_secs = 300
 
 [pyth]
 http_endpoint    = "https://hermes.pyth.network"
-ws_endpoint      = "wss://hermes.pyth.network/ws"
-feed_ids         = [
-    "0xef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d"
-]
+feed_ids         = ["0xef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d"]
 update_interval_ms = 500
-enable_staleness_check = true
-max_staleness_secs = 10
 
-[binance_feed]
-enabled = true
-endpoint = "https://api.binance.com/api/v3/ticker/price"
-symbol = "SOLUSDT"
-update_interval_ms = 1000
+[logging]
+level              = "info"
+file_path          = "logs/mainnet/mainnet-sol-usdc-v1.log"
+enable_file_logging = true
+
+[metrics]
+enable_metrics = true
+stats_interval = 50
 
 [performance]
 cycle_interval_ms  = 100
 startup_delay_ms   = 2000
 request_timeout_ms = 5000
-enable_performance_monitoring = true
-
-[logging]
-level              = "info"
-file_path          = "logs/mainnet/sol-usdc-v1.log"
-enable_file_logging = true
-enable_console_logging = true
-enable_csv_export = true
-csv_path = "logs/mainnet/fills_sol-usdc-v1.csv"
-
-[metrics]
-enable_metrics = true
-stats_interval = 300
-enable_prometheus = false
-prometheus_port = 9090
-
-[database]
-enabled = false
-
-[alerts]
-enabled = false
-telegram_bot_token = ""
-telegram_chat_id = ""
-alert_on_error = true
-alert_on_large_loss = true
-alert_threshold_pct = 2.0
-
-[observability]
-enable_healthcheck = true
-healthcheck_interval_secs = 60
-log_every_n_cycles = 100
-enable_fill_tracking = true
-enable_performance_profiling = false
