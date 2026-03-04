@@ -63,7 +63,7 @@ jito_min_trade_usd = 500.0
 
 [paper_trading]
 initial_usdc = 200.0  # 🔴 START SMALL!
-initial_sol  = 0.0
+initial_sol  = 1.0
 
 [trading]
 # 🏔️ TUNED GRID PARAMETERS (Battle Royale Winner)
