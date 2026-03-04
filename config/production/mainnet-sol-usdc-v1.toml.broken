@@ -125,6 +125,24 @@ require_timeframe_alignment  = false
 [strategies.grid]
 enabled        = true
 weight         = 1.0
+min_confidence = 0.5
+reposition_threshold_pct = 0.30
+
+# Disabled for mainnet v1 (wire in v2 after validation)
+[strategies.momentum]
+enabled         = false
+weight          = 0.8
+
+[strategies.mean_reversion]
+enabled            = false
+weight             = 0.7
+
+[strategies.rsi]
+enabled              = false
+weight               = 0.9
+
+[strategies.momentum_macd]
+enabled                    = false
 weight                     = 0.8
 
 [risk]
