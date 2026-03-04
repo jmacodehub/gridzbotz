@@ -313,9 +313,9 @@ fn load_configuration(args: &Args) -> Result<Config> {
 async fn fetch_wallet_balances(rpc_url: &str, wallet_path: &str) -> Result<(f64, f64)> {
     use solana_client::nonblocking::rpc_client::RpcClient;
     use solana_client::rpc_request::TokenAccountsFilter;
-    use solana_sdk::commitment_config::CommitmentConfig;
     use solana_sdk::pubkey::Pubkey;
-    use solana_sdk::signature::read_keypair_file;
+    // CommitmentConfig removed from solana_sdk in v3.0 — RpcClient::new() defaults to confirmed
+    use solana_sdk::signature::{read_keypair_file, Signer};
     use std::str::FromStr;
 
     // Expand ~ to home directory
@@ -333,10 +333,8 @@ async fn fetch_wallet_balances(rpc_url: &str, wallet_path: &str) -> Result<(f64,
     let pubkey = keypair.pubkey();
     info!("💰 Querying on-chain balances for wallet: {}", pubkey);
 
-    let client = RpcClient::new_with_commitment(
-        rpc_url.to_string(),
-        CommitmentConfig::confirmed(),
-    );
+    // RpcClient::new() uses CommitmentConfig::confirmed() by default in solana-client 3.0
+    let client = RpcClient::new(rpc_url.to_string());
 
     // ── SOL balance (lamports → SOL) ──────────────────────────────────────────
     let lamports = client
