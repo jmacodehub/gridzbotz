@@ -1,5 +1,13 @@
 //! ═══════════════════════════════════════════════════════════════════════════
-//! 🚀 PROJECT FLASH V5.3 – Production Grid Trading Bot
+//! 🚀 PROJECT FLASH V5.4 – Production Grid Trading Bot
+//!
+//! V5.4 CHANGES (PR #51 - Live Mode Real Balances):
+//! ✅ fetch_wallet_balances(): queries on-chain SOL + USDC at live startup
+//! ✅ RealTradingEngine boots with real wallet balance (not paper_trading config)
+//! ✅ Live mode runs indefinitely until Ctrl+C — no paper duration cap
+//! ✅ Cycle display: live shows absolute count; paper shows n/total
+//! ✅ Capital safety check now validates actual on-chain funds
+//! ✅ ROOT CAUSE FIX: wrong initial_usdc was why mainnet launch failed
 //!
 //! V5.3 CHANGES (PR #39 - Security Config Wiring):
 //! ✅ config.security.keypair_path now passed to RealTradingEngine
@@ -21,41 +29,20 @@
 //! V3.8 ENHANCEMENTS (fix/grid-init-with-live-price):
 //! ✅ initialize_with_price() called between feed warm-up and trading loop
 //! ✅ Resolves Active Levels: 0 — grid now always placed before cycle 1
-//! ✅ Banner updated to V3.8
-//! ✅ use anyhow::Context added — fixes E0599 compile error
 //!
 //! V3.7 ENHANCEMENTS (Step 5C, Feb 2026):
 //! ✅ Single unified tick: process_price_update() owns signal gate,
 //!    circuit breaker, crossing detection, fills, metrics, optimizer
 //! ✅ Removed duplicate should_reposition() + reposition_grid() from
 //!    run_trading_loop -- was causing double repositioning every cycle
-//! ✅ Reposition tracking via stats.grid_repositions delta -- accurate
 //! ✅ record_failure() now called on tick errors (was missing before)
 //! ✅ Cycle status line: Halted / Repositioned / Stable + fills + vol
-//!
-//! V3.6 ENHANCEMENTS (Step 4 — Session 2, Feb 2026):
-//! ✅ --mode paper|live CLI flag overrides bot.execution_mode in TOML
-//! ✅ Price feed starts BEFORE engine build — spacing_usd uses real price
-//! ✅ Engine builder branches: paper → PaperTradingEngine (fills + spacing)
-//!                             live  → RealTradingEngine (Jupiter swaps)
-//! ✅ Slippage + fees driven from [execution] config, no hardcoded values
-//! ✅ Banner shows active mode, instance name, cluster, spacing
-//!
-//! V3.5 ENHANCEMENTS - Production-Grade Architecture:
-//! ✅ 100% Config-Driven (No Hardcoded Values!)
-//! ✅ Flexible Duration Support (hours, minutes, seconds, cycles)
-//! ✅ CLI Arguments Support (--config, --duration-minutes, etc.)
-//! ✅ Comprehensive Error Handling & Recovery
-//! ✅ Graceful Shutdown with Cleanup
-//! ✅ Performance Monitoring & Diagnostics
-//! ✅ Multi-Environment Support (testing, dev, production)
 //!
 //! fix/volatility-4dp (Mar 2026):
 //! ✅ Vol display: {:>5.2}% → {:>8.4}% — 4 decimal places
 //! ✅ volatility() in price_feed.rs now returns true % (×100)
-//! ✅ Fixes Vol always showing 0.00% during low-volatility sessions
 //!
-//! March 2026 — V5.3 Real Execution Wiring 🔥
+//! March 2026 — V5.4 Live Mode Real Balances 🔥
 //! ═══════════════════════════════════════════════════════════════════════════
 
 use solana_grid_bot::init;
@@ -75,7 +62,7 @@ use clap::Parser;
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[derive(Parser, Debug)]
-#[clap(name = "gridzbotz", version = "5.3.0")]
+#[clap(name = "gridzbotz", version = "5.4.0")]
 #[clap(about = "Production-grade Solana grid trading bot", long_about = None)]
 struct Args {
     /// Configuration file path
@@ -246,7 +233,7 @@ fn print_banner(config: &Config) {
     };
 
     println!("\n{}", border);
-    println!("     🚀 GRIDZBOTZ V5.3 — PRODUCTION GRID TRADING BOT");
+    println!("     🚀 GRIDZBOTZ V5.4 — PRODUCTION GRID TRADING BOT");
     println!("     ⚡ Hybrid Feeds • 10Hz Cycles • Real Execution Wired");
     println!("{}", border);
     println!("\n   Mode:        {}", mode_label);
@@ -281,7 +268,7 @@ fn load_configuration(args: &Args) -> Result<Config> {
         config.bot.execution_mode = mode;
     }
 
-    // ── Duration overrides ────────────────────────────────────────────
+    // ── Duration overrides (paper mode only — ignored in live) ─────────────────
     let mut override_count = 0usize;
 
     if let Some(cycles) = args.cycles {
@@ -315,11 +302,84 @@ fn load_configuration(args: &Args) -> Result<Config> {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// 🆕 V5.4: ON-CHAIN WALLET BALANCE QUERY
+// Fetches real SOL + USDC balances for live mode initialization.
+// Paper mode continues to use paper_trading.initial_usdc / initial_sol.
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Query on-chain SOL and USDC balances for the configured wallet.
+/// Returns (usdc_balance, sol_balance) in human-readable units.
+/// Called exclusively in live mode — never in paper mode.
+async fn fetch_wallet_balances(rpc_url: &str, wallet_path: &str) -> Result<(f64, f64)> {
+    use solana_client::nonblocking::rpc_client::RpcClient;
+    use solana_client::rpc_request::TokenAccountsFilter;
+    use solana_sdk::commitment_config::CommitmentConfig;
+    use solana_sdk::pubkey::Pubkey;
+    use solana_sdk::signature::read_keypair_file;
+    use std::str::FromStr;
+
+    // Expand ~ to home directory
+    let expanded = if wallet_path.starts_with('~') {
+        let home = std::env::var("HOME")
+            .or_else(|_| std::env::var("USERPROFILE"))
+            .context("Cannot expand ~ in wallet_path — HOME env var not set")?;
+        wallet_path.replacen('~', &home, 1)
+    } else {
+        wallet_path.to_string()
+    };
+
+    let keypair = read_keypair_file(&expanded)
+        .map_err(|e| anyhow::anyhow!("Cannot load keypair '{}': {}", expanded, e))?;
+    let pubkey = keypair.pubkey();
+    info!("💰 Querying on-chain balances for wallet: {}", pubkey);
+
+    let client = RpcClient::new_with_commitment(
+        rpc_url.to_string(),
+        CommitmentConfig::confirmed(),
+    );
+
+    // ── SOL balance (lamports → SOL) ──────────────────────────────────────────
+    let lamports = client
+        .get_balance(&pubkey)
+        .await
+        .with_context(|| format!("RPC get_balance failed for {}", pubkey))?;
+    let sol = lamports as f64 / 1_000_000_000.0;
+
+    // ── USDC balance — mainnet mint EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v
+    // Uses serde_json pointer to avoid solana_account_decoder direct import.
+    let usdc_mint = Pubkey::from_str("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v")
+        .expect("static USDC mint address is valid");
+
+    let usdc = match client
+        .get_token_accounts_by_owner(&pubkey, TokenAccountsFilter::Mint(usdc_mint))
+        .await
+    {
+        Ok(accounts) => accounts
+            .first()
+            .and_then(|a| serde_json::to_value(&a.account.data).ok())
+            .and_then(|v| {
+                v.pointer("/parsed/info/tokenAmount/uiAmount")
+                    .and_then(|x| x.as_f64())
+            })
+            .unwrap_or(0.0),
+        Err(e) => {
+            warn!("USDC balance query failed: {} — defaulting to $0.00", e);
+            0.0
+        }
+    };
+
+    info!("   ✅ SOL balance:  {:.6} SOL", sol);
+    info!("   ✅ USDC balance: ${:.2}", usdc);
+    Ok((usdc, sol))
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // COMPONENT INITIALIZATION (Modular & Robust)
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// V5.3: Engine builder creates Paper or Real engine based on config.bot.execution_mode,
-/// then injects it into GridBot::new(config, engine). Price feed starts first for banner.
+/// V5.4: Engine builder creates Paper or Real engine based on config.bot.execution_mode.
+/// Live mode queries real on-chain balances via fetch_wallet_balances().
+/// Paper mode uses paper_trading.initial_usdc / initial_sol from config.
 async fn initialize_components(config: &Config) -> Result<(GridBot, PriceFeed)> {
     info!("🔧 Initializing core components...");
 
@@ -361,8 +421,8 @@ async fn initialize_components(config: &Config) -> Result<(GridBot, PriceFeed)> 
                 );
             }
 
-            let maker_fee_bps = 2.0;  // Default maker fee (0.02%)
-            let taker_fee_bps = 4.0;  // Default taker fee (0.04%)
+            let maker_fee_bps = 2.0;
+            let taker_fee_bps = 4.0;
             let slippage_bps  = config.execution.max_slippage_bps;
 
             let maker_fee = maker_fee_bps as f64 / 10_000.0;
@@ -381,40 +441,40 @@ async fn initialize_components(config: &Config) -> Result<(GridBot, PriceFeed)> 
         }
         "live" => {
             info!("🔴 Constructing RealTradingEngine...");
+            warn!("⚠️  LIVE MODE ACTIVE — Real money at risk!");
 
-            // ── Safety: Capital validation ─────────────────────────────────────
-            let initial_usdc = config.paper_trading.initial_usdc;
-            let initial_sol  = config.paper_trading.initial_sol;
-            let capital_usd  = initial_usdc + (initial_sol * initial_price);
+            // ── V5.4: Fetch real on-chain balances — never use paper_trading config ──
+            let (initial_usdc, initial_sol) = fetch_wallet_balances(
+                &config.network.rpc_url,
+                &config.security.wallet_path,
+            ).await.context(
+                "Failed to query on-chain wallet balances — check RPC connectivity and keypair path"
+            )?;
+
+            let capital_usd = initial_usdc + (initial_sol * initial_price);
 
             if capital_usd < 10.0 {
                 anyhow::bail!(
-                    "Live mode requires minimum $10 capital for safety.\n\
-                     Current: ${:.2} (USDC: ${:.2} + SOL: {:.4} @ ${:.4})\n\
-                     Increase initial_usdc or initial_sol in config.",
+                    "Live mode requires minimum $10 capital.\n\
+                     On-chain: ${:.2} (USDC: ${:.2} + SOL: {:.4} @ ${:.4})\n\
+                     Fund your wallet before starting live trading.",
                     capital_usd, initial_usdc, initial_sol, initial_price
                 );
             }
 
-            warn!("⚠️  LIVE MODE ACTIVE — Real money at risk!");
-            info!("   Capital:  ${:.2} USD (USDC: ${:.2} + SOL: {:.4} @ ${:.4})",
+            info!("   On-chain capital: ${:.2} USD (USDC: ${:.2} + SOL: {:.4} @ ${:.4})",
                   capital_usd, initial_usdc, initial_sol, initial_price);
 
             // ── Build RealTradingEngine ────────────────────────────────────────
             use solana_grid_bot::trading::real_trader::{RealTradingEngine, RealTradingConfig};
+            use solana_grid_bot::security::keystore::KeystoreConfig;
 
-            let real_config = RealTradingConfig::from_execution_config(&config.execution);
-            info!("   Slippage: {:.4}%", real_config.slippage_bps.unwrap_or(50) as f64 / 100.0);
-            // ── Build RealTradingEngine with config.security.keypair_path ──────
-                        use solana_grid_bot::security::keystore::KeystoreConfig;
-
-            // Create RealTradingConfig with keypair_path from [security] section
             let mut real_config = RealTradingConfig::from_execution_config(&config.execution);
             real_config.keystore = KeystoreConfig {
-                 keypair_path: config.security.wallet_path.clone(),
+                keypair_path: config.security.wallet_path.clone(),
                 max_transaction_amount_usdc: Some(config.execution.max_trade_size_usdc),
-                max_daily_trades: None,  // TODO: wire from config if needed
-                max_daily_volume_usdc: None,  // TODO: wire from config if needed
+                max_daily_trades: None,
+                max_daily_volume_usdc: None,
             };
 
             info!("   Slippage: {:.4}%", real_config.slippage_bps.unwrap_or(50) as f64 / 100.0);
@@ -425,7 +485,7 @@ async fn initialize_components(config: &Config) -> Result<(GridBot, PriceFeed)> 
                 config,
                 initial_usdc,
                 initial_sol,
-                initial_price,  // Live price from feed for accurate NAV
+                initial_price,
             ).await
                 .context("Failed to construct RealTradingEngine")?;
 
@@ -442,7 +502,7 @@ async fn initialize_components(config: &Config) -> Result<(GridBot, PriceFeed)> 
     info!("✅ TradingEngine constructed and ready for injection");
 
     // ── 3. GridBot with injected engine ──────────────────────────────
-    info!("🤖 Initializing GridBot V5.3 with injected engine...");
+    info!("🤖 Initializing GridBot V5.4 with injected engine...");
     let mut bot = GridBot::new(config.clone(), engine)?;
     bot.initialize().await?;
     info!("✅ GridBot built (grid placement deferred until price known)");
@@ -468,19 +528,31 @@ async fn run_trading_loop(
 ) -> Result<SessionMetrics> {
     let mut metrics = SessionMetrics::new();
 
-    let total_cycles = config.paper_trading.calculate_cycles(
-        config.performance.cycle_interval_ms
-    ) as u32;
+    // V5.4: Live mode runs indefinitely until Ctrl+C.
+    // u32::MAX cycles @ 100ms = ~13.6 years — effectively infinite.
+    // Paper mode respects the configured test duration/cycles.
+    let total_cycles = if config.bot.is_live() {
+        info!("🔴 Live mode: trading indefinitely until Ctrl+C");
+        u32::MAX
+    } else {
+        config.paper_trading.calculate_cycles(
+            config.performance.cycle_interval_ms
+        ) as u32
+    };
 
     let cycle_interval       = config.performance.cycle_interval_ms;
     let stats_interval       = config.metrics.stats_interval as u32;
     let slow_cycle_threshold = cycle_interval * 3;
 
-    info!("🔥 STARTING TRADING LOOP — V5.3 REAL EXECUTION WIRED");
-    info!("   Total Cycles:     {}", total_cycles);
+    info!("🔥 STARTING TRADING LOOP — V5.4 REAL EXECUTION WIRED");
+    if config.bot.is_live() {
+        info!("   Total Cycles:     ∞ (live mode — Ctrl+C to stop)");
+    } else {
+        info!("   Total Cycles:     {}", total_cycles);
+        info!("   Duration:         {:.1} minutes",
+              config.paper_trading.duration_seconds() as f64 / 60.0);
+    }
     info!("   Cycle Interval:   {}ms ({}Hz)", cycle_interval, 1000 / cycle_interval);
-    info!("   Duration:         {:.1} minutes",
-          config.paper_trading.duration_seconds() as f64 / 60.0);
     info!("   Stats Interval:   Every {} cycles", stats_interval);
     println!();
 
@@ -488,7 +560,7 @@ async fn run_trading_loop(
 
     for cycle in 1..=total_cycles {
         if shutdown.load(Ordering::Relaxed) {
-            warn!("🛑 Graceful shutdown at cycle {}/{}", cycle, total_cycles);
+            warn!("🛑 Graceful shutdown at cycle {}", cycle);
             break;
         }
 
@@ -529,17 +601,30 @@ async fn run_trading_loop(
                     "✓ Stable"
                 };
 
-                // Vol is now a true percentage (×100 applied in price_feed).
-                // {:>8.4}% shows 4 decimal places, e.g. "  0.0034%"
-                println!(
-                    "Cycle {:>4}/{:<4} | SOL ${:>9.4} | Vol {:>8.4}% | Fills {:>3} | Repos {:>3} | {}",
-                    cycle, total_cycles,
-                    price,
-                    volatility,
-                    stats.successful_trades,
-                    stats.grid_repositions,
-                    status,
-                );
+                // V5.4: Live mode — show absolute cycle count (no /total).
+                // Paper mode — show cycle/total as before.
+                if config.bot.is_live() {
+                    println!(
+                        "Cycle {:>6} | SOL ${:>9.4} | Vol {:>8.4}% | Fills {:>3} | Repos {:>3} | {}",
+                        cycle,
+                        price,
+                        volatility,
+                        stats.successful_trades,
+                        stats.grid_repositions,
+                        status,
+                    );
+                } else {
+                    println!(
+                        "Cycle {:>4}/{:<4} | SOL ${:>9.4} | Vol {:>8.4}% | Fills {:>3} | Repos {:>3} | {}",
+                        cycle,
+                        total_cycles,
+                        price,
+                        volatility,
+                        stats.successful_trades,
+                        stats.grid_repositions,
+                        status,
+                    );
+                }
 
                 metrics.record_cycle(
                     cycle_start.elapsed().as_millis() as u64,
@@ -549,8 +634,8 @@ async fn run_trading_loop(
             Err(e) => {
                 metrics.errors += 1;
                 metrics.record_failure();
-                println!("Cycle {:>4}/{:<4} | SOL ${:>9.4} | ⚠️  Tick error: {}",
-                         cycle, total_cycles, price, e);
+                println!("Cycle {:>4} | SOL ${:>9.4} | ⚠️  Tick error: {}",
+                         cycle, price, e);
                 error!("[Main] Tick failed at cycle {}: {}", cycle, e);
             }
         }
@@ -613,7 +698,7 @@ fn setup_logging(args: &Args) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// MAIN ENTRY POINT — V5.3 🚀
+// MAIN ENTRY POINT — V5.4 🚀
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[tokio::main]
@@ -649,10 +734,15 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     match result {
         Ok(metrics) => {
-            let total_cycles = config.paper_trading.calculate_cycles(
-                config.performance.cycle_interval_ms
-            ) as u32;
-            metrics.display_summary(total_cycles);
+            // V5.4: In live mode, show actual cycles run (not a paper config cap).
+            let display_cycles = if config.bot.is_live() {
+                metrics.successful_cycles + metrics.failed_cycles
+            } else {
+                config.paper_trading.calculate_cycles(
+                    config.performance.cycle_interval_ms
+                ) as u32
+            };
+            metrics.display_summary(display_cycles);
 
             let feed_metrics = feed.get_metrics().await;
             info!("📡 Feed Statistics:");
