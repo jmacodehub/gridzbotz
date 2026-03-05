@@ -27,6 +27,9 @@
 //!    Removed broken line: Keypair::from_bytes(keystore.export_keypair()).
 //!    Signing remains in keystore — keypair never leaves SecureKeystore.
 //!    Root cause: export_keypair() doesn't exist and SHOULD NOT exist.
+//!
+//! V2.5.1 CHANGES (hotfix: clone pubkey for type system):
+//! ✅ Line 372: keystore.pubkey() returns &Pubkey, clone() for owned copy.
 //! =============================================================================
 
 use anyhow::{bail, Context, Result};
@@ -220,7 +223,7 @@ impl RealTradingEngine {
         initial_balance_sol: f64,
         initial_sol_price_usd: f64,
     ) -> Result<Self> {
-        info!("[RealEngine] Initializing V2.5");
+        info!("[RealEngine] Initializing V2.5.1");
 
         config.validate()?;
 
@@ -240,7 +243,7 @@ impl RealTradingEngine {
             initial_sol_price_usd,
         ));
 
-        info!("[RealEngine] Initialized V2.5");
+        info!("[RealEngine] Initialized V2.5.1");
         info!("  Wallet : {}",        keystore.pubkey());
         info!("  NAV    : ${:.2} (SOL @ ${:.4})",
             balance_tracker.initial_balance_usd(), initial_sol_price_usd);
@@ -353,8 +356,8 @@ impl RealTradingEngine {
         let usdc_mint_pubkey = Pubkey::from_str(USDC_MINT)
             .context("Failed to parse USDC_MINT")?;
 
-        // V2.5 SECURITY: Pass public key only — signing happens via keystore.sign_versioned_transaction()
-        let wallet_pubkey = self.keystore.pubkey();
+        // V2.5.1: Clone pubkey to get owned Pubkey (keystore.pubkey() returns &Pubkey)
+        let wallet_pubkey = self.keystore.pubkey().clone();
 
         // Initial capital (doesn't matter for single swaps, but JupiterClient needs it)
         let (usdc_balance, sol_balance) = self.balance_tracker.get_balances().await;
@@ -497,7 +500,7 @@ impl RealTradingEngine {
 
         println!();
         println!("=======================================================");
-        println!("  REAL TRADING ENGINE V2.5 - STATUS");
+        println!("  REAL TRADING ENGINE V2.5.1 - STATUS");
         println!("=======================================================");
         println!();
         println!("Balances:");
