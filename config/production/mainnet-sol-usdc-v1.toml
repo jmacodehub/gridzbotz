@@ -147,6 +147,29 @@ enable_circuit_breaker       = true
 circuit_breaker_threshold_pct = 4.0
 circuit_breaker_cooldown_secs = 300
 
+# ═══════════════════════════════════════════════════════════════════════════
+# 🪐 JUPITER API CONFIGURATION (REQUIRED FOR LIVE TRADING)
+# ═══════════════════════════════════════════════════════════════════════════
+[jupiter]
+# Jupiter API Key (REQUIRED)
+# Get free at: https://portal.jup.ag
+# ⚠️  Note: This key is visible in repo. Rotate if needed post-testing.
+api_key = "50c73ffd-2350-45f3-90da-50caa00cd24c"
+
+# API endpoint (current production)
+api_endpoint = "https://api.jup.ag"
+
+# Slippage tolerance in basis points (50 = 0.5%)
+# Tighter than execution.max_slippage_bps for normal conditions
+default_slippage_bps = 50
+
+# Priority fee configuration
+# Matches execution.priority_fee_microlamports for consistency
+priority_fee_max_lamports = 100000  # 0.0001 SOL max priority fee
+priority_level = "high"  # Options: none | low | medium | high | veryHigh
+
+# ═══════════════════════════════════════════════════════════════════════════
+
 [pyth]
 http_endpoint    = "https://hermes.pyth.network"
 feed_ids         = ["0xef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d"]
