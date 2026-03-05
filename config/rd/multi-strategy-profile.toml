@@ -1,0 +1,185 @@
+# ═══════════════════════════════════════════════════════════════════════════
+#  🔬 R&D PROFILE: MULTI-STRATEGY CONSENSUS
+#  Source: multi_strategy_v4_conservative_ai.toml + multi-v5-ai.toml (archived)
+#  Status: EXPERIMENTAL — all strategies enabled, weighted consensus
+#
+#  Profile: Grid + Momentum + RSI + MACD in weighted consensus
+#  When to use: Trending / momentum market phases
+#
+#  Key Discoveries (from historical Battle Royale + archive research):
+#   - consensus_mode="weighted" outperforms "single" in trending regimes
+#   - RSI weight=0.9 is highest non-grid signal (strong conviction)
+#   - MACD min_warmup=26 is NON-NEGOTIABLE — never reduce below 26
+#   - 22 levels + 0.25% spacing = better efficiency than 35 + 0.15%
+#   - max_orders_per_side = grid_levels/2 (22 → 11 per side)
+#   - max_volatility_to_trade = 8.0 (from multi-v5-ai — extreme market guard)
+#
+#  Indicator canonical defaults (multi-v5-ai research, Feb 2026):
+#   ATR:  period=14, multiplier=2.0
+#   RSI:  period=14, oversold=30, overbought=70
+#   BB:   period=20, std_dev=2.0
+#   MACD: fast=12, slow=26, signal=9
+#
+#  Run: cargo run --release -- --config config/rd/multi-strategy-profile.toml --paper
+#  Next: 48h paper run → compare vs mainnet-sol-usdc-v1 (grid-only baseline)
+# ═══════════════════════════════════════════════════════════════════════════
+
+test_name = "R&D: Multi-Strategy Consensus Profile"
+
+[bot]
+name           = "MultiStrat-RD-v1"
+version        = "5.4.1"
+environment    = "testing"
+execution_mode = "paper"
+instance_id    = "multistrat-rd-1"
+
+[network]
+cluster    = "devnet"
+rpc_url    = "https://api.devnet.solana.com"
+commitment = "confirmed"
+
+[security]
+wallet_path      = "~/.config/solana/id.json"
+require_password = false
+max_daily_trades      = 100
+max_daily_volume_usdc = 500.0
+
+[execution]
+max_trade_sol              = 0.5
+max_trade_size_usdc        = 100.0
+priority_fee_microlamports = 50000
+max_slippage_bps           = 100
+confirmation_timeout_secs  = 60
+max_retries                = 3
+
+[paper_trading]
+initial_usdc = 5000.0
+initial_sol  = 10.0
+
+[trading]
+# 🎯 Grid optimized for multi-strategy (Battle Royale winner: 22 levels + 0.25%)
+# Rule: max_orders_per_side = grid_levels / 2  →  22 / 2 = 11
+grid_levels          = 22
+grid_spacing_percent = 0.25
+min_order_size       = 0.1
+max_position_size    = 100.0
+
+min_usdc_reserve = 300.0
+min_sol_reserve  = 2.0
+
+enable_dynamic_grid  = true
+volatility_window    = 100
+
+reposition_threshold = 0.50
+
+enable_auto_rebalance    = true
+enable_smart_rebalance   = true
+rebalance_threshold_pct  = 5.0
+rebalance_cooldown_secs  = 60
+
+max_orders_per_side          = 11     # grid_levels/2 = 22/2 = 11
+order_refresh_interval_secs  = 300
+enable_market_orders         = false
+enable_fee_optimization      = true
+
+enable_order_lifecycle         = true
+order_max_age_minutes          = 10
+order_refresh_interval_minutes = 5
+min_orders_to_maintain         = 8
+
+min_profit_threshold_pct = 0.1
+max_slippage_pct         = 1.0
+
+enable_price_bounds = false
+
+# Regime gate with both LOW and HIGH thresholds
+enable_regime_gate       = true
+min_volatility_to_trade  = 0.02       # 0.02% floor (calibrated from 3000-cycle observation)
+max_volatility_to_trade  = 8.0        # 8% ceiling (from multi-v5-ai — pause in extremes)
+pause_in_very_low_vol    = true
+
+enable_adaptive_spacing      = true   # ATR-driven — important for multi-strategy
+enable_smart_position_sizing = false
+
+[strategies]
+# 🔥 Full weighted multi-strategy consensus
+active         = ["grid", "momentum", "rsi", "momentum_macd"]
+consensus_mode = "weighted"            # Blend signals by weight × confidence
+
+enable_multi_timeframe       = false
+require_timeframe_alignment  = false
+
+[strategies.grid]
+enabled                  = true
+weight                   = 1.0         # Grid is the anchor
+min_confidence           = 0.5
+reposition_threshold_pct = 0.50
+
+[strategies.momentum]
+enabled         = true
+weight          = 0.8
+min_confidence  = 0.6
+lookback_period = 20
+threshold       = 0.02
+
+[strategies.mean_reversion]
+enabled            = false             # Off — opposes momentum profile
+weight             = 0.7
+min_confidence     = 0.6
+sma_period         = 20
+std_dev_multiplier = 2.0               # Canonical BB width (multi-v5-ai)
+strong_buy_threshold  = 5.0
+buy_threshold         = 2.5
+strong_sell_threshold = 5.0
+sell_threshold        = 2.5
+
+[strategies.rsi]
+enabled              = true
+weight               = 0.9             # Highest non-grid weight
+min_confidence       = 0.7
+period               = 14              # Canonical RSI period
+oversold_threshold   = 30.0
+overbought_threshold = 70.0
+extreme_oversold     = 20.0
+extreme_overbought   = 80.0
+
+[strategies.momentum_macd]
+enabled                    = true
+weight                     = 0.8
+min_confidence             = 0.65
+strong_histogram_threshold = 0.5
+min_warmup_periods         = 26        # MACD slow period — NEVER reduce below 26
+
+[risk]
+max_position_size_pct         = 25.0
+max_drawdown_pct              = 10.0
+stop_loss_pct                 = 5.0
+take_profit_pct               = 10.0
+enable_circuit_breaker        = true
+circuit_breaker_threshold_pct = 8.0
+circuit_breaker_cooldown_secs = 300
+
+[pyth]
+http_endpoint      = "https://hermes.pyth.network"
+feed_ids           = ["0xef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d"]
+update_interval_ms = 500
+
+[performance]
+cycle_interval_ms  = 100
+startup_delay_ms   = 1000
+request_timeout_ms = 5000
+
+[logging]
+level               = "info"
+file_path           = "logs/rd/multistrat-rd-1.log"
+enable_file_logging = true
+
+[metrics]
+enable_metrics = true
+stats_interval = 300                   # Every 300 cycles = ~30 seconds
+
+[database]
+enabled = false
+
+[alerts]
+enabled = false
