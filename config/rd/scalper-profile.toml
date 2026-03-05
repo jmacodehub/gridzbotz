@@ -1,0 +1,180 @@
+# ═══════════════════════════════════════════════════════════════════════════
+#  🔬 R&D PROFILE: SCALPER
+#  Source: config/elite/scalper.toml (archived)
+#  Status: EXPERIMENTAL — validated in paper, not yet mainnet-tested
+#
+#  Profile: Ultra-tight grid, high-frequency, low-volatility hunter
+#  Market:  Stable sideways (ATR < 0.5, vol 0.01%–0.08%)
+#  Expected: 20-40 fills/day, 12-18% APY in optimal conditions
+#
+#  Key Discoveries (from Battle Royale + elite/ testing):
+#   - 0.08% = tightest viable spacing (Pyth confidence ±0.03%)
+#   - 50 levels × 0.08% = ±4% coverage (25 buy, 25 sell)
+#   - min_profit=0.05% — volume game, not margin game
+#   - rebalance_cooldown=30s — fastest ever tested, critical for freq
+#   - stats_interval=100 — 10s feedback loops (fast anomaly detection)
+#   - request_timeout=3000ms — stale data = bad fills, fail fast
+#   - pause_in_very_low_vol=false — scalpers LIKE quiet markets
+#   - max_volatility_to_trade=1.0 — PAUSE if ATR > 1% (whipsaw guard)
+#
+#  Run: cargo run --release -- --config config/rd/scalper-profile.toml --paper
+#  Next step: 24h paper backtest → compare fills vs mainnet-sol-usdc-v1 baseline
+# ═══════════════════════════════════════════════════════════════════════════
+
+test_name = "R&D: Scalper Profile"
+
+[bot]
+name           = "Scalper-RD-v1"
+version        = "5.4.1"
+environment    = "testing"
+execution_mode = "paper"
+instance_id    = "scalper-rd-1"
+
+[network]
+cluster    = "devnet"
+rpc_url    = "https://api.devnet.solana.com"
+commitment = "confirmed"
+
+[security]
+wallet_path      = "~/.config/solana/id.json"
+require_password = false
+max_daily_trades      = 200
+max_daily_volume_usdc = 1000.0
+
+[execution]
+max_trade_sol              = 0.3       # Small positions — frequency over size
+max_trade_size_usdc        = 30.0      # $30/trade cap (high frequency, low exposure)
+priority_fee_microlamports = 50000
+max_slippage_bps           = 50        # 0.5% — tight (liquid pairs only)
+confirmation_timeout_secs  = 60
+max_retries                = 3
+
+[paper_trading]
+initial_usdc = 3000.0                  # Smaller capital, higher turnover
+initial_sol  = 5.0
+
+[trading]
+# 🔥 Core Grid: TIGHT and DENSE
+grid_levels          = 50             # ±4% coverage (0.08% × 50 = 4%)
+grid_spacing_percent = 0.08           # 🎯 TIGHTEST viable on SOL/USDC
+min_order_size       = 0.05           # Tiny fills, high frequency
+max_position_size    = 50.0
+
+min_usdc_reserve = 200.0
+min_sol_reserve  = 1.0
+
+enable_dynamic_grid  = false          # Static spacing — predictable in low vol
+volatility_window    = 100
+
+reposition_threshold = 0.3            # 0.3% drift → instant reposition
+
+enable_auto_rebalance    = true
+enable_smart_rebalance   = true
+rebalance_threshold_pct  = 3.0        # Tighter rebalance trigger
+rebalance_cooldown_secs  = 30         # 🎯 30s — fastest ever tested
+
+max_orders_per_side          = 15     # Dense grid — 50/2 = 25 ideal, cap at 15
+order_refresh_interval_secs  = 180    # 3min refresh
+enable_market_orders         = false
+enable_fee_optimization      = true   # Critical for scalping margins
+
+enable_order_lifecycle         = true
+order_max_age_minutes          = 5    # Cancel stale orders fast
+order_refresh_interval_minutes = 3
+min_orders_to_maintain         = 12   # Always keep grid dense
+
+min_profit_threshold_pct = 0.05       # 5 BPS — accept micro-profits (volume game)
+max_slippage_pct         = 0.5        # Tight slippage
+
+enable_price_bounds = false
+
+# Scalper regime gate: pause on HIGH vol ONLY — never on low vol
+enable_regime_gate       = true
+min_volatility_to_trade  = 0.01       # 1 BPS — always active in normal markets
+max_volatility_to_trade  = 1.0        # 🎯 PAUSE if ATR > 1% (whipsaw protection)
+pause_in_very_low_vol    = false      # NEVER pause for quiet (scalpers like quiet!)
+
+enable_adaptive_spacing      = false
+enable_smart_position_sizing = false
+
+[strategies]
+active         = ["grid"]
+consensus_mode = "single"
+
+enable_multi_timeframe      = false
+require_timeframe_alignment = false
+
+[strategies.grid]
+enabled                  = true
+weight                   = 1.0
+min_confidence           = 0.4         # Lower threshold (more aggressive fills)
+reposition_threshold_pct = 0.30
+
+[strategies.momentum]
+enabled         = false
+weight          = 0.8
+min_confidence  = 0.6
+lookback_period = 20
+threshold       = 0.02
+
+[strategies.mean_reversion]
+enabled            = false
+weight             = 0.7
+min_confidence     = 0.6
+sma_period         = 20
+std_dev_multiplier = 2.0
+strong_buy_threshold  = 5.0
+buy_threshold         = 2.5
+strong_sell_threshold = 5.0
+sell_threshold        = 2.5
+
+[strategies.rsi]
+enabled              = false
+weight               = 0.9
+min_confidence       = 0.7
+period               = 14
+oversold_threshold   = 30.0
+overbought_threshold = 70.0
+extreme_oversold     = 20.0
+extreme_overbought   = 80.0
+
+[strategies.momentum_macd]
+enabled                    = false
+weight                     = 0.8
+min_confidence             = 0.65
+strong_histogram_threshold = 0.5
+min_warmup_periods         = 26
+
+[risk]
+max_position_size_pct         = 20.0  # Lower exposure (frequent trading)
+max_drawdown_pct              = 5.0   # 🚨 Tight drawdown limit
+stop_loss_pct                 = 2.0   # 🚨 Tight stop-loss
+take_profit_pct               = 1.0   # Quick profit-taking
+enable_circuit_breaker        = true
+circuit_breaker_threshold_pct = 3.0   # Trip at 3% rapid loss
+circuit_breaker_cooldown_secs = 180   # 3-min cooldown
+
+[pyth]
+http_endpoint      = "https://hermes.pyth.network"
+feed_ids           = ["0xef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d"]
+update_interval_ms = 100             # 🚀 10Hz polling (max resolution)
+
+[performance]
+cycle_interval_ms  = 100
+startup_delay_ms   = 1000
+request_timeout_ms = 3000            # 🎯 Tight timeout — stale data = bad fills
+
+[logging]
+level               = "info"
+file_path           = "logs/rd/scalper-rd-1.log"
+enable_file_logging = true
+
+[metrics]
+enable_metrics = true
+stats_interval = 100                 # Every 100 cycles = ~10 seconds feedback
+
+[database]
+enabled = false
+
+[alerts]
+enabled = false
