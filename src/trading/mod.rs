@@ -6,7 +6,7 @@
 //! - Paper Trading: Risk-free backtesting and simulation
 //! - Grid State Machine: Order lifecycle tracking with buy/sell pairing
 //! - Real Trading: ✅ ENABLED - Live execution with Jupiter swaps!
-//! - Jupiter Client: V5.1 — Single unified client, ALTs preserved, dynamic fees
+//! - Jupiter Client: V4.0 — Production client from src/dex/ with API key support
 //! - Price Feeds: Multiple sources with redundancy and consensus
 //! - Transaction Executor: Solana transaction building and signing
 //! - Enhanced Metrics: Trade-level analytics and performance tracking
@@ -29,7 +29,12 @@
 //! ✅ Builder methods: .with_level() / .with_distance_from_mid()
 //! ✅ All existing call sites unaffected (new fields default to None)
 //!
-//! February 2026 - V5.2.1 PER-LEVEL ANALYTICS! 🚀
+//! V5.3 CHANGES (Mar 2026 — production Jupiter client):
+//! ✅ Old src/trading/jupiter_client.rs stub removed
+//! ✅ Production JupiterClient V4.0 wired from src/dex/
+//! ✅ Full API key support, proper error handling, dynamic slippage
+//!
+//! March 2026 - V5.3 PRODUCTION JUPITER CLIENT! 🚀
 //! ═════════════════════════════════════════════════════════════════════
 
 pub use crate::config::Config;
@@ -50,7 +55,6 @@ pub mod executor;            // Transaction executor
 pub mod trade;               // Trade data structures
 pub mod feed_consensus;      // Feed consensus logic
 pub mod redundant_feed;      // Redundant price feeds
-pub mod jupiter_client;      // 🪐 V5.1: Unified Jupiter client (replaces jupiter_swap)
 pub mod real_trader;         // 🔥 ENABLED - Phase 5 Complete!
 pub mod enhanced_metrics;    // 📊 V4.1: Enhanced analytics tracking
 pub mod adaptive_optimizer;  // 🧠 V4.2: Self-learning optimizer
@@ -104,10 +108,12 @@ pub use adaptive_optimizer::{
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Jupiter Client Exports (V5.1) 🪐 — Unified, ALTs preserved
+// Jupiter Client Exports (V5.3 / Mar 2026) 🪐 — Production from src/dex/
 // ═══════════════════════════════════════════════════════════════════════════
 
-pub use jupiter_client::{
+// Re-export production JupiterClient V4.0 from src/dex/
+// This replaces the old stub that lived in src/trading/jupiter_client.rs
+pub use crate::dex::jupiter_client::{
     JupiterClient,
     JupiterConfig,
     JupiterQuoteRequest,
@@ -466,7 +472,7 @@ pub mod prelude {
         PriceFeed,
         FeedMode,
 
-        // Jupiter V5.1 — unified
+        // Jupiter V5.3 — production from src/dex/
         JupiterClient,
         JupiterConfig,
         JupiterQuoteResponse,
