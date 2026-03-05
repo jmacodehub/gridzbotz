@@ -268,12 +268,16 @@ pub fn version_string() -> String {
 /// #[tokio::main]
 /// async fn main() -> Result<()> {
 ///     let config = Config::from_file("config/master.toml")?;
-///     
+///
 ///     // V5.2: GridBot::new() requires config + injected engine
-///     let engine = Arc::new(PaperTradingEngine::new(&config)?);
+///
+///    // PaperTradingEngine::new(initial_usdc, initial_sol)
+///     // PaperTradingEngine::new(initial_usdc, initial_sol)
+///     let engine = Arc::new(PaperTradingEngine::new(10_000.0, 5.0));
+
 ///     let mut bot = GridBot::new(config, engine)?;
 ///     bot.initialize().await?;
-///     
+///
 ///     Ok(())
 /// }
 /// ```
