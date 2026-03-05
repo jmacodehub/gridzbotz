@@ -1,5 +1,5 @@
 //! =============================================================================
-//! REAL TRADER ENGINE V2.2 - MODULAR & BULLETPROOF
+//! REAL TRADER ENGINE V2.4 - MODULAR & BULLETPROOF
 //!
 //! V2.2 CHANGES (fix/live-mode-circuit-breaker-wallet-noise):
 //! ✅ CircuitBreaker::with_balance() now receives full portfolio NAV
@@ -15,6 +15,12 @@
 //! ✅ Import path changed: super::jupiter_client → crate::dex::jupiter_client
 //!    Now uses production JupiterClient V4.0 with full API key support.
 //!    Old stub that caused all swap failures has been obliterated.
+//!
+//! V2.4 CHANGES (fix/real-trader-api-mismatch):
+//! ✅ build_jupiter_swap() now uses JupiterClient::simple_swap() API.
+//!    Constructor changed from JupiterConfig struct to 6 explicit args.
+//!    with_priority_fee() now takes (lamports, level) instead of just lamports.
+//!    Stub that prevented real swaps from compiling has been eradicated.
 //! =============================================================================
 
 use anyhow::{bail, Context, Result};
@@ -24,6 +30,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::str::FromStr;
 use tokio::sync::RwLock;
 
 // -----------------------------------------------------------------------------
@@ -35,9 +42,14 @@ use crate::Config;
 use super::executor::{TransactionExecutor, ExecutorConfig};
 use super::trade::Trade;
 use super::paper_trader::{Order, OrderSide, VirtualWallet, PerformanceStats as PaperPerformanceStats};
-use crate::dex::jupiter_client::{JupiterClient, JupiterConfig, SOL_MINT, USDC_MINT};
+use crate::dex::{JupiterClient, SOL_MINT, USDC_MINT};
 use super::{TradingEngine, TradingResult, FillEvent};
-use solana_sdk::transaction::VersionedTransaction;
+use solana_sdk::{
+    transaction::VersionedTransaction,
+    pubkey::Pubkey,
+    signature::Keypair,
+    signer::Signer,
+};
 
 // -----------------------------------------------------------------------------
 // CONFIGURATION
@@ -55,6 +67,8 @@ pub struct RealTradingConfig {
     pub maker_fee_bps: Option<f64>,
     pub taker_fee_bps: Option<f64>,
     pub reconcile_balances_every_n_trades: Option<u32>,
+    pub jupiter_api_key: Option<String>,  // 🆕 V2.4: Jupiter API key
+    pub rpc_url: Option<String>,           // 🆕 V2.4: RPC URL
 }
 
 impl Default for RealTradingConfig {
@@ -71,6 +85,8 @@ impl Default for RealTradingConfig {
             maker_fee_bps: Some(2.0),
             taker_fee_bps: Some(4.0),
             reconcile_balances_every_n_trades: Some(10),
+            jupiter_api_key: None,
+            rpc_url: Some("https://api.mainnet-beta.solana.com".to_string()),
         }
     }
 }
@@ -200,7 +216,7 @@ impl RealTradingEngine {
         initial_balance_sol: f64,
         initial_sol_price_usd: f64,
     ) -> Result<Self> {
-        info!("[RealEngine] Initializing V2.3");
+        info!("[RealEngine] Initializing V2.4");
 
         config.validate()?;
 
@@ -220,7 +236,7 @@ impl RealTradingEngine {
             initial_sol_price_usd,
         ));
 
-        info!("[RealEngine] Initialized V2.3");
+        info!("[RealEngine] Initialized V2.4");
         info!("  Wallet : {}",        keystore.pubkey());
         info!("  NAV    : ${:.2} (SOL @ ${:.4})",
             balance_tracker.initial_balance_usd(), initial_sol_price_usd);
@@ -325,32 +341,60 @@ impl RealTradingEngine {
         price: f64,
         size: f64,
     ) -> Result<(VersionedTransaction, u64)> {
-        info!("[Jupiter] Building VersionedTransaction...");
+        info!("[Jupiter] Building VersionedTransaction V4.0...");
 
-        let jupiter = JupiterClient::new(JupiterConfig {
-            slippage_bps: self.config.slippage_bps.unwrap_or(50),
-            ..Default::default()
-        })?
-        .with_priority_fee(10_000);
+        // Parse mint addresses
+        let sol_mint_pubkey = Pubkey::from_str(SOL_MINT)
+            .context("Failed to parse SOL_MINT")?;
+        let usdc_mint_pubkey = Pubkey::from_str(USDC_MINT)
+            .context("Failed to parse USDC_MINT")?;
 
+        // Get wallet keypair from keystore
+        let wallet_keypair = Keypair::from_bytes(&self.keystore.export_keypair().to_bytes())?;
+
+        // Initial capital (doesn't matter for single swaps, but JupiterClient needs it)
+        let (usdc_balance, sol_balance) = self.balance_tracker.get_balances().await;
+        let initial_capital = usdc_balance + (sol_balance * price);
+
+        // Get RPC URL and API key from config
+        let rpc_url = self.config.rpc_url.clone()
+            .unwrap_or_else(|| "https://api.mainnet-beta.solana.com".to_string());
+        let jupiter_api_key = self.config.jupiter_api_key.clone()
+            .ok_or_else(|| anyhow::anyhow!("jupiter_api_key not configured"))?;
+
+        // Create Jupiter client with production API
+        let jupiter = JupiterClient::new(
+            rpc_url,
+            wallet_keypair,
+            sol_mint_pubkey,
+            usdc_mint_pubkey,
+            initial_capital,
+            jupiter_api_key,
+        )?
+        .with_slippage(self.config.slippage_bps.unwrap_or(50))
+        .with_priority_fee(10_000, "high".to_string());
+
+        // Determine swap direction and amount
         let (input_mint, output_mint, amount) = match side {
             OrderSide::Buy => {
+                // Buy SOL with USDC
                 let usdc_micro = (price * size * 1_000_000.0) as u64;
-                info!("  BUY:  {:.2} USDC -> SOL", price * size);
-                (USDC_MINT, SOL_MINT, usdc_micro)
+                info!("  BUY:  {:.2} USDC → SOL", price * size);
+                (usdc_mint_pubkey, sol_mint_pubkey, usdc_micro)
             }
             OrderSide::Sell => {
+                // Sell SOL for USDC
                 let sol_lamports = (size * 1_000_000_000.0) as u64;
-                info!("  SELL: {:.4} SOL -> USDC", size);
-                (SOL_MINT, USDC_MINT, sol_lamports)
+                info!("  SELL: {:.4} SOL → USDC", size);
+                (sol_mint_pubkey, usdc_mint_pubkey, sol_lamports)
             }
         };
 
-        let user_pubkey = *self.keystore.pubkey();
-        let (tx, last_valid, _quote) = jupiter
-            .prepare_swap(input_mint, output_mint, amount, user_pubkey)
+        // Call simple_swap() to get unsigned VersionedTransaction
+        let (tx, last_valid) = jupiter
+            .simple_swap(input_mint, output_mint, amount)
             .await
-            .context("Failed to prepare Jupiter swap")?;
+            .context("Failed to build Jupiter swap")?;
 
         info!("[Jupiter] Swap tx built (last valid block: {})", last_valid);
         Ok((tx, last_valid))
@@ -449,7 +493,7 @@ impl RealTradingEngine {
 
         println!();
         println!("=======================================================");
-        println!("  REAL TRADING ENGINE V2.3 - STATUS");
+        println!("  REAL TRADING ENGINE V2.4 - STATUS");
         println!("=======================================================");
         println!();
         println!("Balances:");
@@ -581,7 +625,7 @@ impl TradingEngine for RealTradingEngine {
         self.trigger_emergency_shutdown(reason).await
     }
 
-    // ── V5.2.2 / V2.3: Wallet and performance queries ───────────────────
+    // ── V5.2.2 / V2.4: Wallet and performance queries ────────────────
     async fn get_wallet(&self) -> VirtualWallet {
         // Use new_silent to avoid logging "[WALLET] Initialized" on every
         // price cycle.  new() is only appropriate at session start.
