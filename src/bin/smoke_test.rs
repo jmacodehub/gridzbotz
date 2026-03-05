@@ -29,11 +29,9 @@ use clap::Parser;
 use log::info;
 use std::net::IpAddr;
 use solana_grid_bot::{
+    dex::{JupiterClient, JupiterConfig, SOL_MINT, USDC_MINT, resolve_via_doh},
     security::keystore::{KeystoreConfig, SecureKeystore},
-    trading::{
-        jupiter_client::{JupiterClient, JupiterConfig, SOL_MINT, USDC_MINT, resolve_via_doh},
-        price_feed::PriceFeed,
-    },
+    trading::price_feed::PriceFeed,
 };
 use solana_client::nonblocking::rpc_client::RpcClient;
 use tokio::time::{sleep, Duration};

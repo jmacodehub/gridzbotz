@@ -49,17 +49,15 @@
 //! # }
 //! ```
 
-use super::{Order, OrderSide, PlacedOrder, Position, Trader};
+use super::{Order, PlacedOrder, Position, Trader};
 use anyhow::{anyhow, bail, Result};
 use async_trait::async_trait;
 use base64::{engine::general_purpose, Engine as _};
 use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
 use solana_client::rpc_client::RpcClient;
-use solana_client::rpc_config::RpcSendTransactionConfig;
 use solana_sdk::{
     pubkey::Pubkey,
-    signature::Signature,
     transaction::VersionedTransaction,
 };
 use std::sync::Arc;
