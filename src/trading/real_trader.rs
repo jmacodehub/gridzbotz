@@ -1,5 +1,5 @@
 //! =============================================================================
-//! REAL TRADER ENGINE V2.4 - MODULAR & BULLETPROOF
+//! REAL TRADER ENGINE V2.5 - MODULAR & BULLETPROOF
 //!
 //! V2.2 CHANGES (fix/live-mode-circuit-breaker-wallet-noise):
 //! ✅ CircuitBreaker::with_balance() now receives full portfolio NAV
@@ -21,6 +21,12 @@
 //!    Constructor changed from JupiterConfig struct to 6 explicit args.
 //!    with_priority_fee() now takes (lamports, level) instead of just lamports.
 //!    Stub that prevented real swaps from compiling has been eradicated.
+//!
+//! V2.5 CHANGES (fix/dex-module-exports — Mar 2026 SECURITY):
+//! ✅ JupiterClient::new() now accepts Pubkey instead of Keypair (security!).
+//!    Removed broken line: Keypair::from_bytes(keystore.export_keypair()).
+//!    Signing remains in keystore — keypair never leaves SecureKeystore.
+//!    Root cause: export_keypair() doesn't exist and SHOULD NOT exist.
 //! =============================================================================
 
 use anyhow::{bail, Context, Result};
@@ -47,8 +53,6 @@ use super::{TradingEngine, TradingResult, FillEvent};
 use solana_sdk::{
     transaction::VersionedTransaction,
     pubkey::Pubkey,
-    signature::Keypair,
-    signer::Signer,
 };
 
 // -----------------------------------------------------------------------------
@@ -216,7 +220,7 @@ impl RealTradingEngine {
         initial_balance_sol: f64,
         initial_sol_price_usd: f64,
     ) -> Result<Self> {
-        info!("[RealEngine] Initializing V2.4");
+        info!("[RealEngine] Initializing V2.5");
 
         config.validate()?;
 
@@ -236,7 +240,7 @@ impl RealTradingEngine {
             initial_sol_price_usd,
         ));
 
-        info!("[RealEngine] Initialized V2.4");
+        info!("[RealEngine] Initialized V2.5");
         info!("  Wallet : {}",        keystore.pubkey());
         info!("  NAV    : ${:.2} (SOL @ ${:.4})",
             balance_tracker.initial_balance_usd(), initial_sol_price_usd);
@@ -341,7 +345,7 @@ impl RealTradingEngine {
         price: f64,
         size: f64,
     ) -> Result<(VersionedTransaction, u64)> {
-        info!("[Jupiter] Building VersionedTransaction V4.0...");
+        info!("[Jupiter] Building VersionedTransaction V4.1 (secure)...");
 
         // Parse mint addresses
         let sol_mint_pubkey = Pubkey::from_str(SOL_MINT)
@@ -349,8 +353,8 @@ impl RealTradingEngine {
         let usdc_mint_pubkey = Pubkey::from_str(USDC_MINT)
             .context("Failed to parse USDC_MINT")?;
 
-        // Get wallet keypair from keystore
-        let wallet_keypair = Keypair::from_bytes(&self.keystore.export_keypair().to_bytes())?;
+        // V2.5 SECURITY: Pass public key only — signing happens via keystore.sign_versioned_transaction()
+        let wallet_pubkey = self.keystore.pubkey();
 
         // Initial capital (doesn't matter for single swaps, but JupiterClient needs it)
         let (usdc_balance, sol_balance) = self.balance_tracker.get_balances().await;
@@ -362,10 +366,10 @@ impl RealTradingEngine {
         let jupiter_api_key = self.config.jupiter_api_key.clone()
             .ok_or_else(|| anyhow::anyhow!("jupiter_api_key not configured"))?;
 
-        // Create Jupiter client with production API
+        // Create Jupiter client with production API V4.1 (secure: accepts Pubkey)
         let jupiter = JupiterClient::new(
             rpc_url,
-            wallet_keypair,
+            wallet_pubkey,
             sol_mint_pubkey,
             usdc_mint_pubkey,
             initial_capital,
@@ -493,7 +497,7 @@ impl RealTradingEngine {
 
         println!();
         println!("=======================================================");
-        println!("  REAL TRADING ENGINE V2.4 - STATUS");
+        println!("  REAL TRADING ENGINE V2.5 - STATUS");
         println!("=======================================================");
         println!();
         println!("Balances:");
@@ -625,7 +629,7 @@ impl TradingEngine for RealTradingEngine {
         self.trigger_emergency_shutdown(reason).await
     }
 
-    // ── V5.2.2 / V2.4: Wallet and performance queries ────────────────
+    // ── V5.2.2 / V2.5: Wallet and performance queries ────────────────
     async fn get_wallet(&self) -> VirtualWallet {
         // Use new_silent to avoid logging "[WALLET] Initialized" on every
         // price cycle.  new() is only appropriate at session start.

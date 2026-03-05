@@ -1,6 +1,13 @@
-//! 🪐 Jupiter Aggregator Client — PRODUCTION V4.0
+//! 🪐 Jupiter Aggregator Client — PRODUCTION V4.1
 //! 
 //! Real DEX trading via Jupiter API with best-price routing across Solana.
+//! 
+//! # V4.1 CHANGES (Mar 2026 — Security Fix)
+//! ✅ Constructor accepts Pubkey instead of Keypair (security best practice)
+//! ✅ Signing now handled externally by SecureKeystore (never export keys!)
+//! ✅ simple_swap() API unchanged — only needs pubkey for Jupiter
+//! ⚠️  Trader trait methods (place_order) no longer work without keypair
+//!    (acceptable — RealTradingEngine only uses simple_swap())
 //! 
 //! # Features
 //! - ✅ Real HTTP calls to https://api.jup.ag (current production endpoint)
@@ -13,49 +20,21 @@
 //! - ✅ Comprehensive error logging with raw responses
 //! - ✅ Simple swap API for RealTradingEngine integration
 //! 
-//! # Example (Full Trader trait)
-//! ```no_run
-//! use solana_grid_bot::dex::{JupiterClient, Order, OrderSide, OrderType, Trader};
-//! use solana_sdk::signature::Keypair;
-//! use solana_sdk::pubkey::Pubkey;
-//! 
-//! # async fn example() -> anyhow::Result<()> {
-//! let wallet = Keypair::new();
-//! let sol_mint = Pubkey::new_unique();
-//! let usdc_mint = Pubkey::new_unique();
-//! let api_key = "your-jupiter-api-key".to_string();
-//! 
-//! let mut client = JupiterClient::new(
-//!     "https://api.mainnet-beta.solana.com".to_string(),
-//!     wallet,
-//!     sol_mint,
-//!     usdc_mint,
-//!     1000.0,
-//!     api_key,
-//! )?;
-//! 
-//! let order = Order::new(OrderSide::Bid, 180.0, 1.0, OrderType::Limit);
-//! let placed = client.place_order(order).await?;
-//! println!("✅ Real trade! Signature: {}", placed.order_id);
-//! # Ok(())
-//! # }
-//! ```
-//!
 //! # Example (Simple swap API for RealTradingEngine)
 //! ```no_run
 //! use solana_grid_bot::dex::JupiterClient;
-//! use solana_sdk::signature::Keypair;
 //! use solana_sdk::pubkey::Pubkey;
+//! use std::str::FromStr;
 //! 
 //! # async fn example() -> anyhow::Result<()> {
-//! let wallet = Keypair::new();
-//! let sol_mint = Pubkey::new_unique();
-//! let usdc_mint = Pubkey::new_unique();
+//! let wallet_pubkey = Pubkey::from_str("YourWalletAddressHere...")?;
+//! let sol_mint = Pubkey::from_str("So11111111111111111111111111111111111111112")?;
+//! let usdc_mint = Pubkey::from_str("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v")?;
 //! let api_key = "your-jupiter-api-key".to_string();
 //! 
 //! let client = JupiterClient::new(
 //!     "https://api.mainnet-beta.solana.com".to_string(),
-//!     wallet,
+//!     wallet_pubkey,
 //!     sol_mint,
 //!     usdc_mint,
 //!     1000.0,
@@ -64,6 +43,7 @@
 //! 
 //! let lamports = 1_000_000_000; // 1 SOL
 //! let (tx, last_valid) = client.simple_swap(sol_mint, usdc_mint, lamports).await?;
+//! // Caller signs tx with SecureKeystore (never export keys!)
 //! println!("✅ Swap tx ready! Last valid block: {}", last_valid);
 //! # Ok(())
 //! # }
@@ -79,8 +59,7 @@ use solana_client::rpc_client::RpcClient;
 use solana_client::rpc_config::RpcSendTransactionConfig;
 use solana_sdk::{
     pubkey::Pubkey,
-    signature::{Keypair, Signature},
-    signer::Signer,
+    signature::Signature,
     transaction::VersionedTransaction,
 };
 use std::sync::Arc;
@@ -223,8 +202,8 @@ pub struct JupiterClient {
     /// RPC client for Solana blockchain
     rpc: Arc<RpcClient>,
     
-    /// Trading wallet keypair
-    wallet: Arc<Keypair>,
+    /// Trading wallet public key (V4.1: no longer stores Keypair — security!)
+    wallet_pubkey: Pubkey,
     
     /// Base token mint (e.g., SOL)
     base_mint: Pubkey,
@@ -263,26 +242,30 @@ pub struct JupiterClient {
 impl JupiterClient {
     /// Create a new Jupiter aggregator client with real API integration
     /// 
+    /// # V4.1 SECURITY: Now accepts Pubkey instead of Keypair
+    /// 
+    /// Signing is handled externally by SecureKeystore — never export keys!
+    /// 
     /// # Arguments
     /// * `rpc_url` - Solana RPC endpoint URL
-    /// * `wallet` - Trading wallet keypair
+    /// * `wallet_pubkey` - Trading wallet PUBLIC KEY (not Keypair!)
     /// * `base_mint` - Base token mint address (e.g., SOL)
     /// * `quote_mint` - Quote token mint address (e.g., USDC)
     /// * `initial_capital` - Starting quote currency amount
     /// * `jupiter_api_key` - Jupiter API key from https://portal.jup.ag
     pub fn new(
         rpc_url: String,
-        wallet: Keypair,
+        wallet_pubkey: Pubkey,
         base_mint: Pubkey,
         quote_mint: Pubkey,
         initial_capital: f64,
         jupiter_api_key: String,
     ) -> Result<Self> {
-        info!("🪐 Jupiter API Client V4.0 — Production Mode");
+        info!("🪐 Jupiter API Client V4.1 — Production Mode (Secure)");
         info!("   Endpoint:   {}", JUPITER_API);
         info!("   Base mint:  {}", base_mint);
         info!("   Quote mint: {}", quote_mint);
-        info!("   Wallet:     {}", wallet.pubkey());
+        info!("   Wallet:     {}", wallet_pubkey);
         info!("   Capital:    ${:.2}", initial_capital);
         
         // Validate API key
@@ -301,7 +284,7 @@ impl JupiterClient {
         
         Ok(Self {
             rpc: Arc::new(RpcClient::new(rpc_url)),
-            wallet: Arc::new(wallet),
+            wallet_pubkey,
             base_mint,
             quote_mint,
             position: Position::new(initial_capital),
@@ -341,7 +324,7 @@ impl JupiterClient {
     /// This is a **lightweight bridge** for RealTradingEngine that:
     /// - Takes raw mints + amounts
     /// - Returns unsigned VersionedTransaction
-    /// - Lets caller handle signing/broadcasting
+    /// - Lets caller handle signing/broadcasting (via SecureKeystore)
     /// 
     /// # Arguments
     /// * `input_mint` - Token to sell (e.g., SOL, USDC)
@@ -354,21 +337,24 @@ impl JupiterClient {
     /// # Example
     /// ```no_run
     /// # use solana_grid_bot::dex::JupiterClient;
-    /// # use solana_sdk::{signature::Keypair, pubkey::Pubkey};
+    /// # use solana_sdk::pubkey::Pubkey;
+    /// # use std::str::FromStr;
     /// # async fn example() -> anyhow::Result<()> {
+    /// # let wallet_pubkey = Pubkey::from_str("11111111111111111111111111111111")?;
     /// # let client = JupiterClient::new(
     /// #     "https://api.devnet.solana.com".to_string(),
-    /// #     Keypair::new(),
+    /// #     wallet_pubkey,
     /// #     Pubkey::new_unique(),
     /// #     Pubkey::new_unique(),
     /// #     1000.0,
     /// #     "test-key".to_string(),
     /// # )?;
-    /// let sol_mint = "So11111111111111111111111111111111111111112".parse()?;
-    /// let usdc_mint = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v".parse()?;
+    /// let sol_mint = Pubkey::from_str("So11111111111111111111111111111111111111112")?;
+    /// let usdc_mint = Pubkey::from_str("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v")?;
     /// let lamports = 1_000_000_000; // 1 SOL
     /// 
     /// let (tx, last_valid) = client.simple_swap(sol_mint, usdc_mint, lamports).await?;
+    /// // Sign tx with SecureKeystore.sign_versioned_transaction()
     /// println!("Swap tx ready! Last valid block: {}", last_valid);
     /// # Ok(())
     /// # }
@@ -512,7 +498,7 @@ impl JupiterClient {
             
             let swap_request = SwapRequest {
                 quote_response: quote_response.clone(),
-                user_public_key: self.wallet.pubkey().to_string(),
+                user_public_key: self.wallet_pubkey.to_string(),
                 wrap_unwrap_sol: true,
                 dynamic_compute_unit_limit: Some(true),
                 dynamic_slippage: Some(true),
@@ -562,161 +548,6 @@ impl JupiterClient {
         }).await
     }
     
-    /// Execute a real swap via Jupiter API (full Trader trait implementation)
-    async fn execute_swap(
-        &mut self,
-        input_mint: Pubkey,
-        output_mint: Pubkey,
-        amount: f64,
-        slippage_bps: u16,
-    ) -> Result<Signature> {
-        info!("🔄 Executing Jupiter swap");
-        debug!("   Input:    {} ({})", amount, input_mint);
-        debug!("   Output:   {}", output_mint);
-        debug!("   Slippage: {}bps", slippage_bps);
-        
-        // Convert amount to lamports/units
-        let amount_lamports = if input_mint == self.base_mint {
-            // SOL: 1 SOL = 1e9 lamports
-            (amount * 1_000_000_000.0) as u64
-        } else {
-            // USDC: 1 USDC = 1e6 units
-            (amount * 1_000_000.0) as u64
-        };
-        
-        // Step 1: Get quote
-        info!("📞 Fetching Jupiter quote...");
-        let quote = self.get_quote(input_mint, output_mint, amount_lamports, slippage_bps).await?;
-        
-        let price_impact: f64 = quote.price_impact_pct.parse().unwrap_or(0.0);
-        info!("📊 Quote received:");
-        info!("   In:           {} ({})", quote.in_amount, input_mint);
-        info!("   Out:          {} ({})", quote.out_amount, output_mint);
-        info!("   Price Impact: {:.4}%", price_impact);
-        
-        for (i, step) in quote.route_plan.iter().enumerate() {
-            debug!("   Route #{}: {} via {}", i + 1, step.swap_info.label, step.swap_info.amm_key);
-        }
-        
-        // Step 2: Get swap transaction
-        info!("🔨 Building swap transaction...");
-        let swap_response = self.get_swap_transaction(quote.clone()).await?;
-        
-        if let Some(priority_fee) = swap_response.prioritization_fee_lamports {
-            info!("   Priority fee: {} lamports", priority_fee);
-        }
-        if let Some(compute_limit) = swap_response.compute_unit_limit {
-            info!("   Compute units: {}", compute_limit);
-        }
-        
-        // Step 3: Decode and broadcast transaction
-        info!("🚀 Sending pre-signed transaction to Solana mainnet...");
-        
-        let tx_bytes = general_purpose::STANDARD
-            .decode(&swap_response.swap_transaction)
-            .map_err(|e| anyhow!("Failed to decode transaction: {}", e))?;
-        
-        let versioned_tx: VersionedTransaction = bincode::deserialize(&tx_bytes)
-            .map_err(|e| anyhow!("Failed to deserialize VersionedTransaction: {}", e))?;
-        
-        info!("📡 Broadcasting Jupiter pre-signed transaction...");
-        
-        let signature = self.execute_with_retry("Send transaction", || async {
-            let config = RpcSendTransactionConfig {
-                skip_preflight: false,
-                ..Default::default()
-            };
-            
-            let sig = self.rpc.send_transaction_with_config(&versioned_tx, config)?;
-            
-            // Wait for confirmation
-            info!("⏳ Waiting for confirmation...");
-            for _ in 0..30 {
-                let confirmed = self.rpc.confirm_transaction(&sig)?;
-                if confirmed {
-                    break;
-                }
-                std::thread::sleep(Duration::from_secs(1));
-            }
-            
-            Ok(sig)
-        }).await?;
-        
-        info!("✅ TRANSACTION CONFIRMED ON MAINNET!");
-        info!("   Signature: {}", signature);
-        info!("   🔗 https://solscan.io/tx/{}", signature);
-        
-        // Update position
-        let out_amount: u64 = quote.out_amount.parse()?;
-        let out_amount_float = if output_mint == self.base_mint {
-            out_amount as f64 / 1_000_000_000.0
-        } else {
-            out_amount as f64 / 1_000_000.0
-        };
-        
-        info!("   Received: {:.6} tokens", out_amount_float);
-        
-        self.simulate_fill(input_mint, output_mint, amount)?;
-        
-        // Update statistics
-        self.orders_placed += 1;
-        self.last_order_time = Some(SystemTime::now());
-        
-        info!("🎉 Swap complete! Real DEX execution successful!");
-        
-        Ok(signature)
-    }
-    
-    /// Simulate order fill for position tracking
-    fn simulate_fill(
-        &mut self,
-        input_mint: Pubkey,
-        output_mint: Pubkey,
-        amount: f64,
-    ) -> Result<()> {
-        if input_mint == output_mint {
-            bail!("Input and output mints cannot be the same");
-        }
-        
-        let is_buy = output_mint == self.base_mint;
-        
-        if is_buy {
-            let cost = amount;
-            let received = amount / 165.0; // Approximate SOL price
-            
-            debug!("   Buying {:.4} base for ${:.2}", received, cost);
-            
-            self.position.quote_amount -= cost;
-            
-            let old_base = self.position.base_amount;
-            let old_avg = self.position.avg_entry_price;
-            let new_base = old_base + received;
-            
-            if new_base > 0.0 {
-                self.position.avg_entry_price = 
-                    ((old_avg * old_base) + (cost / received)) / new_base;
-            }
-            
-            self.position.base_amount = new_base;
-        } else {
-            let sold = amount;
-            let received = sold * 165.0;
-            
-            debug!("   Selling {:.4} base for ${:.2}", sold, received);
-            
-            if self.position.avg_entry_price > 0.0 {
-                let pnl = (165.0 - self.position.avg_entry_price) * sold;
-                self.position.realized_pnl += pnl;
-                debug!("   Realized P&L: ${:+.2}", pnl);
-            }
-            
-            self.position.base_amount -= sold;
-            self.position.quote_amount += received;
-        }
-        
-        Ok(())
-    }
-    
     /// Get trading statistics
     pub fn stats(&self) -> (u64, u64) {
         (self.orders_placed, self.orders_cancelled)
@@ -740,53 +571,19 @@ impl JupiterClient {
 // ═══════════════════════════════════════════════════════════════════════════
 // TRADER TRAIT IMPLEMENTATION
 // ═══════════════════════════════════════════════════════════════════════════
+// 
+// ⚠️  V4.1 NOTE: Trader trait methods no longer work without Keypair.
+//     This is acceptable — RealTradingEngine only uses simple_swap().
+//     To use Trader trait, refactor to accept external signing closure.
+// ═══════════════════════════════════════════════════════════════════════════
 
 #[async_trait]
 impl Trader for JupiterClient {
-    async fn place_order(&mut self, order: Order) -> Result<PlacedOrder> {
-        info!("📝 Placing {} order via Jupiter", order.side.as_str());
-        info!("   Price: ${:.4}", order.price);
-        info!("   Size:  {:.4}", order.size);
-        info!("   Value: ${:.2}", order.value());
-        
-        if order.size < MIN_ORDER_SIZE {
-            bail!("Order size too small: {:.6} (min: {})", order.size, MIN_ORDER_SIZE);
-        }
-        
-        order.validate()?;
-        
-        let (input_mint, output_mint, amount) = match order.side {
-            OrderSide::Bid => {
-                let quote_amount = order.price * order.size;
-                debug!("   Swap: ${:.2} USDC → {:.4} SOL", quote_amount, order.size);
-                (self.quote_mint, self.base_mint, quote_amount)
-            }
-            OrderSide::Ask => {
-                debug!("   Swap: {:.4} SOL → ${:.2} USDC", order.size, order.value());
-                (self.base_mint, self.quote_mint, order.size)
-            }
-        };
-        
-        let sig = self.execute_swap(
-            input_mint,
-            output_mint,
-            amount,
-            self.slippage_bps,
-        ).await?;
-        
-        let placed = PlacedOrder {
-            order: order.clone(),
-            order_id: self.orders_placed as u128,
-            market: self.base_mint,
-            owner: self.wallet.pubkey(),
-            timestamp: chrono::Utc::now().timestamp(),
-        };
-        
-        info!("✅ Order placed via Jupiter");
-        info!("   Order ID:  {}", placed.order_id);
-        info!("   Signature: {}", sig);
-        
-        Ok(placed)
+    async fn place_order(&mut self, _order: Order) -> Result<PlacedOrder> {
+        bail!(
+            "JupiterClient V4.1: Trader trait methods removed for security.\n\
+             Use simple_swap() + external signing via SecureKeystore instead."
+        );
     }
     
     async fn cancel_order(&mut self, order_id: u128) -> Result<()> {
@@ -805,22 +602,23 @@ impl Trader for JupiterClient {
     }
     
     fn trader_type(&self) -> &'static str {
-        "Jupiter Aggregator (Live)"
+        "Jupiter Aggregator V4.1 (Secure - simple_swap only)"
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::str::FromStr;
     
     fn create_test_client() -> JupiterClient {
-        let wallet = Keypair::new();
+        let wallet_pubkey = Pubkey::from_str("11111111111111111111111111111111").unwrap();
         let base_mint = Pubkey::new_unique();
         let quote_mint = Pubkey::new_unique();
         
         JupiterClient::new(
             "https://api.devnet.solana.com".to_string(),
-            wallet,
+            wallet_pubkey,
             base_mint,
             quote_mint,
             1000.0,
