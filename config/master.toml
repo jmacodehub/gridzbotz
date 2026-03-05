@@ -1,5 +1,12 @@
 # ═══════════════════════════════════════════════════════════════════════════
-#  🏆 MASTER V5.4.1 — GRIDZBOTZ — CANONICAL CONFIG TEMPLATE
+#  🏆 MASTER V5.4.2 — GRIDZBOTZ — CANONICAL CONFIG TEMPLATE
+#
+#  V5.4.2 (improve/config-rd-future-patterns) — Future Pattern Annotations:
+#  ✅ 3x 🔮 Future annotations added to [trading] section:
+#     • volatility_multiplier + volatility_lookback (ATR dynamic spacing)
+#     • refresh_price_deviation (price-delta order refresh trigger)
+#     • per-regime fee tolerances (trending/ranging/volatile/choppy)
+#  Source: multi-v5-ai.toml (archived Feb 2026 Battle Royale research)
 #
 #  V5.4.1 (improve/config-cleanup-rd-section) — Config Cleanup:
 #  ✅ max_trade_size_usdc moved to [execution] (was silently ignored in [security])
@@ -65,14 +72,14 @@
 #
 # ═══════════════════════════════════════════════════════════════════════════
 
-test_name = "Master V5.4.1 - Canonical Template"
+test_name = "Master V5.4.2 - Canonical Template"
 
 # ═══════════════════════════════════════════════════════════════════════════
 #  🤖 BOT CORE
 # ═══════════════════════════════════════════════════════════════════════════
 [bot]
 name    = "GridzBot-Master"
-version = "5.4.1"
+version = "5.4.2"
 environment = "testing"              # testing | development | production
 
 # 🔑 EXECUTION MODE — The single most important knob:
@@ -241,6 +248,12 @@ enable_order_lifecycle         = true
 order_max_age_minutes          = 10
 order_refresh_interval_minutes = 5
 min_orders_to_maintain         = 8
+# 🔮 Future: refresh_price_deviation = 0.5
+#    Trigger an order refresh when price drifts 0.5% from last-placed anchor,
+#    in addition to the existing time-based (order_max_age_minutes) trigger.
+#    More responsive than time-only — catches fast moves before orders go stale.
+#    Requires: new f64 field in TradingConfig + check in order_lifecycle module.
+#    Reference: multi-v5-ai.toml [order_lifecycle] section (archived Feb 2026)
 
 # ─── Risk Limits ───────────────────────────────────────────────────────
 min_profit_threshold_pct = 0.1       # Skip orders below 0.1% net profit
@@ -269,9 +282,28 @@ min_volatility_to_trade  = 0.0       # 0.0 = no minimum (any vol trades)
 # Extracted from multi-v5-ai research (was missing from master)
 max_volatility_to_trade  = 8.0       # 8% ceiling — extreme market protection
 pause_in_very_low_vol    = false     # Set true in production
+# 🔮 Future: Per-regime fee tolerances (from multi-v5-ai [fee_filtering], archived Feb 2026)
+#    Classify market into 4 regimes and apply different max-fee caps per regime.
+#    This beats a single global fee cap — you pay up in trends, stay tight in chop.
+#
+#    trending_max_fee  = 0.20  # pay up to 0.20% in trending markets (worth it)
+#    ranging_max_fee   = 0.12  # pay up to 0.12% in sideways/ranging markets
+#    volatile_max_fee  = 0.25  # pay up to 0.25% if allow_volatile=true
+#    choppy_max_fee    = 0.10  # pay max 0.10% in choppy/low-vol (tight filter)
+#
+#    Requires: RegimeClassifier enum (Trending|Ranging|Volatile|Choppy)
+#              + FeeFilterConfig struct in config/src
+#              + fee check gating each order in execution pipeline
+#    See: config/rd/multi-strategy-profile.toml ## 🔮 Future Upgrade Patterns
 
 # ─── Advanced / Future Features ──────────────────────────────────────────
 enable_adaptive_spacing      = false # Stage 4: ATR-driven dynamic spacing
+# 🔮 Future: volatility_multiplier = 1.5
+#    When enable_adaptive_spacing=true, widen grid spacing by this factor
+#    during high-volatility regimes (prevents immediate re-crossing fills).
+#    volatility_lookback = 24   # lookback window in hours for multiplier calc
+#    Requires: new fields in TradingConfig, ATR multiplier logic in spacing module
+#    Reference: multi-v5-ai.toml [grid] section (archived Feb 2026)
 enable_smart_position_sizing = false # Stage 4: Confidence-based order sizing
 
 # ═══════════════════════════════════════════════════════════════════════════
