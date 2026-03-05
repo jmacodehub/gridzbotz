@@ -34,7 +34,12 @@
 //! ✅ Production JupiterClient V4.0 wired from src/dex/
 //! ✅ Full API key support, proper error handling, dynamic slippage
 //!
-//! March 2026 - V5.3 PRODUCTION JUPITER CLIENT! 🚀
+//! V5.3.1 CHANGES (Mar 2026 — export cleanup):
+//! ✅ Removed phantom Jupiter client exports (JupiterConfig, private types)
+//! ✅ Added WSOL_MINT as local const alias to SOL_MINT (backwards compat)
+//! ✅ Only export what's actually public: JupiterClient, SOL_MINT, USDC_MINT
+//!
+//! March 2026 - V5.3.1 PRODUCTION JUPITER CLIENT! 🚀
 //! ═════════════════════════════════════════════════════════════════════
 
 pub use crate::config::Config;
@@ -108,24 +113,24 @@ pub use adaptive_optimizer::{
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Jupiter Client Exports (V5.3 / Mar 2026) 🪐 — Production from src/dex/
+// Jupiter Client Exports (V5.3.1 / Mar 2026) 🪐 — Production from src/dex/
 // ═══════════════════════════════════════════════════════════════════════════
 
 // Re-export production JupiterClient V4.0 from src/dex/
 // This replaces the old stub that lived in src/trading/jupiter_client.rs
+//
+// V5.3.1 FIX: Only export what's actually public in jupiter_client.rs
+// Removed phantom exports: JupiterConfig, JupiterQuote*, Jupiter*Request/Response, PriorityFee*
+// Those are internal implementation details, not part of the public API.
 pub use crate::dex::jupiter_client::{
     JupiterClient,
-    JupiterConfig,
-    JupiterQuoteRequest,
-    JupiterQuoteResponse,
-    JupiterSwapRequest,
-    JupiterSwapResponse,
-    PriorityFee,
-    PriorityLevelWithMaxLamports,
     SOL_MINT,
-    WSOL_MINT,      // Backwards-compat alias for SOL_MINT
     USDC_MINT,
 };
+
+// WSOL_MINT backwards-compat alias (SOL and WSOL are the same on Solana)
+// This was promised in V5.3 comments but never implemented — now it is!
+pub const WSOL_MINT: &str = SOL_MINT;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Real Trading Exports (🔥 ENABLED - Phase 5!)
@@ -472,10 +477,8 @@ pub mod prelude {
         PriceFeed,
         FeedMode,
 
-        // Jupiter V5.3 — production from src/dex/
+        // Jupiter V5.3.1 — production from src/dex/ (cleaned exports)
         JupiterClient,
-        JupiterConfig,
-        JupiterQuoteResponse,
         SOL_MINT,
         WSOL_MINT,
         USDC_MINT,
@@ -640,6 +643,12 @@ mod tests {
     }
 
     #[test]
+    fn test_wsol_mint_alias() {
+        // V5.3.1: WSOL_MINT is now a backwards-compat alias for SOL_MINT
+        assert_eq!(WSOL_MINT, SOL_MINT, "WSOL_MINT should be an alias for SOL_MINT");
+    }
+
+    #[test]
     fn test_module_exports() {
         use super::prelude::*;
         let _: Option<RealTradingConfig> = None;
@@ -647,5 +656,10 @@ mod tests {
         let _: Option<AdaptiveOptimizer> = None;
         let _: Option<JupiterClient>     = None;
         let _: Option<FillEvent>         = None;
+        
+        // V5.3.1: Verify token mint constants are accessible
+        let _sol_mint: &str = SOL_MINT;
+        let _wsol_mint: &str = WSOL_MINT;
+        let _usdc_mint: &str = USDC_MINT;
     }
 }
