@@ -28,7 +28,7 @@ test_name = "R&D: Multi-Strategy Consensus Profile"
 
 [bot]
 name           = "MultiStrat-RD-v1"
-version        = "5.4.1"
+version        = "5.4.2"
 environment    = "testing"
 execution_mode = "paper"
 instance_id    = "multistrat-rd-1"
@@ -183,3 +183,63 @@ enabled = false
 
 [alerts]
 enabled = false
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  🔮 FUTURE UPGRADE PATTERNS
+#  Extracted from multi-v5-ai.toml before archiving (Feb 2026 Battle Royale)
+#  These are CONCEPTUAL — not yet wired to Rust structs.
+#  Each pattern below needs a corresponding TradingConfig/FeeFilterConfig field.
+# ═══════════════════════════════════════════════════════════════════════════
+
+# ─── Pattern 1: Price-Deviation Order Refresh ────────────────────────────
+# Currently refresh is TIME-only (order_max_age_minutes).
+# This adds a PRICE-DELTA trigger: refresh immediately if price drifts X%
+# regardless of age. Critical during fast moves — catches stale orders before
+# they fill at bad prices.
+#
+# [trading] additions:
+#   refresh_price_deviation = 0.5   # refresh if price moves 0.5% from anchor
+#
+# Rust wiring:
+#   TradingConfig: add refresh_price_deviation: f64
+#   order_lifecycle module: check abs(current_price - order_price) / order_price
+#                           against threshold each cycle alongside age check
+#
+
+# ─── Pattern 2: ATR Dynamic Spacing Multiplier ───────────────────────────
+# enable_adaptive_spacing=true already exists, but the multiplier is hardcoded.
+# Expose it as config to tune how aggressively spacing widens in high-vol regimes.
+# Higher multiplier = fewer fills but better protection from whipsaws.
+#
+# [trading] additions:
+#   volatility_multiplier = 1.5     # widen spacing by 1.5x in high-vol regime
+#   volatility_lookback   = 24      # 24h window for multiplier vol calculation
+#
+# Rust wiring:
+#   TradingConfig: add volatility_multiplier: f64, volatility_lookback: u32
+#   spacing module: current_spacing = base_spacing * volatility_multiplier
+#                   when regime == High
+#
+
+# ─── Pattern 3: Per-Regime Fee Tolerances ────────────────────────────────
+# Single global min_profit_threshold_pct is too blunt.
+# In trending markets you want to pay more fees (momentum is worth it).
+# In choppy markets you want to pay almost nothing (edge is thin).
+# This maps regime → max fee cap, replacing the global cap.
+#
+# New [fee_filter] section:
+#   [fee_filter]
+#   enabled          = true
+#   trending_max_fee  = 0.20  # pay up to 0.20% fees in trending markets
+#   ranging_max_fee   = 0.12  # pay up to 0.12% fees in ranging/sideways
+#   volatile_max_fee  = 0.25  # pay up to 0.25% fees in volatile (if trading)
+#   choppy_max_fee    = 0.10  # pay max 0.10% fees in choppy/flat markets
+#
+# Rust wiring:
+#   Add FeeFilterConfig struct (4 f64 fields)
+#   Add RegimeClassifier enum: Trending | Ranging | Volatile | Choppy
+#   Gate each order in execution pipeline:
+#     let max_fee = fee_filter.max_for_regime(current_regime);
+#     if estimated_fee_pct > max_fee { skip_order(); }
+#
+# ═══════════════════════════════════════════════════════════════════════════
