@@ -27,13 +27,14 @@
 use anyhow::{Context, Result};
 use clap::Parser;
 use log::info;
-use std::net::IpAddr;
+use std::str::FromStr;
 use solana_grid_bot::{
-    dex::{JupiterClient, JupiterConfig, SOL_MINT, USDC_MINT, resolve_via_doh},
+    dex::{JupiterClient, SOL_MINT, USDC_MINT},
     security::keystore::{KeystoreConfig, SecureKeystore},
     trading::price_feed::PriceFeed,
 };
 use solana_client::nonblocking::rpc_client::RpcClient;
+use solana_sdk::pubkey::Pubkey;
 use tokio::time::{sleep, Duration};
 
 #[derive(Parser, Debug)]
@@ -52,11 +53,6 @@ struct Args {
     /// Get a free key at https://portal.jup.ag
     #[clap(long, env = "JUPITER_API_KEY")]
     jup_key: Option<String>,
-
-    /// Hardcode the Jupiter API IP to bypass DNS filtering (optional).
-    /// Get it from: https://dnschecker.org/#A/api.jup.ag
-    #[clap(long)]
-    jup_ip: Option<String>,
 
     /// Send the real swap (0.001 SOL -> USDC). Default: dry run only.
     #[clap(long)]
@@ -96,8 +92,7 @@ async fn main() -> Result<()> {
         args.rpc.clone()
     };
     println!("  RPC:      {}", rpc_display);
-    println!("  Jup API:  {} | auth: {}",
-        JupiterConfig::default().api_url,
+    println!("  Jup API:  https://api.jup.ag | auth: {}",
         if args.jup_key.is_some() { "key configured" } else { "NO KEY - set JUPITER_API_KEY" }
     );
     println!();
@@ -110,7 +105,8 @@ async fn main() -> Result<()> {
         max_daily_trades: Some(5),
         max_daily_volume_usdc: Some(5.0),
     })?;
-    println!("OK  pubkey: {}", keystore.pubkey());
+    let user_pubkey = *keystore.pubkey();
+    println!("OK  pubkey: {}", user_pubkey);
 
     // -- [2] Live SOL price --------------------------------------------------
     print!("  [2/5] Fetching live SOL/USD......... ");
@@ -127,60 +123,41 @@ async fn main() -> Result<()> {
     println!("OK  ${:.4}  (0.001 SOL approx ${:.4})", sol_price, trade_value_usd);
     info!("Pyth price confirmed: ${:.4}", sol_price);
 
-    // -- [3] Jupiter: resolve DNS, quote, build tx ---------------------------
+    // -- [3] Jupiter: quote + build tx ---------------------------------------
     print!("  [3/5] Jupiter quote + build tx...... ");
 
-    // Build config - API key from --jup-key flag or JUPITER_API_KEY env var
-    let mut config = JupiterConfig::default();
-    if let Some(ref key) = args.jup_key {
-        config.api_key = Some(key.clone());
-    }
+    // Get API key from --jup-key flag or JUPITER_API_KEY env var
+    let api_key = args.jup_key
+        .or_else(|| std::env::var("JUPITER_API_KEY").ok())
+        .context("Jupiter API key required. Set JUPITER_API_KEY env var or pass --jup-key")?;
 
-    let jupiter_base = JupiterClient::new(config)?
-        .with_priority_fee(10_000);
+    // Parse mints
+    let sol_mint = Pubkey::from_str(SOL_MINT)
+        .context("Failed to parse SOL_MINT")?;
+    let usdc_mint = Pubkey::from_str(USDC_MINT)
+        .context("Failed to parse USDC_MINT")?;
 
-    // DNS resolution priority:
-    //   1. --jup-ip flag (explicit override)
-    //   2. Cloudflare DoH 1.1.1.1 -> Google DoH 8.8.8.8 (CNAME-aware)
-    //   3. System DNS fallback
-    let jupiter = if let Some(ref ip_str) = args.jup_ip {
-        let ip: IpAddr = ip_str.parse()
-            .with_context(|| format!("Invalid --jup-ip: '{}'", ip_str))?;
-        info!("[DNS] Hardcoded IP from --jup-ip: {}", ip);
-        jupiter_base
-            .with_resolved_host("api.jup.ag", ip)
-            .context("Failed to apply --jup-ip DNS override")?
-    } else {
-        match resolve_via_doh("api.jup.ag").await {
-            Ok(ip) => {
-                info!("[DNS] DoH resolved api.jup.ag -> {} (system DNS bypassed)", ip);
-                jupiter_base
-                    .with_resolved_host("api.jup.ag", ip)
-                    .context("Failed to apply DoH DNS override")?
-            }
-            Err(e) => {
-                info!("[DNS] DoH unavailable ({}), using system DNS", e);
-                jupiter_base
-            }
-        }
-    };
+    // V4.1 Constructor: direct params, no config struct
+    let jupiter = JupiterClient::new(
+        args.rpc.clone(),
+        user_pubkey,
+        sol_mint,
+        usdc_mint,
+        1000.0, // initial capital for position tracking
+        api_key,
+    )?
+    .with_priority_fee(10_000, "high".to_string());
 
     let lamports: u64 = 1_000_000; // 0.001 SOL
-    let user_pubkey = *keystore.pubkey();
 
-    let (mut vtx, last_valid, quote) = jupiter
-        .prepare_swap(SOL_MINT, USDC_MINT, lamports, user_pubkey)
+    // V4.1 API: simple_swap() returns (VersionedTransaction, last_valid_block)
+    let (mut vtx, last_valid) = jupiter
+        .simple_swap(sol_mint, usdc_mint, lamports)
         .await
-        .context("Jupiter quote failed")?;
+        .context("Jupiter simple_swap failed")?;
 
-    let out_usdc = quote.out_amount.parse::<u64>().unwrap_or(0) as f64 / 1_000_000.0;
-    let impact   = quote.price_impact_pct.parse::<f64>().unwrap_or(0.0);
-    println!("OK  {:.4} USDC out | impact {:.4}% | valid until block {}",
-        out_usdc, impact, last_valid);
-
-    if impact > 1.0 {
-        anyhow::bail!("Price impact too high ({:.2}%) -- aborting for safety", impact);
-    }
+    // Extract quote details from logs (price impact printed by simple_swap)
+    println!("OK  transaction built | valid until block {}", last_valid);
 
     // -- [4] Sign ------------------------------------------------------------
     print!("  [4/5] Signing transaction........... ");
@@ -197,7 +174,7 @@ async fn main() -> Result<()> {
         println!();
         println!("  [OK] Keystore:  loaded and verified");
         println!("  [OK] Pyth feed: ${:.4} live price", sol_price);
-        println!("  [OK] Jupiter:   {:.4} USDC quote received", out_usdc);
+        println!("  [OK] Jupiter:   swap transaction built (SOL->USDC)");
         println!("  [OK] Signing:   fee-payer checked, signature applied");
         println!();
         println!("  --> To fire the real swap, rerun with --submit");
@@ -225,8 +202,7 @@ async fn main() -> Result<()> {
     println!();
     println!("  Signature:    {}", sig);
     println!("  Explorer:     https://solscan.io/tx/{}", sig);
-    println!("  Swapped:      0.001 SOL -> {:.4} USDC", out_usdc);
-    println!("  Price impact: {:.4}%", impact);
+    println!("  Swapped:      0.001 SOL -> USDC");
     println!();
     println!("  Daily limits: {}/5 trades | ${:.2}/5.00 volume",
         daily_trades, daily_vol);
