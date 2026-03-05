@@ -11,8 +11,9 @@
 //! - ✅ Retry logic with exponential backoff
 //! - ✅ Position tracking and P&L calculation
 //! - ✅ Comprehensive error logging with raw responses
+//! - ✅ Simple swap API for RealTradingEngine integration
 //! 
-//! # Example
+//! # Example (Full Trader trait)
 //! ```no_run
 //! use solana_grid_bot::dex::{JupiterClient, Order, OrderSide, OrderType, Trader};
 //! use solana_sdk::signature::Keypair;
@@ -36,6 +37,34 @@
 //! let order = Order::new(OrderSide::Bid, 180.0, 1.0, OrderType::Limit);
 //! let placed = client.place_order(order).await?;
 //! println!("✅ Real trade! Signature: {}", placed.order_id);
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! # Example (Simple swap API for RealTradingEngine)
+//! ```no_run
+//! use solana_grid_bot::dex::JupiterClient;
+//! use solana_sdk::signature::Keypair;
+//! use solana_sdk::pubkey::Pubkey;
+//! 
+//! # async fn example() -> anyhow::Result<()> {
+//! let wallet = Keypair::new();
+//! let sol_mint = Pubkey::new_unique();
+//! let usdc_mint = Pubkey::new_unique();
+//! let api_key = "your-jupiter-api-key".to_string();
+//! 
+//! let client = JupiterClient::new(
+//!     "https://api.mainnet-beta.solana.com".to_string(),
+//!     wallet,
+//!     sol_mint,
+//!     usdc_mint,
+//!     1000.0,
+//!     api_key,
+//! )?;
+//! 
+//! let lamports = 1_000_000_000; // 1 SOL
+//! let (tx, last_valid) = client.simple_swap(sol_mint, usdc_mint, lamports).await?;
+//! println!("✅ Swap tx ready! Last valid block: {}", last_valid);
 //! # Ok(())
 //! # }
 //! ```
@@ -80,6 +109,10 @@ const RETRY_DELAY_MS: u64 = 500;
 
 /// HTTP timeout
 const API_TIMEOUT_SECS: u64 = 30;
+
+/// Well-known token mints
+pub const SOL_MINT: &str = "So11111111111111111111111111111111111111112";
+pub const USDC_MINT: &str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // JUPITER API TYPES
@@ -298,6 +331,86 @@ impl JupiterClient {
         self
     }
     
+    // ═══════════════════════════════════════════════════════════════════════
+    // SIMPLE SWAP API (for RealTradingEngine integration)
+    // ═══════════════════════════════════════════════════════════════════════
+    
+    /// Execute a simple swap without the full Trader trait overhead.
+    /// Returns a VersionedTransaction that needs to be signed and broadcast.
+    /// 
+    /// This is a **lightweight bridge** for RealTradingEngine that:
+    /// - Takes raw mints + amounts
+    /// - Returns unsigned VersionedTransaction
+    /// - Lets caller handle signing/broadcasting
+    /// 
+    /// # Arguments
+    /// * `input_mint` - Token to sell (e.g., SOL, USDC)
+    /// * `output_mint` - Token to buy
+    /// * `amount` - Amount in smallest units (lamports for SOL, micro-units for USDC)
+    /// 
+    /// # Returns
+    /// * `(VersionedTransaction, last_valid_block_height)`
+    /// 
+    /// # Example
+    /// ```no_run
+    /// # use solana_grid_bot::dex::JupiterClient;
+    /// # use solana_sdk::{signature::Keypair, pubkey::Pubkey};
+    /// # async fn example() -> anyhow::Result<()> {
+    /// # let client = JupiterClient::new(
+    /// #     "https://api.devnet.solana.com".to_string(),
+    /// #     Keypair::new(),
+    /// #     Pubkey::new_unique(),
+    /// #     Pubkey::new_unique(),
+    /// #     1000.0,
+    /// #     "test-key".to_string(),
+    /// # )?;
+    /// let sol_mint = "So11111111111111111111111111111111111111112".parse()?;
+    /// let usdc_mint = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v".parse()?;
+    /// let lamports = 1_000_000_000; // 1 SOL
+    /// 
+    /// let (tx, last_valid) = client.simple_swap(sol_mint, usdc_mint, lamports).await?;
+    /// println!("Swap tx ready! Last valid block: {}", last_valid);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn simple_swap(
+        &self,
+        input_mint: Pubkey,
+        output_mint: Pubkey,
+        amount: u64,
+    ) -> Result<(VersionedTransaction, u64)> {
+        info!("🔄 Building simple swap");
+        debug!("   Input:  {} ({})", amount, input_mint);
+        debug!("   Output: {}", output_mint);
+        
+        // Step 1: Get quote
+        let quote = self.get_quote(input_mint, output_mint, amount, self.slippage_bps).await?;
+        
+        let price_impact: f64 = quote.price_impact_pct.parse().unwrap_or(0.0);
+        info!("📊 Quote: in={}, out={}, impact={:.4}%", 
+            quote.in_amount, quote.out_amount, price_impact);
+        
+        // Step 2: Get swap transaction
+        let swap_response = self.get_swap_transaction(quote).await?;
+        
+        // Step 3: Decode transaction
+        let tx_bytes = general_purpose::STANDARD
+            .decode(&swap_response.swap_transaction)
+            .map_err(|e| anyhow!("Failed to decode transaction: {}", e))?;
+        
+        let versioned_tx: VersionedTransaction = bincode::deserialize(&tx_bytes)
+            .map_err(|e| anyhow!("Failed to deserialize VersionedTransaction: {}", e))?;
+        
+        let last_valid = swap_response.last_valid_block_height.unwrap_or(0);
+        
+        info!("✅ Swap transaction built (last valid: {})", last_valid);
+        Ok((versioned_tx, last_valid))
+    }
+    
+    // ═══════════════════════════════════════════════════════════════════════
+    // INTERNAL HELPERS
+    // ═══════════════════════════════════════════════════════════════════════
+    
     /// Execute with retry logic
     async fn execute_with_retry<T, F, Fut>(
         &self,
@@ -449,7 +562,7 @@ impl JupiterClient {
         }).await
     }
     
-    /// Execute a real swap via Jupiter API
+    /// Execute a real swap via Jupiter API (full Trader trait implementation)
     async fn execute_swap(
         &mut self,
         input_mint: Pubkey,
