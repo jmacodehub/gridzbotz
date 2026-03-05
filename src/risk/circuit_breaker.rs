@@ -76,7 +76,8 @@ impl CircuitBreaker {
         }
     }
 
-    /// Create with custom initial balance
+    /// Create with custom initial balance (full portfolio NAV in USD).
+    /// Pass `initial_usdc + (initial_sol * sol_price_usd)` — NOT just USDC.
     pub fn with_balance(config: &Config, initial_balance: f64) -> Self {
         let mut breaker = Self::new(config);
         breaker.peak_balance = initial_balance;
@@ -111,8 +112,17 @@ impl CircuitBreaker {
         true
     }
 
-    /// Record a trade result and update balance
+    /// Record a trade result and update balance.
+    ///
+    /// No-ops when the breaker is already tripped — prevents the consecutive-
+    /// loss counter from climbing past the threshold and generating log spam.
+    /// State is cleanly reset inside `is_trading_allowed()` once the cooldown
+    /// expires, so calling code must tick `is_trading_allowed()` each cycle.
     pub fn record_trade(&mut self, pnl: f64, new_balance: f64) {
+        if self.is_tripped {
+            return;
+        }
+
         self.daily_pnl += pnl;
         self.last_trade_time = Some(Instant::now());
 
@@ -275,6 +285,7 @@ mod tests {
                 commitment: "confirmed".to_string(),
                 ws_url: None,
             },
+            security: SecurityConfig::default(),
             trading: TradingConfig {
                 grid_levels: 10,
                 grid_spacing_percent: 0.2,
@@ -354,6 +365,25 @@ mod tests {
         // 5th loss hits max_consecutive_losses (5) → trip
         breaker.record_trade(-100.0, 9800.0);
         assert!(breaker.is_tripped);
+    }
+
+    #[test]
+    fn test_record_trade_noop_when_tripped() {
+        let config = test_config();
+        let mut breaker = CircuitBreaker::with_balance(&config, 10000.0);
+
+        // Trip via consecutive losses
+        for _ in 0..5 {
+            breaker.record_trade(-100.0, 9900.0);
+        }
+        assert!(breaker.is_tripped);
+        let count_at_trip = breaker.consecutive_losses;
+
+        // Further calls must not increment the counter
+        breaker.record_trade(-100.0, 9800.0);
+        breaker.record_trade(-100.0, 9700.0);
+        assert_eq!(breaker.consecutive_losses, count_at_trip,
+            "consecutive_losses must not grow after trip");
     }
 
     #[test]
