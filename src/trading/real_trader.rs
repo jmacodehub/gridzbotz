@@ -10,6 +10,11 @@
 //!    calls are made).  Previously the breaker could stay tripped forever.
 //! ✅ get_wallet() uses VirtualWallet::new_silent() — stops the double
 //!    "[WALLET] Initialized" log line firing on every price cycle.
+//!
+//! V2.3 CHANGES (fix/jupiter-client-wiring — Mar 2026):
+//! ✅ Import path changed: super::jupiter_client → crate::dex::jupiter_client
+//!    Now uses production JupiterClient V4.0 with full API key support.
+//!    Old stub that caused all swap failures has been obliterated.
 //! =============================================================================
 
 use anyhow::{bail, Context, Result};
@@ -30,7 +35,7 @@ use crate::Config;
 use super::executor::{TransactionExecutor, ExecutorConfig};
 use super::trade::Trade;
 use super::paper_trader::{Order, OrderSide, VirtualWallet, PerformanceStats as PaperPerformanceStats};
-use super::jupiter_client::{JupiterClient, JupiterConfig, SOL_MINT, USDC_MINT};
+use crate::dex::jupiter_client::{JupiterClient, JupiterConfig, SOL_MINT, USDC_MINT};
 use super::{TradingEngine, TradingResult, FillEvent};
 use solana_sdk::transaction::VersionedTransaction;
 
@@ -195,7 +200,7 @@ impl RealTradingEngine {
         initial_balance_sol: f64,
         initial_sol_price_usd: f64,
     ) -> Result<Self> {
-        info!("[RealEngine] Initializing V2.2");
+        info!("[RealEngine] Initializing V2.3");
 
         config.validate()?;
 
@@ -215,7 +220,7 @@ impl RealTradingEngine {
             initial_sol_price_usd,
         ));
 
-        info!("[RealEngine] Initialized V2.2");
+        info!("[RealEngine] Initialized V2.3");
         info!("  Wallet : {}",        keystore.pubkey());
         info!("  NAV    : ${:.2} (SOL @ ${:.4})",
             balance_tracker.initial_balance_usd(), initial_sol_price_usd);
@@ -444,7 +449,7 @@ impl RealTradingEngine {
 
         println!();
         println!("=======================================================");
-        println!("  REAL TRADING ENGINE V2.2 - STATUS");
+        println!("  REAL TRADING ENGINE V2.3 - STATUS");
         println!("=======================================================");
         println!();
         println!("Balances:");
@@ -576,7 +581,7 @@ impl TradingEngine for RealTradingEngine {
         self.trigger_emergency_shutdown(reason).await
     }
 
-    // ── V5.2.2 / V2.2: Wallet and performance queries ───────────────────
+    // ── V5.2.2 / V2.3: Wallet and performance queries ───────────────────
     async fn get_wallet(&self) -> VirtualWallet {
         // Use new_silent to avoid logging "[WALLET] Initialized" on every
         // price cycle.  new() is only appropriate at session start.
