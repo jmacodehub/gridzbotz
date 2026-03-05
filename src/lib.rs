@@ -262,13 +262,16 @@ pub fn version_string() -> String {
 ///
 /// ```no_run
 /// use solana_grid_bot::prelude::*;
+/// use solana_grid_bot::trading::PaperTradingEngine;
+/// use std::sync::Arc;
 ///
 /// #[tokio::main]
 /// async fn main() -> Result<()> {
 ///     let config = Config::from_file("config/master.toml")?;
 ///     
-///     // Stage 3: GridBot::new(config) builds engine internally
-///     let mut bot = GridBot::new(config)?;
+///     // V5.2: GridBot::new() requires config + injected engine
+///     let engine = Arc::new(PaperTradingEngine::new(&config)?);
+///     let mut bot = GridBot::new(config, engine)?;
 ///     bot.initialize().await?;
 ///     
 ///     Ok(())
