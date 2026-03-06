@@ -1,6 +1,11 @@
-//! 🪐 Jupiter Aggregator Client — PRODUCTION V4.1
+//! 🪐 Jupiter Aggregator Client — PRODUCTION V4.2
 //! 
 //! Real DEX trading via Jupiter API with best-price routing across Solana.
+//! 
+//! # V4.2 CHANGES (Mar 2026 — Jupiter V6 Schema Fix)
+//! ✅ SwapInfo fee fields now optional (matches Jupiter V6 reality)
+//! ✅ Different AMMs (Whirlpool, Invariant, Raydium) have different fee structures
+//! ✅ Some routes return fees, some don't — now handles both gracefully
 //! 
 //! # V4.1 CHANGES (Mar 2026 — Security Fix)
 //! ✅ Constructor accepts Pubkey instead of Keypair (security best practice)
@@ -139,10 +144,12 @@ struct SwapInfo {
     in_amount: String,
     #[serde(rename = "outAmount")]
     out_amount: String,
-    #[serde(rename = "feeAmount")]
-    fee_amount: String,
-    #[serde(rename = "feeMint")]
-    fee_mint: String,
+    /// Fee amount (optional — not all AMMs return this)
+    #[serde(rename = "feeAmount", default)]
+    fee_amount: Option<String>,
+    /// Fee token mint (optional — not all AMMs return this)
+    #[serde(rename = "feeMint", default)]
+    fee_mint: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -259,7 +266,7 @@ impl JupiterClient {
         initial_capital: f64,
         jupiter_api_key: String,
     ) -> Result<Self> {
-        info!("🪐 Jupiter API Client V4.1 — Production Mode (Secure)");
+        info!("🪐 Jupiter API Client V4.2 — Production Mode (Secure)");
         info!("   Endpoint:   {}", JUPITER_API);
         info!("   Base mint:  {}", base_mint);
         info!("   Quote mint: {}", quote_mint);
@@ -579,7 +586,7 @@ impl JupiterClient {
 impl Trader for JupiterClient {
     async fn place_order(&mut self, _order: Order) -> Result<PlacedOrder> {
         bail!(
-            "JupiterClient V4.1: Trader trait methods removed for security.\n\
+            "JupiterClient V4.2: Trader trait methods removed for security.\n\
              Use simple_swap() + external signing via SecureKeystore instead."
         );
     }
@@ -600,7 +607,7 @@ impl Trader for JupiterClient {
     }
     
     fn trader_type(&self) -> &'static str {
-        "Jupiter Aggregator V4.1 (Secure - simple_swap only)"
+        "Jupiter Aggregator V4.2 (Secure - simple_swap only)"
     }
 }
 
