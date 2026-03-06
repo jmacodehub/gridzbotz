@@ -21,8 +21,9 @@
 use anyhow::{Context, Result};
 use clap::Parser;
 use log::{info, warn, error};
+use std::str::FromStr;
 use solana_grid_bot::{
-    dex::{JupiterClient, JupiterConfig, SOL_MINT, USDC_MINT, resolve_via_doh},
+    dex::{JupiterClient, SOL_MINT, USDC_MINT},
     security::keystore::{KeystoreConfig, SecureKeystore},
     trading::price_feed::PriceFeed,
 };
@@ -163,14 +164,13 @@ async fn execute_swap(
     jupiter: &JupiterClient,
     keystore: &SecureKeystore,
     rpc: &RpcClient,
-    input_mint: &str,
-    output_mint: &str,
+    input_mint: Pubkey,
+    output_mint: Pubkey,
     amount: u64,
-    user_pubkey: Pubkey,
     label: &str,
 ) -> Result<String> {
     for attempt in 1u32..=3 {
-        match try_swap(jupiter, keystore, rpc, input_mint, output_mint, amount, user_pubkey).await {
+        match try_swap(jupiter, keystore, rpc, input_mint, output_mint, amount).await {
             Ok(sig) => return Ok(sig),
             Err(e) => {
                 if attempt < 3 {
@@ -190,23 +190,16 @@ async fn try_swap(
     jupiter: &JupiterClient,
     keystore: &SecureKeystore,
     rpc: &RpcClient,
-    input_mint: &str,
-    output_mint: &str,
+    input_mint: Pubkey,
+    output_mint: Pubkey,
     amount: u64,
-    user_pubkey: Pubkey,
 ) -> Result<String> {
-    let (mut vtx, _last_valid, quote) = jupiter
-        .prepare_swap(input_mint, output_mint, amount, user_pubkey)
+    // V4.1 API: simple_swap() returns (VersionedTransaction, last_valid_block)
+    // Quote details logged internally by simple_swap()
+    let (mut vtx, _last_valid) = jupiter
+        .simple_swap(input_mint, output_mint, amount)
         .await
-        .context("Jupiter quote failed")?;
-
-    let impact = quote.price_impact_pct.parse::<f64>().unwrap_or(0.0);
-    let out_amount = quote.out_amount.parse::<u64>().unwrap_or(0);
-    info!("   Quote: {} → {} | impact {:.4}%", amount, out_amount, impact);
-
-    if impact > 1.0 {
-        anyhow::bail!("Price impact {:.2}% exceeds 1.0% — skipping swap", impact);
-    }
+        .context("Jupiter simple_swap failed")?;
 
     keystore
         .sign_versioned_transaction(&mut vtx)
@@ -254,7 +247,7 @@ async fn main() -> Result<()> {
         sleep(Duration::from_secs(3)).await;
     }
 
-    // ── Keystore ──────────────────────────────────────────────────────
+    // ── Keystore ───────────────────────────────────────────────────────────
     let keystore = SecureKeystore::from_file(KeystoreConfig {
         keypair_path: args.keypair.clone(),
         max_transaction_amount_usdc: Some(500.0),
@@ -264,7 +257,7 @@ async fn main() -> Result<()> {
     let user_pubkey = *keystore.pubkey();
     info!("🔐 Wallet: {}", user_pubkey);
 
-    // ── Price Feed ────────────────────────────────────────────────────
+    // ── Price Feed ──────────────────────────────────────────────────────────
     let feed = PriceFeed::new(20);
     feed.start().await.map_err(|e| anyhow::anyhow!("Price feed failed: {}", e))?;
     sleep(Duration::from_millis(1500)).await;
@@ -274,28 +267,32 @@ async fn main() -> Result<()> {
     }
     info!("📡 Pyth feed live: SOL = ${:.4}", initial_price);
 
-    // ── Jupiter ───────────────────────────────────────────────────────
-    let mut jup_config = JupiterConfig::default();
-    if let Some(ref key) = args.jup_key {
-        jup_config.api_key = Some(key.clone());
-    }
-    let jupiter_base = JupiterClient::new(jup_config)?.with_priority_fee(10_000);
-    let jupiter = match resolve_via_doh("api.jup.ag").await {
-        Ok(ip) => {
-            info!("🌐 Jupiter DNS: api.jup.ag → {} (DoH)", ip);
-            jupiter_base.with_resolved_host("api.jup.ag", ip)
-                .context("Failed to apply DoH DNS override")?
-        }
-        Err(e) => {
-            warn!("⚠️  DoH unavailable ({}), falling back to system DNS", e);
-            jupiter_base
-        }
-    };
+    // ── Jupiter ────────────────────────────────────────────────────────────
+    let api_key = args.jup_key
+        .or_else(|| std::env::var("JUPITER_API_KEY").ok())
+        .context("Jupiter API key required. Set JUPITER_API_KEY env var or pass --jup-key")?;
 
-    // ── RPC ───────────────────────────────────────────────────────────
+    // Parse mints
+    let sol_mint = Pubkey::from_str(SOL_MINT).context("Failed to parse SOL_MINT")?;
+    let usdc_mint = Pubkey::from_str(USDC_MINT).context("Failed to parse USDC_MINT")?;
+
+    // V4.1 Constructor: direct params, no config struct
+    let jupiter = JupiterClient::new(
+        args.rpc.clone(),
+        user_pubkey,
+        sol_mint,
+        usdc_mint,
+        1000.0, // initial capital for position tracking
+        api_key,
+    )?
+    .with_priority_fee(10_000, "high".to_string());
+
+    info!("🌐 Jupiter client initialized (api.jup.ag)");
+
+    // ── RPC ─────────────────────────────────────────────────────────────
     let rpc = RpcClient::new(args.rpc.clone());
 
-    // ── Grid Engine ───────────────────────────────────────────────────
+    // ── Grid Engine ─────────────────────────────────────────────────────────
     let mut grid = GridEngine::new(args.lower, args.upper, args.levels, args.order_size);
     grid.tick(initial_price); // prime — no signal on first tick
     info!("✅ Grid primed at ${:.4}", initial_price);
@@ -304,7 +301,7 @@ async fn main() -> Result<()> {
         info!("💡 BUY orders spend USDC. SELL orders spend SOL. Ensure both are funded.");
     }
 
-    // ── Trading Loop ──────────────────────────────────────────────────
+    // ── Trading Loop ────────────────────────────────────────────────────
     info!("🚀 Grid loop started — Ctrl+C to stop gracefully");
     println!();
 
@@ -359,8 +356,8 @@ async fn main() -> Result<()> {
                         } else {
                             match execute_swap(
                                 &jupiter, &keystore, &rpc,
-                                USDC_MINT, SOL_MINT,
-                                usdc_amount, user_pubkey, "BUY"
+                                usdc_mint, sol_mint,
+                                usdc_amount, "BUY"
                             ).await {
                                 Ok(sig) => {
                                     info!("   ✅ BUY confirmed | solscan.io/tx/{}", sig);
@@ -384,8 +381,8 @@ async fn main() -> Result<()> {
                         } else {
                             match execute_swap(
                                 &jupiter, &keystore, &rpc,
-                                SOL_MINT, USDC_MINT,
-                                lamports, user_pubkey, "SELL"
+                                sol_mint, usdc_mint,
+                                lamports, "SELL"
                             ).await {
                                 Ok(sig) => {
                                     info!("   ✅ SELL confirmed | solscan.io/tx/{}", sig);
