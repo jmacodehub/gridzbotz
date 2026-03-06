@@ -1,6 +1,11 @@
-//! 🪐 Jupiter Aggregator Client — PRODUCTION V4.2
+//! 🪐 Jupiter Aggregator Client — PRODUCTION V4.3
 //! 
 //! Real DEX trading via Jupiter API with best-price routing across Solana.
+//! 
+//! # V4.3 CHANGES (Mar 2026 — Jupiter V6 Swap API Fix)
+//! ✅ Added `percent` field to RoutePlanStep (required by /swap endpoint)
+//! ✅ Fixes "Missing percent" 500 error when re-serializing QuoteResponse
+//! ✅ Jupiter V6 requires ALL quote fields passed through to /swap
 //! 
 //! # V4.2 CHANGES (Mar 2026 — Jupiter V6 Schema Fix)
 //! ✅ SwapInfo fee fields now optional (matches Jupiter V6 reality)
@@ -130,6 +135,9 @@ struct QuoteResponse {
 struct RoutePlanStep {
     #[serde(rename = "swapInfo")]
     swap_info: SwapInfo,
+    /// Percentage of input amount for this route step (typically 100 for single-hop swaps)
+    /// REQUIRED by Jupiter /swap endpoint — causes "Missing percent" error if omitted
+    percent: u8,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -266,7 +274,7 @@ impl JupiterClient {
         initial_capital: f64,
         jupiter_api_key: String,
     ) -> Result<Self> {
-        info!("🪐 Jupiter API Client V4.2 — Production Mode (Secure)");
+        info!("🪐 Jupiter API Client V4.3 — Production Mode (Secure)");
         info!("   Endpoint:   {}", JUPITER_API);
         info!("   Base mint:  {}", base_mint);
         info!("   Quote mint: {}", quote_mint);
@@ -586,7 +594,7 @@ impl JupiterClient {
 impl Trader for JupiterClient {
     async fn place_order(&mut self, _order: Order) -> Result<PlacedOrder> {
         bail!(
-            "JupiterClient V4.2: Trader trait methods removed for security.\n\
+            "JupiterClient V4.3: Trader trait methods removed for security.\n\
              Use simple_swap() + external signing via SecureKeystore instead."
         );
     }
@@ -607,7 +615,7 @@ impl Trader for JupiterClient {
     }
     
     fn trader_type(&self) -> &'static str {
-        "Jupiter Aggregator V4.2 (Secure - simple_swap only)"
+        "Jupiter Aggregator V4.3 (Secure - simple_swap only)"
     }
 }
 
