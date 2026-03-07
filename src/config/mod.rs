@@ -54,7 +54,7 @@ use anyhow::{Result, Context, bail};
 use std::path::{Path};
 use std::fs;
 use log::{info, warn};
-
+pub mod secrets;
 // ═══════════════════════════════════════════════════════════════════════════
 // MAIN CONFIGURATION - The Heart of GridzBotz
 // ═══════════════════════════════════════════════════════════════════════════
