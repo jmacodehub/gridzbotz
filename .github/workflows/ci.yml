@@ -82,5 +82,5 @@ jobs:
       - name: Cache
         uses: Swatinem/rust-cache@v2
 
-      - name: cargo clippy (all targets, deny warnings)
-        run: cargo clippy --all-targets -- -D warnings
+      - name: cargo clippy (all targets, all features, deny warnings)
+        run: cargo clippy --all-targets --all-features -- -D warnings
