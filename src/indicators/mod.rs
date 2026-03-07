@@ -2,6 +2,8 @@
 //!
 //! Reusable technical analysis indicators for all trading strategies.
 //! Built with performance and accuracy in mind.
+//!
+//! V2.0 (PR #70): Added VolatilityCalculator (relocated from strategies)
 
 use std::collections::VecDeque;
 
@@ -29,12 +31,14 @@ pub mod atr;
 pub mod ema;
 pub mod sma;
 pub mod macd;
+pub mod volatility;  // V2.0 (PR #70): Relocated from src/strategies/
 
 // Re-export public types
 pub use atr::ATR;
 pub use ema::EMA;
 pub use sma::SMA;
 pub use macd::MACD;
+pub use volatility::VolatilityCalculator;  // V2.0 (PR #70)
 
 // ═══════════════════════════════════════════════════════════════════════════
 // HELPER FUNCTIONS
