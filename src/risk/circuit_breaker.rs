@@ -33,6 +33,10 @@ pub struct CircuitBreaker {
     daily_pnl: f64,
     peak_balance: f64,
     current_drawdown_pct: f64,
+    /// Timestamp of the last executed trade.
+    /// Set per-trade; reserved for future inactivity detection and
+    /// latency analytics — not yet consumed by any read path.
+    #[allow(dead_code)]
     last_trade_time: Option<Instant>,
 
     // Circuit breaker state
