@@ -195,11 +195,19 @@ async fn from_config_live(config: &Config) -> Result<RealTradingEngine> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::ConfigBuilder;
 
     /// Helper to build a minimal paper-mode config for testing.
+    ///
+    /// Uses ConfigBuilder::new() which constructs a fully valid Config
+    /// with all required fields. Overrides paper_trading balances AFTER
+    /// build() to allow testing engine-level zero-capital rejection
+    /// (PaperTradingConfig::validate() would reject <= 0.0 during build).
     fn paper_config(usdc: f64, sol: f64) -> Config {
-        let mut config = Config::default();
-        config.bot.execution_mode = "paper".to_string();
+        let mut config = ConfigBuilder::new()
+            .execution_mode("paper")
+            .build()
+            .expect("base test config should be valid");
         config.paper_trading.initial_usdc = usdc;
         config.paper_trading.initial_sol = sol;
         config
@@ -236,14 +244,18 @@ mod tests {
 
     #[test]
     fn test_engine_mode_label_live() {
-        let mut config = Config::default();
+        let mut config = ConfigBuilder::new()
+            .execution_mode("live")
+            .environment("production")
+            .build()
+            .expect("live test config should be valid");
         config.bot.execution_mode = "live".to_string();
         assert_eq!(engine_mode_label(&config), "🔴 LIVE");
     }
 
     #[tokio::test]
     async fn test_create_engine_invalid_mode_fails() {
-        let mut config = paper_config(1000.0, 0.0);
+        let mut config = paper_config(1000.0, 5.0);
         config.bot.execution_mode = "yolo".to_string();
         let result = create_engine(&config).await;
         assert!(result.is_err(), "Invalid mode should fail");
