@@ -29,6 +29,7 @@
 use std::sync::Arc;
 use anyhow::{Result, Context, bail};
 use log::info;
+use serde_json::Value;
 
 use crate::config::Config;
 use super::{
@@ -150,18 +151,15 @@ async fn from_config_live(config: &Config) -> Result<RealTradingEngine> {
     let instance = config.bot.instance_name();
 
     // Step 1: Build RealTradingConfig using the canonical bridge
-    // from_execution_config() maps [execution] TOML fields into the
-    // RealTradingConfig struct with sensible defaults for keystore,
-    // executor, circuit breaker, and fee settings.
     info!("[{}] 📋 Building RealTradingConfig from [execution] section", instance);
     let real_config = RealTradingConfig::from_execution_config(&config.execution);
 
-    // Step 2: Fetch live SOL price from Pyth
+    // Step 2: Fetch live SOL price from Pyth Hermes HTTP API
     info!("[{}] 📡 Fetching live SOL price from Pyth...", instance);
     let feed_id = config.pyth.feed_ids.first()
         .context("No Pyth feed IDs configured. Add at least one to [pyth] feed_ids.")?;
 
-    let sol_price = super::get_live_price(feed_id).await
+    let sol_price = fetch_pyth_price(&config.pyth.http_endpoint, feed_id).await
         .context(format!(
             "[{}] Failed to fetch SOL price from Pyth. \
              Cannot start live engine without a price reference. \
@@ -186,6 +184,71 @@ async fn from_config_live(config: &Config) -> Result<RealTradingEngine> {
     ).await?;
 
     Ok(engine)
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PYTH PRICE FEED — Inline stub for Engine Factory
+//
+// ⚠️ Follow-up: extract to src/trading/price_feed.rs with:
+//    - Retry logic with exponential backoff
+//    - Response caching (avoid hammering Pyth on rapid restarts)
+//    - Fallback endpoints (multiple Hermes instances)
+//    - Confidence interval validation
+//    - Optional pyth_proxy.js bridge integration
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Fetch the latest price from Pyth Hermes v2 HTTP API.
+///
+/// Calls `/v2/updates/price/latest` with `parsed=true` and extracts
+/// the price adjusted by the Pyth exponent (e.g., 14735000000 × 10⁻⁸ = $147.35).
+///
+/// # Arguments
+/// * `endpoint` - Pyth Hermes base URL (e.g., "https://hermes.pyth.network")
+/// * `feed_id` - Pyth price feed ID (hex string, e.g., "0xef0d8b6f...")
+///
+/// # Errors
+/// - Network request failure
+/// - Unexpected response structure
+/// - Non-positive price (sanity check)
+async fn fetch_pyth_price(endpoint: &str, feed_id: &str) -> Result<f64> {
+    let url = format!(
+        "{}/v2/updates/price/latest?ids[]={}&parsed=true",
+        endpoint.trim_end_matches('/'),
+        feed_id
+    );
+
+    let resp: Value = reqwest::get(&url)
+        .await
+        .context("Pyth Hermes HTTP request failed — check network connectivity")?
+        .json()
+        .await
+        .context("Failed to parse Pyth response as JSON")?;
+
+    let price_data = &resp["parsed"][0]["price"];
+
+    let price_str = price_data["price"]
+        .as_str()
+        .context("Missing 'price' field in Pyth response — API format may have changed")?;
+
+    let expo = price_data["expo"]
+        .as_i64()
+        .context("Missing 'expo' field in Pyth response — API format may have changed")?;
+
+    let raw_price: f64 = price_str
+        .parse()
+        .context("Failed to parse Pyth price string as f64")?;
+
+    let adjusted_price = raw_price * 10f64.powi(expo as i32);
+
+    if adjusted_price <= 0.0 {
+        bail!(
+            "Pyth returned non-positive price: {} (raw={}, expo={}). \
+             Feed may be stale or misconfigured.",
+            adjusted_price, raw_price, expo
+        );
+    }
+
+    Ok(adjusted_price)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
