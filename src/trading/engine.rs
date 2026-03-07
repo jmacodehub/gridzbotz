@@ -64,13 +64,6 @@ use super::{
 /// - Live mode: Pyth price feed unreachable
 /// - Live mode: Wallet file missing or unreadable
 /// - Live mode: Execution config validation failure
-///
-/// # Examples
-/// ```ignore
-/// let config = Config::from_file("config/production/sol_usdc.toml")?;
-/// let engine = create_engine(&config).await?;
-/// // engine is Arc<dyn TradingEngine> — paper or live based on config
-/// ```
 pub async fn create_engine(config: &Config) -> Result<Arc<dyn TradingEngine>> {
     let instance = config.bot.instance_name();
     let mode = config.bot.execution_mode.as_str();
@@ -94,9 +87,8 @@ pub async fn create_engine(config: &Config) -> Result<Arc<dyn TradingEngine>> {
         "live" => {
             let engine = from_config_live(config).await?;
             info!(
-                "[{}] 🔴 RealTradingEngine ready (max {:.3} SOL/trade, {} BPS slippage)",
+                "[{}] 🔴 RealTradingEngine ready (slippage {} BPS)",
                 instance,
-                config.execution.max_trade_sol,
                 config.execution.max_slippage_bps
             );
             Ok(Arc::new(engine))
@@ -114,12 +106,6 @@ pub async fn create_engine(config: &Config) -> Result<Arc<dyn TradingEngine>> {
 /// Returns a human-readable label for the current engine mode.
 ///
 /// Useful for log prefixes, metrics labels, and status displays.
-///
-/// # Examples
-/// ```ignore
-/// let label = engine_mode_label(&config); // "🟡 PAPER" or "🔴 LIVE"
-/// info!("[{}] Engine mode: {}", config.bot.instance_name(), label);
-/// ```
 pub fn engine_mode_label(config: &Config) -> &'static str {
     if config.bot.is_live() {
         "🔴 LIVE"
@@ -155,27 +141,22 @@ fn from_config_paper(config: &Config) -> Result<PaperTradingEngine> {
 /// Construct a RealTradingEngine from config.
 ///
 /// Steps:
-/// 1. Build RealTradingConfig from execution settings
+/// 1. Build RealTradingConfig via from_execution_config() bridge
 /// 2. Fetch live SOL price from Pyth HTTP feed
 /// 3. Construct engine with validated config + live price
 ///
-/// Fails fast if Pyth is unreachable or wallet is invalid.
+/// Fails fast if Pyth is unreachable or wallet/keystore is invalid.
 async fn from_config_live(config: &Config) -> Result<RealTradingEngine> {
     let instance = config.bot.instance_name();
 
-    // Step 1: Build RealTradingConfig from execution settings
+    // Step 1: Build RealTradingConfig using the canonical bridge
+    // from_execution_config() maps [execution] TOML fields into the
+    // RealTradingConfig struct with sensible defaults for keystore,
+    // executor, circuit breaker, and fee settings.
     info!("[{}] 📋 Building RealTradingConfig from [execution] section", instance);
-    let real_config = RealTradingConfig {
-        max_trade_size_sol: config.execution.max_trade_sol,
-        max_trade_size_usdc: config.execution.max_trade_size_usdc,
-        slippage_bps: config.execution.max_slippage_bps,
-        priority_fee_microlamports: config.execution.priority_fee_microlamports,
-        jito_tip_lamports: config.execution.jito_tip_lamports,
-        confirmation_timeout_secs: config.execution.confirmation_timeout_secs,
-        max_retries: config.execution.max_retries,
-    };
+    let real_config = RealTradingConfig::from_execution_config(&config.execution);
 
-    // Step 2: Fetch live SOL price
+    // Step 2: Fetch live SOL price from Pyth
     info!("[{}] 📡 Fetching live SOL price from Pyth...", instance);
     let feed_id = config.pyth.feed_ids.first()
         .context("No Pyth feed IDs configured. Add at least one to [pyth] feed_ids.")?;
@@ -195,14 +176,14 @@ async fn from_config_live(config: &Config) -> Result<RealTradingEngine> {
     let initial_usdc = config.paper_trading.initial_usdc;
     let initial_sol = config.paper_trading.initial_sol;
 
-    // Step 4: Construct engine
+    // Step 4: Construct engine (async + returns Result)
     let engine = RealTradingEngine::new(
         real_config,
-        config.clone(),
+        config,
         initial_usdc,
         initial_sol,
         sol_price,
-    );
+    ).await?;
 
     Ok(engine)
 }
@@ -214,17 +195,19 @@ async fn from_config_live(config: &Config) -> Result<RealTradingEngine> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::ConfigBuilder;
+
+    /// Helper to build a minimal paper-mode config for testing.
+    fn paper_config(usdc: f64, sol: f64) -> Config {
+        let mut config = Config::default();
+        config.bot.execution_mode = "paper".to_string();
+        config.paper_trading.initial_usdc = usdc;
+        config.paper_trading.initial_sol = sol;
+        config
+    }
 
     #[tokio::test]
     async fn test_create_engine_paper_mode() {
-        let config = ConfigBuilder::new()
-            .environment("testing")
-            .execution_mode("paper")
-            .paper_trading_capital(5000.0, 10.0)
-            .build()
-            .expect("Config should build");
-
+        let config = paper_config(5000.0, 10.0);
         let engine = create_engine(&config).await;
         assert!(engine.is_ok(), "Paper engine creation should succeed");
 
@@ -235,16 +218,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_engine_paper_zero_capital_fails() {
-        // Build config manually to bypass validation
-        let mut config = ConfigBuilder::new()
-            .environment("testing")
-            .execution_mode("paper")
-            .build()
-            .expect("Config should build");
-
-        config.paper_trading.initial_usdc = 0.0;
-        config.paper_trading.initial_sol = 0.0;
-
+        let config = paper_config(0.0, 0.0);
         let result = create_engine(&config).await;
         assert!(result.is_err(), "Zero capital should fail");
         let err = result.unwrap_err().to_string();
@@ -256,25 +230,27 @@ mod tests {
 
     #[test]
     fn test_engine_mode_label_paper() {
-        let config = ConfigBuilder::new()
-            .environment("testing")
-            .execution_mode("paper")
-            .build()
-            .expect("Config should build");
-
+        let config = paper_config(1000.0, 0.0);
         assert_eq!(engine_mode_label(&config), "🟡 PAPER");
     }
 
     #[test]
     fn test_engine_mode_label_live() {
-        // Note: We can't easily test live engine creation without network,
-        // but we can test the label function.
-        let config = ConfigBuilder::new()
-            .environment("testing")
-            .execution_mode("live")
-            .build()
-            .expect("Config should build");
-
+        let mut config = Config::default();
+        config.bot.execution_mode = "live".to_string();
         assert_eq!(engine_mode_label(&config), "🔴 LIVE");
+    }
+
+    #[tokio::test]
+    async fn test_create_engine_invalid_mode_fails() {
+        let mut config = paper_config(1000.0, 0.0);
+        config.bot.execution_mode = "yolo".to_string();
+        let result = create_engine(&config).await;
+        assert!(result.is_err(), "Invalid mode should fail");
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("Invalid execution_mode"),
+            "Error should mention invalid mode: {}", err
+        );
     }
 }
