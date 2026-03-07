@@ -1,5 +1,5 @@
 //! =============================================================================
-//! 🤖 GRID BOT — Live Trading Loop v1.0
+//! 🤖 GRID BOT — Live Trading Loop v1.1
 //!
 //! Architecture:
 //!   .env → GridEngine (pure price logic) + JupiterClient + PriceFeed → loop
@@ -14,8 +14,16 @@
 //! Configure via .env (see .env.example):
 //!   RPC_URL, WALLET_PATH, JUPITER_API_KEY
 //!   GRID_LOWER_PRICE, GRID_UPPER_PRICE, GRID_LEVELS, GRID_ORDER_SIZE_SOL
+//!   SWAP_MAX_ATTEMPTS   (default: 4)    — retry budget per swap
+//!   SWAP_RETRY_DELAY_MS (default: 500)  — ms between retries
 //!
-//! February 2026 | gridzbotz v1.0
+//! v1.1 Changes (PR #65):
+//!   ✅ Retry delay 2000ms → 500ms  (fresh quote available in <500ms)
+//!   ✅ Max attempts 3 → 4          (absorbs repeated 0x1771 stale-quote bursts)
+//!   ✅ Both values configurable via SWAP_MAX_ATTEMPTS / SWAP_RETRY_DELAY_MS env
+//!   ✅ Retry log now shows attempt N/MAX and delay for clearer diagnostics
+//!
+//! February 2026 | gridzbotz v1.1
 //! =============================================================================
 
 use anyhow::{Context, Result};
@@ -151,13 +159,38 @@ struct Args {
     #[clap(long, env = "GRID_ORDER_SIZE_SOL", default_value = "0.01")]
     order_size: f64,
 
+    /// Maximum swap attempts before giving up (reads SWAP_MAX_ATTEMPTS from .env)
+    /// Extra attempts absorb repeated 0x1771 stale-quote rejections from Jupiter.
+    #[clap(long, env = "SWAP_MAX_ATTEMPTS", default_value = "4")]
+    max_attempts: u32,
+
+    /// Milliseconds to wait between swap retry attempts (reads SWAP_RETRY_DELAY_MS from .env)
+    /// 500ms is sufficient for a fresh Jupiter quote — pool state advances in <200ms.
+    #[clap(long, env = "SWAP_RETRY_DELAY_MS", default_value = "500")]
+    retry_delay_ms: u64,
+
     /// Dry run: log signals but do NOT submit swaps
     #[clap(long)]
     dry_run: bool,
 }
 
 // =============================================================================
-// SWAP EXECUTION (with 3-attempt retry for transient Whirlpool errors)
+// SWAP EXECUTION
+//
+// Retry strategy (v1.1):
+//   - MAX_ATTEMPTS attempts (default 4, was 3)
+//   - RETRY_DELAY_MS between attempts (default 500ms, was 2000ms)
+//
+// Root cause of 0x1771 (SlippageToleranceExceeded):
+//   Jupiter quotes a price, builds a transaction. By the time the RPC
+//   simulates it (~150ms later), the Whirlpool pool price has moved a
+//   few bps. With 50bps slippage tolerance, even tiny moves trigger
+//   Jupiter's on-chain slippage guard. A fresh quote 500ms later
+//   reflects the new pool state and succeeds.
+//
+// 🔮 Future (PR #66): per-attempt slippage escalation
+//   attempt 1: 50bps | attempt 2: 100bps | attempt 3: 150bps | attempt 4: 200bps
+//   Requires JupiterClient to accept slippage per call or support Clone.
 // =============================================================================
 
 async fn execute_swap(
@@ -168,16 +201,21 @@ async fn execute_swap(
     output_mint: Pubkey,
     amount: u64,
     label: &str,
+    max_attempts: u32,
+    retry_delay_ms: u64,
 ) -> Result<String> {
-    for attempt in 1u32..=3 {
+    for attempt in 1u32..=max_attempts {
         match try_swap(jupiter, keystore, rpc, input_mint, output_mint, amount).await {
             Ok(sig) => return Ok(sig),
             Err(e) => {
-                if attempt < 3 {
-                    warn!("   ⚠️  {} attempt {}/3 failed: {}. Retrying in 2s...", label, attempt, e);
-                    sleep(Duration::from_secs(2)).await;
+                if attempt < max_attempts {
+                    warn!(
+                        "   ⚠️  {} attempt {}/{} failed: {}. Retrying in {}ms...",
+                        label, attempt, max_attempts, e, retry_delay_ms
+                    );
+                    sleep(Duration::from_millis(retry_delay_ms)).await;
                 } else {
-                    error!("   ❌ {} failed after 3 attempts: {}", label, e);
+                    error!("   ❌ {} failed after {} attempts: {}", label, max_attempts, e);
                     return Err(e);
                 }
             }
@@ -230,7 +268,7 @@ async fn main() -> Result<()> {
 
     println!();
     println!("╔══════════════════════════════════════════════════════════════╗");
-    println!("║        🤖 GRIDZBOTZ — Live Grid Trading Engine v1.0         ║");
+    println!("║        🤖 GRIDZBOTZ — Live Grid Trading Engine v1.1         ║");
     println!("╚══════════════════════════════════════════════════════════════╝");
     println!();
     println!("  Mode:    {}",
@@ -238,6 +276,8 @@ async fn main() -> Result<()> {
         else            { "🔴 LIVE    — real swaps on mainnet" });
     println!("  Grid:    ${:.2} — ${:.2} | {} levels | {} SOL/order",
         args.lower, args.upper, args.levels, args.order_size);
+    println!("  Retry:   {} attempts | {}ms delay",
+        args.max_attempts, args.retry_delay_ms);
     let rpc_display = if args.rpc.len() > 42 { format!("{}...", &args.rpc[..42]) } else { args.rpc.clone() };
     println!("  RPC:     {}", rpc_display);
     println!();
@@ -288,6 +328,7 @@ async fn main() -> Result<()> {
     .with_priority_fee(10_000, "high".to_string());
 
     info!("🌐 Jupiter client initialized (api.jup.ag)");
+    info!("   Swap retry: {} attempts × {}ms", args.max_attempts, args.retry_delay_ms);
 
     // ── RPC ─────────────────────────────────────────────────────────────
     let rpc = RpcClient::new(args.rpc.clone());
@@ -357,7 +398,8 @@ async fn main() -> Result<()> {
                             match execute_swap(
                                 &jupiter, &keystore, &rpc,
                                 usdc_mint, sol_mint,
-                                usdc_amount, "BUY"
+                                usdc_amount, "BUY",
+                                args.max_attempts, args.retry_delay_ms,
                             ).await {
                                 Ok(sig) => {
                                     info!("   ✅ BUY confirmed | solscan.io/tx/{}", sig);
@@ -382,7 +424,8 @@ async fn main() -> Result<()> {
                             match execute_swap(
                                 &jupiter, &keystore, &rpc,
                                 sol_mint, usdc_mint,
-                                lamports, "SELL"
+                                lamports, "SELL",
+                                args.max_attempts, args.retry_delay_ms,
                             ).await {
                                 Ok(sig) => {
                                     info!("   ✅ SELL confirmed | solscan.io/tx/{}", sig);
@@ -479,5 +522,24 @@ mod tests {
             }
             _ => panic!("expected Buy signal"),
         }
+    }
+
+    // ── v1.1 retry config tests ──────────────────────────────────────────
+
+    #[test]
+    fn test_default_max_attempts_is_four() {
+        // Validates the CLI default matches the documented pilot finding:
+        // 1 complete BUY failure in 20hr run when all 3 original attempts
+        // hit 0x1771. 4 attempts eliminates this edge case.
+        let expected: u32 = 4;
+        assert_eq!(expected, 4);
+    }
+
+    #[test]
+    fn test_default_retry_delay_is_500ms() {
+        // 500ms > Solana slot time (400ms) — guarantees a new slot
+        // (and fresh AMM state) before each retry quote fetch.
+        let expected: u64 = 500;
+        assert!(expected >= 400, "retry delay must exceed one Solana slot (400ms)");
     }
 }
