@@ -73,10 +73,7 @@
 // Standard Library & External Dependencies
 // ═══════════════════════════════════════════════════════════════════════════
 
-#![warn(
-    rust_2018_idioms,
-    unreachable_pub
-)]
+// Safety: unsafe code is forbidden crate-wide.
 #![deny(unsafe_code)]
 #![allow(clippy::too_many_arguments)]
 
