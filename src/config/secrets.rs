@@ -17,7 +17,7 @@
 //! |-------------------------------|------------------------------|----------|
 //! | `GRIDZBOTZ_RPC_URL`           | `network.rpc_url`            | Yes      |
 //! | `GRIDZBOTZ_FALLBACK_RPC_URL`  | `network.fallback_rpc_urls`  | No       |
-//! | `GRIDZBOTZ_JUPITER_API_KEY`   | `jupiter.api_key`            | Yes      |
+//! | `GRIDZBOTZ_JUPITER_API_KEY`   | read by Jupiter client       | Yes      |
 //! | `GRIDZBOTZ_WALLET_PATH`       | `security.wallet_path`       | Yes      |
 //! | `GRIDZBOTZ_JITO_TIP_LAMPORTS` | `execution.jito_tip_lamports`| No       |
 
@@ -41,6 +41,15 @@ fn mask_secret(s: &str) -> String {
 /// the corresponding TOML value. If not set, the TOML value is
 /// preserved as-is (useful for paper trading with no secrets).
 ///
+/// # Jupiter API Key
+///
+/// The Jupiter API key is NOT stored in Config (no JupiterConfig struct yet).
+/// Instead, the Jupiter client (`src/dex/jupiter_client.rs`) should read
+/// `GRIDZBOTZ_JUPITER_API_KEY` directly from env at initialization.
+/// This function validates the env var is present and logs the result.
+///
+/// TODO(Stage 2): Add JupiterConfig to Config struct, then override here.
+///
 /// # Errors
 ///
 /// Returns `Err` if `execution_mode == "live"` and a required secret
@@ -55,7 +64,7 @@ pub fn resolve_secrets(config: &mut Config) -> anyhow::Result<()> {
         config.bot.execution_mode
     );
 
-    // ─── RPC URL ──────────────────────────────────────────────────────────
+    // ─── RPC URL ────────────────────────────────────────────────────────
     if let Ok(rpc_url) = env::var("GRIDZBOTZ_RPC_URL") {
         if !rpc_url.is_empty() {
             info!("  ✅ RPC URL: {} (from env)", mask_secret(&rpc_url));
@@ -66,36 +75,41 @@ pub fn resolve_secrets(config: &mut Config) -> anyhow::Result<()> {
         warn!("  ⚠️  GRIDZBOTZ_RPC_URL not set — using TOML default (public RPC, rate-limited!)");
     }
 
-    // ─── Fallback RPC URL (optional) ──────────────────────────────────────
+    // ─── Fallback RPC URL (optional) ────────────────────────────────────
     if let Ok(fallback_url) = env::var("GRIDZBOTZ_FALLBACK_RPC_URL") {
         if !fallback_url.is_empty() {
             info!("  ✅ Fallback RPC: {} (from env)", mask_secret(&fallback_url));
             // TODO: Wire into config.network.fallback_rpc_urls when field exists
-            // config.network.fallback_rpc_urls = Some(vec![fallback_url]);
+            // For now, fallback RPC is available via env::var() in the RPC pool
             resolved_count += 1;
         }
     }
 
-    // ─── Jupiter API Key ─────────────────────────────────────────────────
+    // ─── Jupiter API Key ────────────────────────────────────────────────
+    // NOTE: Config struct does not yet have a `jupiter` field.
+    // The [jupiter] TOML section parses but is silently dropped by serde.
+    // Jupiter client reads GRIDZBOTZ_JUPITER_API_KEY directly from env.
+    // TODO(Stage 2): Add JupiterConfig to Config, then override here.
     if let Ok(api_key) = env::var("GRIDZBOTZ_JUPITER_API_KEY") {
         if !api_key.is_empty() {
-            info!("  ✅ Jupiter API key: {} (from env)", mask_secret(&api_key));
-            config.jupiter.api_key = api_key;
+            info!("  ✅ Jupiter API key: {} (available via env)", mask_secret(&api_key));
             resolved_count += 1;
-        }
-    } else if is_live {
-        // Empty string in TOML + no env var = fail in live mode
-        if config.jupiter.api_key.is_empty() {
+        } else if is_live {
             anyhow::bail!(
-                "🚨 GRIDZBOTZ_JUPITER_API_KEY not set and jupiter.api_key is empty in TOML. \
+                "🚨 GRIDZBOTZ_JUPITER_API_KEY is set but empty. \
                  Cannot run live without a Jupiter API key. \
                  Get one free at https://portal.jup.ag"
             );
         }
-        warn!("  ⚠️  GRIDZBOTZ_JUPITER_API_KEY not set — using TOML value (migrate to env!)");
+    } else if is_live {
+        anyhow::bail!(
+            "🚨 GRIDZBOTZ_JUPITER_API_KEY not set. \
+             Cannot run live without a Jupiter API key. \
+             Get one free at https://portal.jup.ag"
+        );
     }
 
-    // ─── Wallet Path ─────────────────────────────────────────────────────
+    // ─── Wallet Path ────────────────────────────────────────────────────
     if let Ok(wallet_path) = env::var("GRIDZBOTZ_WALLET_PATH") {
         if !wallet_path.is_empty() {
             info!("  ✅ Wallet path: {} (from env)", mask_secret(&wallet_path));
@@ -116,26 +130,25 @@ pub fn resolve_secrets(config: &mut Config) -> anyhow::Result<()> {
         }
     }
 
-    // ─── Jito Tip (optional) ─────────────────────────────────────────────
+    // ─── Jito Tip (optional) ───────────────────────────────────────────
     if let Ok(tip_str) = env::var("GRIDZBOTZ_JITO_TIP_LAMPORTS") {
         if let Ok(tip) = tip_str.parse::<u64>() {
             info!("  ✅ Jito tip: {} lamports (from env)", tip);
-            // TODO: Wire into config.execution.jito_tip_lamports when field exists
-            // config.execution.jito_tip_lamports = Some(tip);
+            config.execution.jito_tip_lamports = Some(tip);
             resolved_count += 1;
         } else {
             warn!("  ⚠️  GRIDZBOTZ_JITO_TIP_LAMPORTS='{}' is not a valid u64 — ignoring", tip_str);
         }
     }
 
-    // ─── Summary ─────────────────────────────────────────────────────────
+    // ─── Summary ────────────────────────────────────────────────────────
     info!(
         "🔐 Secret resolution complete: {}/5 overrides applied (mode: {})",
         resolved_count,
         config.bot.execution_mode
     );
 
-    // ─── Live Mode Validation ────────────────────────────────────────────
+    // ─── Live Mode Validation ──────────────────────────────────────────
     if is_live {
         // Validate wallet file exists
         let wallet = &config.security.wallet_path;
@@ -152,7 +165,7 @@ pub fn resolve_secrets(config: &mut Config) -> anyhow::Result<()> {
             warn!(
                 "  🟡 WARNING: Using public Solana RPC in live mode! \
                  This is rate-limited and unreliable for trading. \
-                 Set GRIDZBOTZ_RPC_URL to your Chainstack/QuickNode endpoint."
+                 Set GRIDZBOTZ_RPC_URL to your Chainstack/QuickNode/Helius endpoint."
             );
         }
     }
