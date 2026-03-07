@@ -131,21 +131,21 @@ impl Signal {
     pub fn display(&self) -> String {
         match self {
             Signal::StrongBuy { price, reason, confidence, level_id, .. } => {
-                let level_str = level_id.map_or_else(|| String::new(), |id| format!(" level {} | ", id));
+                let level_str = level_id.map_or(String::new(), |id| format!(" level {} | ", id));
                 format!("STRONG BUY @ ${:.4} | {}{} | {:.0}% conf", price, level_str, reason, confidence * 100.0)
             },
             Signal::Buy { price, reason, confidence, level_id, .. } => {
-                let level_str = level_id.map_or_else(|| String::new(), |id| format!(" level {} | ", id));
+                let level_str = level_id.map_or(String::new(), |id| format!(" level {} | ", id));
                 format!("BUY @ ${:.4} | {}{} | {:.0}%", price, level_str, reason, confidence * 100.0)
             },
             Signal::Hold { reason } =>
                 format!("HOLD | {}", reason.clone().unwrap_or_else(|| "Neutral".into())),
             Signal::Sell { price, reason, confidence, level_id, .. } => {
-                let level_str = level_id.map_or_else(|| String::new(), |id| format!(" level {} | ", id));
+                let level_str = level_id.map_or(String::new(), |id| format!(" level {} | ", id));
                 format!("SELL @ ${:.4} | {}{} | {:.0}%", price, level_str, reason, confidence * 100.0)
             },
             Signal::StrongSell { price, reason, confidence, level_id, .. } => {
-                let level_str = level_id.map_or_else(|| String::new(), |id| format!(" level {} | ", id));
+                let level_str = level_id.map_or(String::new(), |id| format!(" level {} | ", id));
                 format!("STRONG SELL @ ${:.4} | {}{} | {:.0}%", price, level_str, reason, confidence * 100.0)
             },
         }

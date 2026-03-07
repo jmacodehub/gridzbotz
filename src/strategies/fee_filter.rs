@@ -167,11 +167,6 @@ impl SmartFeeFilter {
         }
     }
     
-    /// Create with default config
-    pub fn default() -> Self {
-        Self::new(SmartFeeFilterConfig::default())
-    }
-    
     // ═══════════════════════════════════════════════════════════════════
     // CORE FILTERING LOGIC - V2.0 INTELLIGENT! 🧠
     // ═══════════════════════════════════════════════════════════════════
@@ -207,8 +202,8 @@ impl SmartFeeFilter {
         
         // Calculate expected gross profit
         let gross_profit = (exit_price - entry_price).abs() * position_size_sol;
-        let gross_profit_pct = (gross_profit / (entry_price * position_size_sol)) * 100.0;
-        let _ = gross_profit_pct; // tracked for future analytics
+        // gross_profit_pct reserved for future analytics
+        let _gross_profit_pct = (gross_profit / (entry_price * position_size_sol)) * 100.0;
         
         // Calculate net profit
         let net_profit = gross_profit - costs.total_cost;
@@ -429,6 +424,12 @@ impl SmartFeeFilter {
     }
 }
 
+impl Default for SmartFeeFilter {
+    fn default() -> Self {
+        Self::new(SmartFeeFilterConfig::default())
+    }
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // DATA STRUCTURES
 // ═══════════════════════════════════════════════════════════════════════════
@@ -550,5 +551,13 @@ mod tests {
         
         assert!(should_execute);
         assert!(reason.contains("Grace"));
+    }
+
+    #[test]
+    fn test_default_trait() {
+        // Verify impl Default for SmartFeeFilter resolves correctly
+        let f = SmartFeeFilter::default();
+        let stats = f.stats();
+        assert_eq!(stats.total_checks, 0);
     }
 }

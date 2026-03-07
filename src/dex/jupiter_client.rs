@@ -81,6 +81,8 @@ use std::time::{Duration, SystemTime};
 const DEFAULT_SLIPPAGE_BPS: u16 = 50;
 
 /// Minimum order size (prevents dust orders)
+/// Reserved: enforced at call-site when per-pair dust thresholds are wired in.
+#[allow(dead_code)]
 const MIN_ORDER_SIZE: f64 = 0.001;
 
 /// Jupiter API base URL (current production endpoint)
@@ -233,7 +235,8 @@ pub struct JupiterClient {
     /// Total orders cancelled
     orders_cancelled: u64,
     
-    /// Last order timestamp
+    /// Last order timestamp — set on each execution; reserved for
+    /// future idle-detection and rate-limit analytics.
     last_order_time: Option<SystemTime>,
     
     /// Slippage tolerance in basis points

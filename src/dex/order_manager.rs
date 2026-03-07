@@ -79,6 +79,12 @@ impl OrderManager {
     }
 }
 
+impl Default for OrderManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct OrderStats {
     pub active: usize,
