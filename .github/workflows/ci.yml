@@ -1,0 +1,86 @@
+# =============================================================================
+# CI — gridzbotz
+#
+# Runs on every push to main and every pull request targeting main.
+# Jobs: check → test + clippy (parallel after check passes)
+#
+# Toolchain : dtolnay/rust-toolchain@stable  (reproducible stable pin)
+# Cache     : Swatinem/rust-cache            (target/ + ~/.cargo/registry)
+# =============================================================================
+
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # 1. COMPILE CHECK — fastest gate, no binary produced
+  # ---------------------------------------------------------------------------
+  check:
+    name: 🔧 cargo check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: cargo check
+        run: cargo check --all-targets
+
+  # ---------------------------------------------------------------------------
+  # 2. TEST SUITE — all unit + integration tests
+  # ---------------------------------------------------------------------------
+  test:
+    name: 🧪 cargo test
+    runs-on: ubuntu-latest
+    needs: check
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: cargo test
+        run: cargo test --all
+
+  # ---------------------------------------------------------------------------
+  # 3. CLIPPY — -D warnings: zero tolerance on the full codebase
+  #
+  # All 30 pre-existing warnings were resolved in fix/clippy-lint-cleanup
+  # so this strict gate passes clean from the moment CI lands on main.
+  # ---------------------------------------------------------------------------
+  clippy:
+    name: 📎 cargo clippy
+    runs-on: ubuntu-latest
+    needs: check
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust stable + clippy
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: cargo clippy (all targets, deny warnings)
+        run: cargo clippy --all-targets -- -D warnings
