@@ -200,9 +200,10 @@ mod tests {
     /// Helper to build a minimal paper-mode config for testing.
     ///
     /// Uses ConfigBuilder::new() which constructs a fully valid Config
-    /// with all required fields. Overrides paper_trading balances AFTER
-    /// build() to allow testing engine-level zero-capital rejection
-    /// (PaperTradingConfig::validate() would reject <= 0.0 during build).
+    /// with all required fields (default: paper mode, development env).
+    /// Overrides paper_trading balances AFTER build() to allow testing
+    /// engine-level zero-capital rejection without tripping
+    /// PaperTradingConfig::validate() during build().
     fn paper_config(usdc: f64, sol: f64) -> Config {
         let mut config = ConfigBuilder::new()
             .execution_mode("paper")
@@ -244,11 +245,11 @@ mod tests {
 
     #[test]
     fn test_engine_mode_label_live() {
+        // Build as paper (passes validation without wallet file),
+        // then override execution_mode to "live" for the label check.
         let mut config = ConfigBuilder::new()
-            .execution_mode("live")
-            .environment("production")
             .build()
-            .expect("live test config should be valid");
+            .expect("default test config should be valid");
         config.bot.execution_mode = "live".to_string();
         assert_eq!(engine_mode_label(&config), "🔴 LIVE");
     }
