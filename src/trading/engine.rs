@@ -293,7 +293,10 @@ mod tests {
         let config = paper_config(0.0, 0.0);
         let result = create_engine(&config).await;
         assert!(result.is_err(), "Zero capital should fail");
-        let err = result.unwrap_err().to_string();
+        // Use .err().unwrap() instead of .unwrap_err() because
+        // Arc<dyn TradingEngine> does not implement Debug
+        // (required by Result::unwrap_err to print Ok value on panic).
+        let err = result.err().unwrap().to_string();
         assert!(
             err.contains("positive initial capital"),
             "Error should mention capital: {}", err
@@ -323,7 +326,8 @@ mod tests {
         config.bot.execution_mode = "yolo".to_string();
         let result = create_engine(&config).await;
         assert!(result.is_err(), "Invalid mode should fail");
-        let err = result.unwrap_err().to_string();
+        // Use .err().unwrap() — see zero_capital test comment for rationale.
+        let err = result.err().unwrap().to_string();
         assert!(
             err.contains("Invalid execution_mode"),
             "Error should mention invalid mode: {}", err
