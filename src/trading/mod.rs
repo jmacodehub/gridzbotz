@@ -1,8 +1,9 @@
 //! ═════════════════════════════════════════════════════════════════════
-//! Trading Module V5.2 - Jupiter-Powered Real Trading Engine (Consolidated)
+//! Trading Module V5.4 - Jupiter-Powered Real Trading Engine (Consolidated)
 //!
 //! Architecture:
 //! - Unified Trading Interface: Generic trait for paper and live trading
+//! - Engine Factory: Config-driven engine selection (paper ↔ live)
 //! - Paper Trading: Risk-free backtesting and simulation
 //! - Grid State Machine: Order lifecycle tracking with buy/sell pairing
 //! - Real Trading: ✅ ENABLED - Live execution with Jupiter swaps!
@@ -12,16 +13,22 @@
 //! - Enhanced Metrics: Trade-level analytics and performance tracking
 //! - Adaptive Optimizer: Self-learning grid spacing and position sizing
 //!
-//! V5.1 CHANGES (Feb 2026):
-//! ✅ jupiter_swap.rs removed — consolidated into jupiter_client.rs
-//! ✅ JupiterClient is now the single canonical implementation
-//! ✅ VersionedTransaction preserved end-to-end (ALTs no longer dropped)
-//! ✅ executor.execute_versioned() wired for Jupiter swaps
-//! ✅ keystore.sign_versioned_transaction() added
+//! V5.4 CHANGES (Mar 2026 — PR #71):
+//! ✅ engine.rs added — create_engine() factory for config-driven mode selection
+//!    Reads bot.execution_mode → returns Arc<dyn TradingEngine>
+//!    Paper: instant, no network | Live: Pyth price + wallet validation
+//! ✅ engine_mode_label() helper for logging/metrics
+//! ✅ Prelude updated with factory exports
 //!
-//! V5.2 CHANGES (Stage 3 — Feb 2026):
-//! ✅ FillEvent added — data carrier for confirmed order fills
-//!    Fan-out to strategies via StrategyManager::notify_fill()
+//! V5.3.1 CHANGES (Mar 2026 — export cleanup):
+//! ✅ Removed phantom Jupiter client exports (JupiterConfig, private types)
+//! ✅ Added WSOL_MINT as local const alias to SOL_MINT (backwards compat)
+//! ✅ Only export what's actually public: JupiterClient, SOL_MINT, USDC_MINT
+//!
+//! V5.3 CHANGES (Mar 2026 — production Jupiter client):
+//! ✅ Old src/trading/jupiter_client.rs stub removed
+//! ✅ Production JupiterClient V4.0 wired from src/dex/
+//! ✅ Full API key support, proper error handling, dynamic slippage
 //!
 //! V5.2.1 CHANGES (Feb 2026 — per-level analytics):
 //! ✅ FillEvent gains level_id: Option<u64>            — grid level ID
@@ -29,17 +36,18 @@
 //! ✅ Builder methods: .with_level() / .with_distance_from_mid()
 //! ✅ All existing call sites unaffected (new fields default to None)
 //!
-//! V5.3 CHANGES (Mar 2026 — production Jupiter client):
-//! ✅ Old src/trading/jupiter_client.rs stub removed
-//! ✅ Production JupiterClient V4.0 wired from src/dex/
-//! ✅ Full API key support, proper error handling, dynamic slippage
+//! V5.2 CHANGES (Stage 3 — Feb 2026):
+//! ✅ FillEvent added — data carrier for confirmed order fills
+//!    Fan-out to strategies via StrategyManager::notify_fill()
 //!
-//! V5.3.1 CHANGES (Mar 2026 — export cleanup):
-//! ✅ Removed phantom Jupiter client exports (JupiterConfig, private types)
-//! ✅ Added WSOL_MINT as local const alias to SOL_MINT (backwards compat)
-//! ✅ Only export what's actually public: JupiterClient, SOL_MINT, USDC_MINT
+//! V5.1 CHANGES (Feb 2026):
+//! ✅ jupiter_swap.rs removed — consolidated into jupiter_client.rs
+//! ✅ JupiterClient is now the single canonical implementation
+//! ✅ VersionedTransaction preserved end-to-end (ALTs no longer dropped)
+//! ✅ executor.execute_versioned() wired for Jupiter swaps
+//! ✅ keystore.sign_versioned_transaction() added
 //!
-//! March 2026 - V5.3.1 PRODUCTION JUPITER CLIENT! 🚀
+//! March 2026 - V5.4 ENGINE FACTORY! 🏭
 //! ═════════════════════════════════════════════════════════════════════
 
 pub use crate::config::Config;
@@ -63,6 +71,7 @@ pub mod redundant_feed;      // Redundant price feeds
 pub mod real_trader;         // 🔥 ENABLED - Phase 5 Complete!
 pub mod enhanced_metrics;    // 📊 V4.1: Enhanced analytics tracking
 pub mod adaptive_optimizer;  // 🧠 V4.2: Self-learning optimizer
+pub mod engine;              // 🏭 V5.4: Config-driven engine factory
 
 // WebSocket feeds (optional feature)
 #[cfg(feature = "websockets")]
@@ -71,6 +80,15 @@ pub mod pyth_websocket;
 pub mod binance_ws;
 #[cfg(feature = "websockets")]
 pub mod pyth_lazer;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Engine Factory Exports (V5.4 — PR #71) 🏭
+// ═══════════════════════════════════════════════════════════════════════════
+
+pub use engine::{
+    create_engine,
+    engine_mode_label,
+};
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Paper Trading Exports
@@ -454,6 +472,10 @@ pub async fn get_live_price(feed_id: &str) -> Option<f64> {
 
 pub mod prelude {
     pub use super::{
+        // Engine Factory (V5.4 — PR #71) 🏭
+        create_engine,
+        engine_mode_label,
+
         // Engines
         PaperTradingEngine,
         RealTradingEngine,
