@@ -11,8 +11,9 @@
 #    ✅ QuickNode fallback RPC (auto-failover from Chainstack)
 #    ✅ Enhanced regime detection (multi-strategy profile)
 #    ✅ All master.toml canonical fields preserved
-#    ✅ Jupiter V4.1 API compatible
+#    ✅ Jupiter V6 API compatible
 #    ✅ Jito MEV ready (commented, enable when scaling >$500)
+#    ✅ Secrets via env vars (GRIDZBOTZ_* — never hardcode keys!)
 #
 #  Strategy: Grid-only with ATR-driven adaptive spacing
 #  Capital: $50-100 conservative start (scale after 48h validation)
@@ -23,6 +24,12 @@
 #    - Max drawdown: <5%
 #    - Success rate: >90%
 #    - Exec time: 300-800ms
+#
+#  Secrets Setup (REQUIRED before first run):
+#    1. cp .env.example .env
+#    2. Add your real keys to .env
+#    3. source .env  (or use dotenv in your shell)
+#    4. cargo run --release -- --config config/production/mainnet-sol-usdc-v3.6-enhanced.toml
 #
 #  Run: cargo run --release -- --config config/production/mainnet-sol-usdc-v3.6-enhanced.toml
 # ═══════════════════════════════════════════════════════════════════════════
@@ -41,29 +48,31 @@ instance_id     = "mainnet-sol-usdc-v3.6"
 
 # ═══════════════════════════════════════════════════════════════════════════
 #  🌐 NETWORK — Chainstack Primary + QuickNode Fallback
+#
+#  🔐 SECURITY: RPC URL loaded from env var GRIDZBOTZ_RPC_URL
+#     The value below is a SAFE PLACEHOLDER — override via .env
+#     resolve_secrets() in src/config/secrets.rs handles the swap
 # ═══════════════════════════════════════════════════════════════════════════
 [network]
 cluster    = "mainnet-beta"            # 🔥 MAINNET
-rpc_url    = "https://solana-mainnet.core.chainstack.com/6ab9c5a91b372ea63ecf3fd08560b281"
+rpc_url    = "https://api.mainnet-beta.solana.com"  # ← PLACEHOLDER (override via GRIDZBOTZ_RPC_URL)
 commitment = "confirmed"               # confirmed | finalized
 
 # 🆕 V3.6: QuickNode fallback (auto-failover if Chainstack >150ms or fails)
-# Uncomment and add your QuickNode endpoint:
-# fallback_rpc_urls = [
-#     "https://YOUR-QUICKNODE-ENDPOINT.quiknode.pro/YOUR_KEY/"
-# ]
+# Override via GRIDZBOTZ_FALLBACK_RPC_URL env var
+# fallback_rpc_urls = []
 
 # 🔮 Future: WebSocket subscription for sub-100ms price feed
 # ws_url = "wss://solana-mainnet.core.chainstack.com/YOUR_WS_KEY"
 
 # ═══════════════════════════════════════════════════════════════════════════
 #  🔐 SECURITY
+#
+#  🔐 WALLET PATH loaded from env var GRIDZBOTZ_WALLET_PATH
+#     The value below is a SAFE DEFAULT — override via .env
 # ═══════════════════════════════════════════════════════════════════════════
 [security]
-# Verify file exists and permissions are correct before first live run:
-#   ls -la /Users/j-mc/.config/solana/id.json
-#   chmod 600 /Users/j-mc/.config/solana/id.json
-wallet_path      = "/Users/j-mc/.config/solana/id.json"
+wallet_path      = "~/.config/solana/id.json"  # ← DEFAULT (override via GRIDZBOTZ_WALLET_PATH)
 require_password = false
 
 # 🛡️ Daily safety caps (reset at 00:00 UTC)
@@ -140,7 +149,7 @@ rebalance_cooldown_secs  = 120         # 2min cooldown between rebalances
 # ─── Order Management ──────────────────────────────────────────────────────
 max_orders_per_side          = 10      # 10 buy + 10 sell = 20 total
 order_refresh_interval_secs  = 120     # Refresh stale orders every 2min
-enable_market_orders         = false   # Only limit orders (no slippage risk)
+enable_market_orders         = false   # Legacy field (Jupiter = atomic AMM swaps)
 enable_fee_optimization      = true
 
 # ─── Order Lifecycle (Aggressive Refresh from tuned-mar2) ──────────────────
@@ -235,14 +244,18 @@ circuit_breaker_threshold_pct = 4.0    # Trip at -4% (tighter than v1's 8%)
 circuit_breaker_cooldown_secs = 300    # 5min cooldown after trip
 
 # ═══════════════════════════════════════════════════════════════════════════
-#  🪐 JUPITER API — V4.1 Compatible
+#  🪐 JUPITER API — V6 Compatible
+#
+#  🔐 SECURITY: API key loaded from env var GRIDZBOTZ_JUPITER_API_KEY
+#     The value below is a SAFE PLACEHOLDER — override via .env
 # ═══════════════════════════════════════════════════════════════════════════
 [jupiter]
 # Jupiter API Key (REQUIRED for mainnet)
 # Get free at: https://portal.jup.ag
-api_key = "50c73ffd-2350-45f3-90da-50caa00cd24c"
+# 🔐 Override via GRIDZBOTZ_JUPITER_API_KEY env var
+api_key = ""                           # ← EMPTY (set via GRIDZBOTZ_JUPITER_API_KEY in .env)
 
-# API endpoint (V4.1 production)
+# API endpoint (V6 production)
 api_endpoint = "https://api.jup.ag"
 
 # Slippage tolerance (50 bps = 0.5%)
