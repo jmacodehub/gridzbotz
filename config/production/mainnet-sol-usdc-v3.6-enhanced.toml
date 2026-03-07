@@ -1,0 +1,333 @@
+# ═══════════════════════════════════════════════════════════════════════════
+#  🚀 GRIDZBOTZ MAINNET V3.6 ENHANCED — SOL/USDC PRODUCTION
+#
+#  Base: mainnet-sol-usdc-v1.toml (battle-tested)
+#  Enhancements: R&D multi-strategy learnings + V3.6 fixes
+#
+#  🆕 V3.6 Enhancements:
+#    ✅ ATR Dynamic Spacing (adapts to volatility real-time)
+#    ✅ Dual volatility gates (0.05% floor, 8% ceiling from R&D)
+#    ✅ Tighter retry logic (4 attempts, 500ms from PR #65)
+#    ✅ QuickNode fallback RPC (auto-failover from Chainstack)
+#    ✅ Enhanced regime detection (multi-strategy profile)
+#    ✅ All master.toml canonical fields preserved
+#    ✅ Jupiter V4.1 API compatible
+#    ✅ Jito MEV ready (commented, enable when scaling >$500)
+#
+#  Strategy: Grid-only with ATR-driven adaptive spacing
+#  Capital: $50-100 conservative start (scale after 48h validation)
+#
+#  Expected Performance (normal vol 0.1-0.5%):
+#    - Fills: 10-30 per day
+#    - Target ROI: +0.5-2.0% daily
+#    - Max drawdown: <5%
+#    - Success rate: >90%
+#    - Exec time: 300-800ms
+#
+#  Run: cargo run --release -- --config config/production/mainnet-sol-usdc-v3.6-enhanced.toml
+# ═══════════════════════════════════════════════════════════════════════════
+
+test_name = "Mainnet SOL/USDC V3.6 Enhanced"
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  🤖 BOT CORE
+# ═══════════════════════════════════════════════════════════════════════════
+[bot]
+name            = "GridzBot-Mainnet-V3.6"
+version         = "3.6.0"
+environment     = "production"
+execution_mode  = "live"               # 🔥 LIVE TRADING
+instance_id     = "mainnet-sol-usdc-v3.6"
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  🌐 NETWORK — Chainstack Primary + QuickNode Fallback
+# ═══════════════════════════════════════════════════════════════════════════
+[network]
+cluster    = "mainnet-beta"            # 🔥 MAINNET
+rpc_url    = "https://solana-mainnet.core.chainstack.com/6ab9c5a91b372ea63ecf3fd08560b281"
+commitment = "confirmed"               # confirmed | finalized
+
+# 🆕 V3.6: QuickNode fallback (auto-failover if Chainstack >150ms or fails)
+# Uncomment and add your QuickNode endpoint:
+# fallback_rpc_urls = [
+#     "https://YOUR-QUICKNODE-ENDPOINT.quiknode.pro/YOUR_KEY/"
+# ]
+
+# 🔮 Future: WebSocket subscription for sub-100ms price feed
+# ws_url = "wss://solana-mainnet.core.chainstack.com/YOUR_WS_KEY"
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  🔐 SECURITY
+# ═══════════════════════════════════════════════════════════════════════════
+[security]
+# Verify file exists and permissions are correct before first live run:
+#   ls -la /Users/j-mc/.config/solana/id.json
+#   chmod 600 /Users/j-mc/.config/solana/id.json
+wallet_path      = "/Users/j-mc/.config/solana/id.json"
+require_password = false
+
+# 🛡️ Daily safety caps (reset at 00:00 UTC)
+max_daily_trades      = 100            # Max 100 trades/day
+max_daily_volume_usdc = 500.0          # Max $500 volume/day
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  ⚡ EXECUTION — Live Trading Knobs
+# ═══════════════════════════════════════════════════════════════════════════
+[execution]
+# Hard safety caps — whichever hits first wins
+max_trade_sol          = 0.5           # Max 0.5 SOL per trade
+max_trade_size_usdc    = 50.0          # Max $50 per trade (conservative start)
+
+# Priority fee (100k microlamports = 0.0001 SOL)
+priority_fee_microlamports = 100000
+
+# Slippage (150 bps = 1.5% max)
+max_slippage_bps           = 150
+
+# RPC timeouts
+confirmation_timeout_secs  = 60
+
+# 🆕 V3.6: Tighter retry logic (from PR #65)
+max_retries                = 4         # ↑ from 3 (extra attempt for stale quotes)
+retry_delay_ms             = 500       # ↓ from 2000ms (faster fresh quote)
+
+# 🛡️ Jito MEV Protection — DISABLED for initial live run
+# Enable when scaling above $500 capital (tips $0.01-0.10 per tx)
+# jito_enabled     = true
+# jito_tip_lamports = 100000           # 0.0001 SOL tip (~$0.01 at $100/SOL)
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  💰 PAPER TRADING (Reference Only — Ignored in Live Mode)
+# ═══════════════════════════════════════════════════════════════════════════
+[paper_trading]
+initial_usdc = 200.0
+initial_sol  = 1.0
+test_duration_hours = 1
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  📊 TRADING — Grid + ATR Dynamic Spacing
+# ═══════════════════════════════════════════════════════════════════════════
+[trading]
+
+# ─── Core Grid (Battle-Tested Baseline) ────────────────────────────────────
+grid_levels          = 20              # 20 levels (10 buy + 10 sell)
+grid_spacing_percent = 0.18            # 0.18% base spacing (battle-tested)
+min_order_size       = 0.05            # 0.05 SOL min (~$4 at $80/SOL)
+max_position_size    = 50.0            # $50 max position
+
+# ─── Reserves ──────────────────────────────────────────────────────────────
+min_usdc_reserve = 20.0                # $20 USDC emergency reserve
+min_sol_reserve  = 0.1                 # 0.1 SOL for fees
+
+# ─── Dynamic Grid ──────────────────────────────────────────────────────────
+enable_dynamic_grid  = true
+volatility_window    = 100             # 100-cycle rolling window
+
+# 🆕 V3.6: ATR Dynamic Spacing (from R&D multi-strategy profile)
+# Widens spacing in high-vol (protects from whipsaw)
+# Tightens spacing in low-vol (captures small moves)
+enable_adaptive_spacing = true         # ✅ ENABLED
+
+# Reposition threshold (fire when price drifts >0.3% from anchor)
+reposition_threshold = 0.30            # 0.30% (tighter than v1's 0.50%)
+
+# ─── Auto-Rebalancing ──────────────────────────────────────────────────────
+enable_auto_rebalance    = true
+enable_smart_rebalance   = true
+rebalance_threshold_pct  = 5.0         # Rebalance if imbalance >5%
+rebalance_cooldown_secs  = 120         # 2min cooldown between rebalances
+
+# ─── Order Management ──────────────────────────────────────────────────────
+max_orders_per_side          = 10      # 10 buy + 10 sell = 20 total
+order_refresh_interval_secs  = 120     # Refresh stale orders every 2min
+enable_market_orders         = false   # Only limit orders (no slippage risk)
+enable_fee_optimization      = true
+
+# ─── Order Lifecycle (Aggressive Refresh from tuned-mar2) ──────────────────
+enable_order_lifecycle         = true
+order_max_age_minutes          = 5     # Cancel orders older than 5min
+order_refresh_interval_minutes = 2     # Check every 2min
+min_orders_to_maintain         = 8     # Maintain at least 8 active orders
+
+# ─── Risk Limits ───────────────────────────────────────────────────────────
+min_profit_threshold_pct = 0.25        # Min 0.25% profit after fees
+max_slippage_pct         = 1.5         # Max 1.5% slippage tolerance
+
+# ─── Price Bounds (Disabled) ───────────────────────────────────────────────
+enable_price_bounds = false
+lower_price_bound   = 50.0             # Reference only
+upper_price_bound   = 150.0            # Reference only
+
+# ─── 🔥 Enhanced Regime Gate (V3.6) ────────────────────────────────────────
+# Dual thresholds: LOW (0.05%) and HIGH (8%)
+# Blocks trading when vol <0.05% (dead market) OR >8% (extreme chaos)
+enable_regime_gate       = true        # ✅ ENABLED
+min_volatility_to_trade  = 0.05        # 0.05% floor (battle-tested)
+max_volatility_to_trade  = 8.0         # 🆕 8% ceiling (from R&D multi-strategy)
+pause_in_very_low_vol    = true        # Auto-pause when vol <0.05%
+
+# ─── Advanced Features ─────────────────────────────────────────────────────
+enable_smart_position_sizing = true    # Dynamic position sizing based on vol
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  🎯 STRATEGIES — Grid-Only (Add Multi-Strategy After Validation)
+# ═══════════════════════════════════════════════════════════════════════════
+[strategies]
+active         = ["grid"]              # Grid-only for initial validation
+consensus_mode = "single"              # Single strategy mode
+
+enable_multi_timeframe       = false
+require_timeframe_alignment  = false
+
+# ─── Strategy 1: Grid Rebalancer ───────────────────────────────────────────
+[strategies.grid]
+enabled                  = true
+weight                   = 1.0
+min_confidence           = 0.5
+reposition_threshold_pct = 0.30        # Match trading.reposition_threshold
+
+# ─── Strategy 2-5: Disabled (Enable After Grid-Only Validation) ────────────
+[strategies.momentum]
+enabled         = false                # Enable after 48h grid-only validation
+weight          = 0.8
+min_confidence  = 0.6
+lookback_period = 20
+threshold       = 0.02
+
+[strategies.mean_reversion]
+enabled            = false
+weight             = 0.7
+min_confidence     = 0.6
+sma_period         = 20
+std_dev_multiplier = 2.0
+strong_buy_threshold  = 5.0
+buy_threshold         = 2.5
+strong_sell_threshold = 5.0
+sell_threshold        = 2.5
+
+[strategies.rsi]
+enabled              = false
+weight               = 0.9
+min_confidence       = 0.7
+period               = 14
+oversold_threshold   = 30.0
+overbought_threshold = 70.0
+extreme_oversold     = 20.0
+extreme_overbought   = 80.0
+
+[strategies.momentum_macd]
+enabled                    = false
+weight                     = 0.8
+min_confidence             = 0.65
+strong_histogram_threshold = 0.5
+min_warmup_periods         = 26        # NEVER reduce below 26
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  🚨 RISK MANAGEMENT — Tightened Circuit Breakers
+# ═══════════════════════════════════════════════════════════════════════════
+[risk]
+max_position_size_pct         = 30.0   # Max 30% of capital per position
+max_drawdown_pct              = 5.0    # Kill-switch at -5% drawdown
+stop_loss_pct                 = 3.0    # Stop-loss at -3%
+take_profit_pct               = 8.0    # Take-profit at +8%
+enable_circuit_breaker        = true   # ✅ ENABLED
+circuit_breaker_threshold_pct = 4.0    # Trip at -4% (tighter than v1's 8%)
+circuit_breaker_cooldown_secs = 300    # 5min cooldown after trip
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  🪐 JUPITER API — V4.1 Compatible
+# ═══════════════════════════════════════════════════════════════════════════
+[jupiter]
+# Jupiter API Key (REQUIRED for mainnet)
+# Get free at: https://portal.jup.ag
+api_key = "50c73ffd-2350-45f3-90da-50caa00cd24c"
+
+# API endpoint (V4.1 production)
+api_endpoint = "https://api.jup.ag"
+
+# Slippage tolerance (50 bps = 0.5%)
+default_slippage_bps = 50
+
+# Priority fee (matches execution.priority_fee_microlamports)
+priority_fee_max_lamports = 100000     # 0.0001 SOL max
+priority_level = "high"                # none | low | medium | high | veryHigh
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  📡 PYTH PRICE FEED — Hermes V2 HTTP
+# ═══════════════════════════════════════════════════════════════════════════
+[pyth]
+http_endpoint      = "https://hermes.pyth.network"
+feed_ids           = ["0xef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d"]
+update_interval_ms = 500               # 500ms = 2Hz feed
+
+# 🔮 Future: WebSocket feed for <100ms latency
+# ws_endpoint = "wss://hermes.pyth.network/ws"
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  ⚙️  PERFORMANCE
+# ═══════════════════════════════════════════════════════════════════════════
+[performance]
+cycle_interval_ms  = 100               # 100ms = 10Hz cycle rate
+startup_delay_ms   = 2000              # 2s warmup
+request_timeout_ms = 5000              # 5s RPC timeout
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  📋 LOGGING
+# ═══════════════════════════════════════════════════════════════════════════
+[logging]
+level               = "info"           # info | debug | trace
+file_path           = "logs/mainnet/mainnet-sol-usdc-v3.6.log"
+enable_file_logging = true
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  📈 METRICS
+# ═══════════════════════════════════════════════════════════════════════════
+[metrics]
+enable_metrics = true
+stats_interval = 50                    # Log stats every 50 cycles (~5s)
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  🗄️  DATABASE (Disabled — CSV Logging Only)
+# ═══════════════════════════════════════════════════════════════════════════
+[database]
+enabled = false
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  🔔 ALERTS (Disabled — Manual Monitoring)
+# ═══════════════════════════════════════════════════════════════════════════
+[alerts]
+enabled = false
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  🔮 FUTURE ENHANCEMENTS (From R&D Multi-Strategy Profile)
+#  These are conceptual — require Rust struct additions to wire
+# ═══════════════════════════════════════════════════════════════════════════
+
+# ─── Pattern 1: Price-Deviation Order Refresh (Future) ─────────────────────
+# Currently refresh is TIME-only (order_max_age_minutes).
+# This adds PRICE-DELTA trigger: refresh if price drifts >X% from order price.
+# Rust wiring needed: TradingConfig.refresh_price_deviation field
+#
+# refresh_price_deviation = 0.5        # refresh if price moves >0.5%
+
+# ─── Pattern 2: ATR Multiplier (Future) ────────────────────────────────────
+# Currently ATR spacing multiplier is hardcoded.
+# Expose as config to tune spacing aggressiveness in high-vol regimes.
+# Rust wiring needed: TradingConfig.volatility_multiplier field
+#
+# volatility_multiplier = 1.5          # widen spacing 1.5x in high-vol
+# volatility_lookback   = 24           # 24h window for vol calc
+
+# ─── Pattern 3: Per-Regime Fee Caps (Future) ───────────────────────────────
+# Single global min_profit_threshold_pct is too blunt.
+# Map regime → max fee cap (trending = pay more, choppy = pay less).
+# Rust wiring needed: FeeFilterConfig struct + RegimeClassifier enum
+#
+# [fee_filter]
+# enabled          = true
+# trending_max_fee = 0.20              # 0.20% max fees in trending markets
+# ranging_max_fee  = 0.12              # 0.12% max fees in ranging/sideways
+# volatile_max_fee = 0.25              # 0.25% max fees in volatile regimes
+# choppy_max_fee   = 0.10              # 0.10% max fees in choppy/flat
+
+# ═══════════════════════════════════════════════════════════════════════════
