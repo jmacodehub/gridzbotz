@@ -34,29 +34,27 @@
 // codebase. Remove these one-by-one as the corresponding files are cleaned
 // up in follow-up PRs — never suppress silently.
 //
-// dead_code                  — preserves scaffolding & future-feature
-//                              fields/methods across the codebase:
-//                              MIN_ORDER_SIZE, PrioritizationFee::Auto,
-//                              SwapResponse fee fields, JupiterClient
-//                              rpc/base_mint/quote_mint, total_fees_saved,
-//                              WMAConsensusEngine::calculate_correlation
-// manual_range_contains      — prefer .contains(); 3 sites:
-//                              indicators/atr.rs, shared/atr_dynamic.rs,
-//                              trading/pyth_price_feed.rs
-// field_reassign_with_default — test-helper init style; 7 sites across
-//                              fee_filter.rs, grid_rebalancer.rs,
-//                              shared/fee_filter.rs, paper_trader.rs,
-//                              real_trader.rs
-// if_same_then_else          — identical confidence arms; strategies/momentum.rs
-// doc_lazy_continuation      — list-item indent; trading/trade.rs
-// clone_on_copy              — Pubkey.clone() → deref; trading/real_trader.rs
-// should_implement_trait     — SmartFeeFilter::default() naming; fee_filter.rs
-// derivable_impls            — SpacingMode Default; grid_rebalancer.rs
-// assertions_on_constants    — assert!(true) guard; bots/grid_bot.rs
-// len_zero                   — prices.len() > 0 → !is_empty(); rsi_signal.rs
-// redundant_closure          — || String::new(); strategies/mod.rs
-// needless_return            — bare return; risk/circuit_breaker.rs
+// dead_code                       — preserves scaffolding & future-feature
+//                                   fields/methods across the codebase
+// empty_line_after_doc_comments   — belt-and-suspenders for the doc fix in
+//                                   prelude block; catches any other instances
+// manual_range_contains           — prefer .contains(); 3 sites
+// field_reassign_with_default     — test-helper init style; 7 sites
+// if_same_then_else               — identical confidence arms; momentum.rs
+// doc_lazy_continuation           — list-item indent; trading/trade.rs
+// clone_on_copy                   — Pubkey.clone() → deref; real_trader.rs
+// should_implement_trait          — SmartFeeFilter::default() naming
+// derivable_impls                 — SpacingMode Default; grid_rebalancer.rs
+// assertions_on_constants         — assert!(true) guard; bots/grid_bot.rs
+// len_zero                        — prices.len() > 0 → !is_empty()
+// redundant_closure               — || String::new(); strategies/mod.rs
+// needless_return                 — bare return; risk/circuit_breaker.rs
+// unused_qualifications           — rust_2018_idioms member; fully-qualified
+//                                   paths used defensively in async/trait code
+// single_use_lifetimes            — rust_2018_idioms member; explicit
+//                                   lifetimes used once in async signatures
 #![allow(dead_code)]
+#![allow(clippy::empty_line_after_doc_comments)]
 #![allow(clippy::manual_range_contains)]
 #![allow(clippy::field_reassign_with_default)]
 #![allow(clippy::if_same_then_else)]
@@ -68,6 +66,8 @@
 #![allow(clippy::len_zero)]
 #![allow(clippy::redundant_closure)]
 #![allow(clippy::needless_return)]
+#![allow(unused_qualifications)]
+#![allow(single_use_lifetimes)]
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Standard Library & External Dependencies
@@ -310,11 +310,8 @@ pub fn version_string() -> String {
 ///     let config = Config::from_file("config/master.toml")?;
 ///
 ///     // V5.2: GridBot::new() requires config + injected engine
-///
-///    // PaperTradingEngine::new(initial_usdc, initial_sol)
 ///     // PaperTradingEngine::new(initial_usdc, initial_sol)
 ///     let engine = Arc::new(PaperTradingEngine::new(10_000.0, 5.0));
-///
 ///     let mut bot = GridBot::new(config, engine)?;
 ///     bot.initialize().await?;
 ///
