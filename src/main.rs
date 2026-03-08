@@ -55,7 +55,7 @@
 use solana_grid_bot::init;
 use solana_grid_bot::config::Config;
 use solana_grid_bot::bots::GridBot;
-use solana_grid_bot::trading::{PriceFeed, TradingEngine, EngineParams, create_engine, engine_mode_label};
+use solana_grid_bot::trading::{PriceFeed, EngineParams, create_engine, engine_mode_label};
 
 use std::{error::Error, time::Instant, path::PathBuf, sync::Arc};
 use log::{info, warn, error, debug, trace};
@@ -435,7 +435,7 @@ async fn initialize_components(config: &Config) -> Result<(GridBot, PriceFeed)> 
     let engine = create_engine(config, params).await?;
     info!("✅ TradingEngine constructed via engine factory");
 
-    // ── 3. GridBot with injected engine ──────────────────────────────
+    // ── 3. GridBot with injected engine ──────────────────────────────────
     info!("🤖 Initializing GridBot V5.5 with injected engine...");
     let mut bot = GridBot::new(config.clone(), engine)?;
     bot.initialize().await?;

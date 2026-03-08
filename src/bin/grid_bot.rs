@@ -193,6 +193,7 @@ struct Args {
 //   Requires JupiterClient to accept slippage per call or support Clone.
 // =============================================================================
 
+#[allow(clippy::too_many_arguments)]
 async fn execute_swap(
     jupiter: &JupiterClient,
     keystore: &SecureKeystore,
@@ -287,7 +288,7 @@ async fn main() -> Result<()> {
         sleep(Duration::from_secs(3)).await;
     }
 
-    // ── Keystore ───────────────────────────────────────────────────────────
+    // ── Keystore ───────────────────────────────────────────────────────────────
     let keystore = SecureKeystore::from_file(KeystoreConfig {
         keypair_path: args.keypair.clone(),
         max_transaction_amount_usdc: Some(500.0),
@@ -297,7 +298,7 @@ async fn main() -> Result<()> {
     let user_pubkey = *keystore.pubkey();
     info!("🔐 Wallet: {}", user_pubkey);
 
-    // ── Price Feed ──────────────────────────────────────────────────────────
+    // ── Price Feed ──────────────────────────────────────────────────────────────
     let feed = PriceFeed::new(20);
     feed.start().await.map_err(|e| anyhow::anyhow!("Price feed failed: {}", e))?;
     sleep(Duration::from_millis(1500)).await;
@@ -307,7 +308,7 @@ async fn main() -> Result<()> {
     }
     info!("📡 Pyth feed live: SOL = ${:.4}", initial_price);
 
-    // ── Jupiter ────────────────────────────────────────────────────────────
+    // ── Jupiter ──────────────────────────────────────────────────────────────
     let api_key = args.jup_key
         .or_else(|| std::env::var("JUPITER_API_KEY").ok())
         .context("Jupiter API key required. Set JUPITER_API_KEY env var or pass --jup-key")?;
@@ -330,10 +331,10 @@ async fn main() -> Result<()> {
     info!("🌐 Jupiter client initialized (api.jup.ag)");
     info!("   Swap retry: {} attempts × {}ms", args.max_attempts, args.retry_delay_ms);
 
-    // ── RPC ─────────────────────────────────────────────────────────────
+    // ── RPC ────────────────────────────────────────────────────────────────
     let rpc = RpcClient::new(args.rpc.clone());
 
-    // ── Grid Engine ─────────────────────────────────────────────────────────
+    // ── Grid Engine ─────────────────────────────────────────────────────────────
     let mut grid = GridEngine::new(args.lower, args.upper, args.levels, args.order_size);
     grid.tick(initial_price); // prime — no signal on first tick
     info!("✅ Grid primed at ${:.4}", initial_price);
@@ -342,7 +343,7 @@ async fn main() -> Result<()> {
         info!("💡 BUY orders spend USDC. SELL orders spend SOL. Ensure both are funded.");
     }
 
-    // ── Trading Loop ────────────────────────────────────────────────────
+    // ── Trading Loop ────────────────────────────────────────────────────────
     info!("🚀 Grid loop started — Ctrl+C to stop gracefully");
     println!();
 
@@ -524,7 +525,7 @@ mod tests {
         }
     }
 
-    // ── v1.1 retry config tests ──────────────────────────────────────────
+    // ── v1.1 retry config tests ────────────────────────────────────
 
     #[test]
     fn test_default_max_attempts_is_four() {
