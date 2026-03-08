@@ -1,7 +1,8 @@
 //! ═══════════════════════════════════════════════════════════════════════════
-//! 🏭 ENGINE FACTORY V2.0 — Config-Driven Engine Selection
+//! 🏭 ENGINE FACTORY V2.1 — Config-Driven Engine Selection
 //!
 //! PR #72 — Phase 2: Engine Wiring
+//! PR #77 — Phase 4: FeesConfig Wiring (single source of truth)
 //!
 //! The single entry point for creating a TradingEngine from config.
 //! Reads `bot.execution_mode` and returns the correct engine:
@@ -11,10 +12,16 @@
 //!
 //! V2.0 CHANGES (PR #72):
 //! ✅ EngineParams for runtime context (live_price, wallet_balances)
-//! ✅ Paper mode: fees (2/4 bps) + slippage from config.execution
+//! ✅ Paper mode: fees + slippage from config.execution
 //! ✅ Live mode: KeystoreConfig wiring, $10 capital safety check
 //! ✅ fetch_pyth_price extracted to price_feed_utils module
 //! ✅ Matches all behavior from main.rs initialize_components()
+//!
+//! V2.1 CHANGES (PR #77):
+//! ✅ Paper mode: fees + slippage from [fees] config (single source of truth)
+//! ✅ Removed manual BPS→fraction conversions — uses FeesConfig helpers
+//! ✅ Fixed slippage source: config.fees (expected cost) not config.execution (max allowed)
+//! ✅ Dynamic log lines — no more hardcoded "2/4bps"
 //!
 //! Usage:
 //! ```ignore
@@ -31,7 +38,7 @@
 //! let engine = create_engine(&config, params).await?;
 //! ```
 //!
-//! March 2026 — V2.0 LFG 🚀
+//! March 2026 — V2.1 LFG 🚀
 //! ═══════════════════════════════════════════════════════════════════════════
 
 use std::sync::Arc;
@@ -80,8 +87,7 @@ pub struct EngineParams {
 ///
 /// # Paper Mode (`execution_mode = "paper"`)
 /// - Reads initial balances from `config.paper_trading`
-/// - Applies fees: maker=2bps, taker=4bps
-/// - Applies slippage from `config.execution.max_slippage_bps`
+/// - Applies fees + slippage from `config.fees` (single source of truth)
 /// - No network calls required
 ///
 /// # Live Mode (`execution_mode = "live"`)
@@ -102,7 +108,7 @@ pub async fn create_engine(
     let mode = config.bot.execution_mode.as_str();
 
     info!(
-        "[{}] 🏭 Engine Factory V2: creating engine for mode='{}'",
+        "[{}] 🏭 Engine Factory V2.1: creating engine for mode='{}'",
         instance, mode
     );
 
@@ -110,11 +116,13 @@ pub async fn create_engine(
         "paper" => {
             let engine = from_config_paper(config)?;
             info!(
-                "[{}] ✅ PaperTradingEngine ready (${:.0} USDC + {:.1} SOL, fees=2/4bps, slippage={}bps)",
+                "[{}] ✅ PaperTradingEngine ready (${:.0} USDC + {:.1} SOL, fees={:.0}/{:.0}bps, slippage={:.0}bps)",
                 instance,
                 config.paper_trading.initial_usdc,
                 config.paper_trading.initial_sol,
-                config.execution.max_slippage_bps
+                config.fees.maker_fee_bps,
+                config.fees.taker_fee_bps,
+                config.fees.slippage_bps
             );
             Ok(Arc::new(engine))
         }
@@ -150,12 +158,14 @@ pub fn engine_mode_label(config: &Config) -> &'static str {
 // INTERNAL CONSTRUCTORS
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Paper mode: balances from config + fees + slippage.
+/// Paper mode: balances from config + fees from FeesConfig.
 ///
-/// Matches the exact behavior from main.rs V5.4:
-/// - maker_fee = 2 bps (0.02%)
-/// - taker_fee = 4 bps (0.04%)
-/// - slippage  = config.execution.max_slippage_bps
+/// All fee parameters sourced from `config.fees` (FeesConfig):
+/// - maker_fee → config.fees.maker_fee_fraction()
+/// - taker_fee → config.fees.taker_fee_fraction()
+/// - slippage  → config.fees.slippage_fraction()
+///
+/// Zero hardcoded values — single source of truth.
 fn from_config_paper(config: &Config) -> Result<PaperTradingEngine> {
     let usdc = config.paper_trading.initial_usdc;
     let sol = config.paper_trading.initial_sol;
@@ -169,23 +179,16 @@ fn from_config_paper(config: &Config) -> Result<PaperTradingEngine> {
         );
     }
 
-    // Fee schedule: matches main.rs V5.4 hardcoded values
-    let maker_fee_bps = config.fees.maker_fee_bps;
-    let taker_fee_bps = config.fees.taker_fee_bps;
-    let slippage_bps = config.execution.max_slippage_bps as f64;
-
-    let maker_fee = maker_fee_bps / 10_000.0;
-    let taker_fee = taker_fee_bps / 10_000.0;
-    let slippage = slippage_bps / 10_000.0;
-
     info!(
-        "   Capital: ${:.2} USDC + {:.4} SOL | Fees: maker {:.4}%, taker {:.4}% | Slippage: {:.4}%",
-        usdc, sol, maker_fee * 100.0, taker_fee * 100.0, slippage * 100.0
+        "   Capital: ${:.2} USDC + {:.4} SOL | Fees: maker {:.2}%, taker {:.2}% | Slippage: {:.2}%",
+        usdc, sol,
+        config.fees.maker_fee_percent(),
+        config.fees.taker_fee_percent(),
+        config.fees.slippage_percent()
     );
 
     let engine = PaperTradingEngine::new(usdc, sol)
-        .with_fees(maker_fee, taker_fee)
-        .with_slippage(slippage);
+        .with_fees_config(&config.fees);
 
     Ok(engine)
 }
