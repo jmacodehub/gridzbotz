@@ -21,7 +21,6 @@
 #  Next step: 24h paper backtest → compare fills vs mainnet-sol-usdc-v1 baseline
 # ═══════════════════════════════════════════════════════════════════════════
 
-test_name = "R&D: Scalper Profile"
 
 [bot]
 name           = "Scalper-RD-v1"

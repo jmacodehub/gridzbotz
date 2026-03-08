@@ -19,7 +19,6 @@
 #    - Max drawdown: <5%
 # ═══════════════════════════════════════════════════════════════════════════
 
-test_name = "Mainnet SOL/USDC Grid Trading V1.0"
 
 [bot]
 name            = "GridzBot-Mainnet-Titan"
