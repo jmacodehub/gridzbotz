@@ -336,6 +336,7 @@ mod tests {
                 max_consecutive_losses: 5,
             },
             fees: FeesConfig::default(),
+            priority_fees: PriorityFeeConfig::default(),
             pyth: PythConfig::default(),
             performance: PerformanceConfig::default(),
             logging: LoggingConfig::default(),

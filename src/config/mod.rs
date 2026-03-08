@@ -57,6 +57,8 @@ use log::{info, warn};
 pub mod secrets;
 pub mod fees;
 pub use fees::FeesConfig;
+pub mod priority_fees;
+pub use priority_fees::PriorityFeeConfig;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // MAIN CONFIGURATION - The Heart of GridzBotz
@@ -91,6 +93,10 @@ pub struct Config {
     /// Fees configuration (trading fees, priority fees, Jito tips)
     #[serde(default)]
     pub fees: FeesConfig,
+
+    /// Dynamic priority fee configuration
+    #[serde(default)]
+    pub priority_fees: PriorityFeeConfig,
 
     /// Live execution settings (Jupiter, priority fees, slippage)
     /// Active when bot.execution_mode = "live"
@@ -1668,6 +1674,10 @@ impl Config {
             .map_err(|e| anyhow::anyhow!(e))
             .context("Fees config validation failed")?;
 
+          // Priority fees validation
+        self.priority_fees.validate()
+            .context("Priority fees config validation failed")?;
+
         // Execution validation — only required when mode = "live"
         if self.bot.is_live() {
             info!("🔴 LIVE MODE DETECTED — validating execution config");
@@ -1795,6 +1805,15 @@ impl Config {
         if self.risk.enable_circuit_breaker {
             println!("   Max Consec Loss:  {} trades", self.risk.max_consecutive_losses);
         }
+                if self.priority_fees.enable_dynamic {
+            println!("   Priority Fees:    ⚡ dynamic (P{}, {:.1}x, {}-{} µL)",
+                self.priority_fees.percentile,
+                self.priority_fees.multiplier,
+                self.priority_fees.min_microlamports,
+                self.priority_fees.max_microlamports);
+        } else {
+            println!("   Priority Fees:    static");
+        }
 
         println!("\n{}\n", border);
     }
@@ -1872,6 +1891,7 @@ impl ConfigBuilder {
                     max_consecutive_losses: default_max_consecutive_losses(),
                 },
                 fees: FeesConfig::default(),
+                priority_fees: PriorityFeeConfig::default(),
                 execution: ExecutionConfig::default(),
                 pyth: PythConfig::default(),
                 performance: PerformanceConfig::default(),
