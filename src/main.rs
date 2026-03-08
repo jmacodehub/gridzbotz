@@ -1,5 +1,12 @@
 //! ═══════════════════════════════════════════════════════════════════════════
-//! 🚀 PROJECT FLASH V5.4 – Production Grid Trading Bot
+//! 🚀 PROJECT FLASH V5.5 – Production Grid Trading Bot
+//!
+//! V5.5 CHANGES (PR #73 — Engine Factory Wiring):
+//! ✅ 60-line match block in initialize_components() → 15-line create_engine() call
+//! ✅ All engine construction logic now lives in src/trading/engine.rs
+//! ✅ main.rs only passes EngineParams (wallet balances for live, defaults for paper)
+//! ✅ PaperTradingEngine no longer imported directly — factory handles everything
+//! ✅ Zero behavior change — factory produces identical engines
 //!
 //! V5.4 CHANGES (PR #51 - Live Mode Real Balances):
 //! ✅ fetch_wallet_balances(): queries on-chain SOL + USDC at live startup
@@ -42,13 +49,13 @@
 //! ✅ Vol display: {:>5.2}% → {:>8.4}% — 4 decimal places
 //! ✅ volatility() in price_feed.rs now returns true % (×100)
 //!
-//! March 2026 — V5.4 Live Mode Real Balances 🔥
+//! March 2026 — V5.5 Engine Factory Wiring 🏭
 //! ═══════════════════════════════════════════════════════════════════════════
 
 use solana_grid_bot::init;
 use solana_grid_bot::config::Config;
 use solana_grid_bot::bots::GridBot;
-use solana_grid_bot::trading::{PriceFeed, PaperTradingEngine, TradingEngine};
+use solana_grid_bot::trading::{PriceFeed, TradingEngine, EngineParams, create_engine, engine_mode_label};
 
 use std::{error::Error, time::Instant, path::PathBuf, sync::Arc};
 use log::{info, warn, error, debug, trace};
@@ -62,7 +69,7 @@ use clap::Parser;
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[derive(Parser, Debug)]
-#[clap(name = "gridzbotz", version = "5.4.0")]
+#[clap(name = "gridzbotz", version = "5.5.0")]
 #[clap(about = "Production-grade Solana grid trading bot", long_about = None)]
 struct Args {
     /// Configuration file path
@@ -233,8 +240,8 @@ fn print_banner(config: &Config) {
     };
 
     println!("\n{}", border);
-    println!("     🚀 GRIDZBOTZ V5.4 — PRODUCTION GRID TRADING BOT");
-    println!("     ⚡ Hybrid Feeds • 10Hz Cycles • Real Execution Wired");
+    println!("     🚀 GRIDZBOTZ V5.5 — PRODUCTION GRID TRADING BOT");
+    println!("     ⚡ Hybrid Feeds • 10Hz Cycles • Engine Factory Wired");
     println!("{}", border);
     println!("\n   Mode:        {}", mode_label);
     println!("   Instance:    {} | v{} | {}",
@@ -375,9 +382,9 @@ async fn fetch_wallet_balances(rpc_url: &str, wallet_path: &str) -> Result<(f64,
 // COMPONENT INITIALIZATION (Modular & Robust)
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// V5.4: Engine builder creates Paper or Real engine based on config.bot.execution_mode.
-/// Live mode queries real on-chain balances via fetch_wallet_balances().
-/// Paper mode uses paper_trading.initial_usdc / initial_sol from config.
+/// V5.5: Engine factory replaces the 60-line match block.
+/// create_engine() in src/trading/engine.rs handles all Paper/Real construction.
+/// main.rs only prepares EngineParams (wallet balances for live, defaults for paper).
 async fn initialize_components(config: &Config) -> Result<(GridBot, PriceFeed)> {
     info!("🔧 Initializing core components...");
 
@@ -405,102 +412,31 @@ async fn initialize_components(config: &Config) -> Result<(GridBot, PriceFeed)> 
     let mode = feed.get_mode().await;
     info!("💰 Initial SOL/USD: ${:.4}  (feed mode: {:?})", initial_price, mode);
 
-    // ── 2. Engine Builder — Paper or Real based on execution_mode ────────────
-    info!("🛠️  Building TradingEngine for mode: {}", config.bot.execution_mode);
-    let engine: Arc<dyn TradingEngine + Send + Sync> = match config.bot.execution_mode.as_str() {
-        "paper" => {
-            info!("🟡 Constructing PaperTradingEngine...");
-            let initial_usdc = config.paper_trading.initial_usdc;
-            let initial_sol  = config.paper_trading.initial_sol;
-            if initial_usdc <= 0.0 || initial_sol <= 0.0 {
-                anyhow::bail!(
-                    "Invalid paper capital: USDC={}, SOL={}",
-                    initial_usdc, initial_sol
-                );
-            }
+    // ── 2. Engine Factory — create_engine() handles all Paper/Real wiring ──
+    info!("🛠️  Building TradingEngine via factory: {}", engine_mode_label(config));
 
-            let maker_fee_bps = 2.0;
-            let taker_fee_bps = 4.0;
-            let slippage_bps  = config.execution.max_slippage_bps;
-
-            let maker_fee = maker_fee_bps as f64 / 10_000.0;
-            let taker_fee = taker_fee_bps as f64 / 10_000.0;
-            let slippage  = slippage_bps as f64 / 10_000.0;
-
-            info!("   Capital:  ${:.2} USDC + {:.4} SOL", initial_usdc, initial_sol);
-            info!("   Fees:     maker {:.4}%, taker {:.4}%", maker_fee * 100.0, taker_fee * 100.0);
-            info!("   Slippage: {:.4}%", slippage * 100.0);
-
-            let paper_engine = PaperTradingEngine::new(initial_usdc, initial_sol)
-                .with_fees(maker_fee, taker_fee)
-                .with_slippage(slippage);
-
-            Arc::new(paper_engine)
+    let params = if config.bot.is_live() {
+        // Live mode: query real on-chain balances — never use paper_trading config
+        let (usdc, sol) = fetch_wallet_balances(
+            &config.network.rpc_url,
+            &config.security.wallet_path,
+        ).await.context(
+            "Failed to query on-chain wallet balances — check RPC connectivity and keypair path"
+        )?;
+        EngineParams {
+            live_price: Some(initial_price),
+            wallet_balances: Some((usdc, sol)),
         }
-        "live" => {
-            info!("🔴 Constructing RealTradingEngine...");
-            warn!("⚠️  LIVE MODE ACTIVE — Real money at risk!");
-
-            // ── V5.4: Fetch real on-chain balances — never use paper_trading config ──
-            let (initial_usdc, initial_sol) = fetch_wallet_balances(
-                &config.network.rpc_url,
-                &config.security.wallet_path,
-            ).await.context(
-                "Failed to query on-chain wallet balances — check RPC connectivity and keypair path"
-            )?;
-
-            let capital_usd = initial_usdc + (initial_sol * initial_price);
-
-            if capital_usd < 10.0 {
-                anyhow::bail!(
-                    "Live mode requires minimum $10 capital.\n\
-                     On-chain: ${:.2} (USDC: ${:.2} + SOL: {:.4} @ ${:.4})\n\
-                     Fund your wallet before starting live trading.",
-                    capital_usd, initial_usdc, initial_sol, initial_price
-                );
-            }
-
-            info!("   On-chain capital: ${:.2} USD (USDC: ${:.2} + SOL: {:.4} @ ${:.4})",
-                  capital_usd, initial_usdc, initial_sol, initial_price);
-
-            // ── Build RealTradingEngine ────────────────────────────────────────
-            use solana_grid_bot::trading::real_trader::{RealTradingEngine, RealTradingConfig};
-            use solana_grid_bot::security::keystore::KeystoreConfig;
-
-            let mut real_config = RealTradingConfig::from_execution_config(&config.execution);
-            real_config.keystore = KeystoreConfig {
-                keypair_path: config.security.wallet_path.clone(),
-                max_transaction_amount_usdc: Some(config.execution.max_trade_size_usdc),
-                max_daily_trades: None,
-                max_daily_volume_usdc: None,
-            };
-
-            info!("   Slippage: {:.4}%", real_config.slippage_bps.unwrap_or(50) as f64 / 100.0);
-            info!("   Keypair:  {}", config.security.wallet_path);
-
-            let real_engine = RealTradingEngine::new(
-                real_config,
-                config,
-                initial_usdc,
-                initial_sol,
-                initial_price,
-            ).await
-                .context("Failed to construct RealTradingEngine")?;
-
-            info!("✅ RealTradingEngine initialized — Jupiter swaps active");
-            Arc::new(real_engine)
-        }
-        unknown => {
-            anyhow::bail!(
-                "Unknown execution_mode '{}'. Expected 'paper' or 'live'",
-                unknown
-            );
-        }
+    } else {
+        // Paper mode: factory reads paper_trading.initial_usdc/sol from config
+        EngineParams::default()
     };
-    info!("✅ TradingEngine constructed and ready for injection");
+
+    let engine = create_engine(config, params).await?;
+    info!("✅ TradingEngine constructed via engine factory");
 
     // ── 3. GridBot with injected engine ──────────────────────────────
-    info!("🤖 Initializing GridBot V5.4 with injected engine...");
+    info!("🤖 Initializing GridBot V5.5 with injected engine...");
     let mut bot = GridBot::new(config.clone(), engine)?;
     bot.initialize().await?;
     info!("✅ GridBot built (grid placement deferred until price known)");
@@ -542,7 +478,7 @@ async fn run_trading_loop(
     let stats_interval       = config.metrics.stats_interval as u32;
     let slow_cycle_threshold = cycle_interval * 3;
 
-    info!("🔥 STARTING TRADING LOOP — V5.4 REAL EXECUTION WIRED");
+    info!("🔥 STARTING TRADING LOOP — V5.5 ENGINE FACTORY WIRED");
     if config.bot.is_live() {
         info!("   Total Cycles:     ∞ (live mode — Ctrl+C to stop)");
     } else {
@@ -696,7 +632,7 @@ fn setup_logging(args: &Args) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// MAIN ENTRY POINT — V5.4 🚀
+// MAIN ENTRY POINT — V5.5 🏭
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[tokio::main]
