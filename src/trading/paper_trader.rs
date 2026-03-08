@@ -1,7 +1,8 @@
 //! ═══════════════════════════════════════════════════════════════════════════
-//! PAPER TRADING ENGINE V3.2 - Risk-Free Strategy Testing
+//! PAPER TRADING ENGINE V3.3 - Risk-Free Strategy Testing
 //! Production-Ready | Enhanced | Optimized | Modular
 //! October 16, 2025 — V3.2 February 2026 (fill accumulator + drain_fills)
+//! V3.3 March 2026 — FeesConfig wiring (single source of truth)
 //! ═══════════════════════════════════════════════════════════════════════════
 //!
 //! Features:
@@ -16,6 +17,7 @@
 //! ✅ Builder pattern for configuration
 //! ✅ V3.1: impl TradingEngine — satisfies Arc<dyn TradingEngine>
 //! ✅ V3.2: drain_fills() — FillEvent accumulator for strategy fan-out
+//! ✅ V3.3: with_fees_config() — FeesConfig as single source of truth
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
@@ -26,15 +28,13 @@ use async_trait::async_trait;
 use log::{info, debug, warn};
 
 use super::{TradingEngine, TradingResult, FillEvent};
+use crate::config::fees::FeesConfig;
 
 
 // ═══════════════════════════════════════════════════════════════════════════
 // CONSTANTS
 // ═══════════════════════════════════════════════════════════════════════════
 
-const DEFAULT_MAKER_FEE: f64 = 0.0002;
-const DEFAULT_TAKER_FEE: f64 = 0.0004;
-const DEFAULT_SLIPPAGE: f64 = 0.0005;
 const MAX_TRADE_HISTORY: usize = 10000;
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -193,15 +193,20 @@ pub struct PaperTradingEngine {
 }
 
 impl PaperTradingEngine {
+    /// Create a new Paper Trading Engine with default fees from FeesConfig.
+    ///
+    /// Defaults sourced from `FeesConfig::default()` — single source of truth.
+    /// Override with `.with_fees_config()` or `.with_fees()` + `.with_slippage()`.
     pub fn new(initial_usdc: f64, initial_sol: f64) -> Self {
-        info!("[PAPER] Initializing Paper Trading Engine V3.2");
+        let defaults = FeesConfig::default();
+        info!("[PAPER] Initializing Paper Trading Engine V3.3");
         Self {
             wallet: Arc::new(RwLock::new(VirtualWallet::new(initial_usdc, initial_sol))),
             open_orders: Arc::new(RwLock::new(HashMap::new())),
             trade_history: Arc::new(RwLock::new(VecDeque::new())),
-            maker_fee: DEFAULT_MAKER_FEE,
-            taker_fee: DEFAULT_TAKER_FEE,
-            slippage: DEFAULT_SLIPPAGE,
+            maker_fee: defaults.maker_fee_fraction(),
+            taker_fee: defaults.taker_fee_fraction(),
+            slippage: defaults.slippage_fraction(),
             next_order_id: Arc::new(RwLock::new(1)),
             pending_fills: Arc::new(RwLock::new(Vec::new())),
         }
@@ -219,6 +224,13 @@ impl PaperTradingEngine {
         self.slippage = slippage;
         info!("[SLIP] Custom slippage: {:.4}%", slippage * 100.0);
         self
+    }
+
+    /// Configure fees and slippage from centralized FeesConfig.
+    /// Single source of truth — replaces `.with_fees()` + `.with_slippage()`.
+    pub fn with_fees_config(self, fees: &FeesConfig) -> Self {
+        self.with_fees(fees.maker_fee_fraction(), fees.taker_fee_fraction())
+            .with_slippage(fees.slippage_fraction())
     }
 
     pub async fn place_limit_order(
@@ -537,10 +549,8 @@ impl TradingEngine for PaperTradingEngine {
     }
 
     async fn get_performance_stats(&self) -> PerformanceStats {
-
         self.get_performance_stats().await
     }
-
 }
 
 
@@ -614,5 +624,29 @@ mod tests {
         engine.place_limit_order(OrderSide::Buy, 100.0, 1.0).await.unwrap();
         engine.process_price_update(105.0).await.unwrap();
         assert!(engine.drain_fills().await.is_empty());
+    }
+
+    #[test]
+    fn test_default_fees_from_fees_config() {
+        let engine = PaperTradingEngine::new(1000.0, 1.0);
+        let defaults = FeesConfig::default();
+        assert!((engine.maker_fee - defaults.maker_fee_fraction()).abs() < f64::EPSILON);
+        assert!((engine.taker_fee - defaults.taker_fee_fraction()).abs() < f64::EPSILON);
+        assert!((engine.slippage - defaults.slippage_fraction()).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_with_fees_config_overrides() {
+        let custom = FeesConfig {
+            maker_fee_bps: 5.0,
+            taker_fee_bps: 10.0,
+            slippage_bps: 8.0,
+            ..FeesConfig::default()
+        };
+        let engine = PaperTradingEngine::new(1000.0, 1.0)
+            .with_fees_config(&custom);
+        assert!((engine.maker_fee - 0.0005).abs() < f64::EPSILON);
+        assert!((engine.taker_fee - 0.001).abs() < f64::EPSILON);
+        assert!((engine.slippage - 0.0008).abs() < f64::EPSILON);
     }
 }
