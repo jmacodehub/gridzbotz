@@ -78,6 +78,7 @@ pub mod enhanced_metrics;    // 📊 V4.1: Enhanced analytics tracking
 pub mod adaptive_optimizer;  // 🧠 V4.2: Self-learning optimizer
 pub mod engine;              // 🏭 V5.4: Config-driven engine factory
 pub mod price_feed_utils;    // 📡 V5.4: Pyth HTTP price fetching with retry (PR #72)
+pub mod priority_fee_estimator; // ⚡ Dynamic priority fee estimation (EXEC-4)
 
 // WebSocket feeds (optional feature)
 #[cfg(feature = "websockets")]
@@ -178,6 +179,12 @@ pub use executor::{
 };
 
 pub use trade::Trade;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Priority Fee Estimator Exports (⚡ EXEC-4)
+// ═══════════════════════════════════════════════════════════════════════════
+
+pub use priority_fee_estimator::{PriorityFeeEstimator, FeeDataSource, MockFeeSource};
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Price Feed Exports
@@ -528,7 +535,10 @@ pub mod prelude {
         // Adaptive Optimizer
         AdaptiveOptimizer,
         OptimizationResult,
-    };
+
+        // Priority Fee Estimator (⚡ EXEC-4)
+        PriorityFeeEstimator,
+        FeeDataSource, };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -686,7 +696,7 @@ mod tests {
         let _: Option<AdaptiveOptimizer> = None;
         let _: Option<JupiterClient>     = None;
         let _: Option<FillEvent>         = None;
-        
+
         // V5.3.1: Verify token mint constants are accessible
         let _sol_mint: &str = SOL_MINT;
         let _wsol_mint: &str = WSOL_MINT;
