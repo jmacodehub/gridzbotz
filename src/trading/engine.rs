@@ -6,27 +6,27 @@
 //! The single entry point for creating a TradingEngine from config.
 //! Reads `bot.execution_mode` and returns the correct engine:
 //!
-//!   "paper" → PaperTradingEngine  (instant, no network, with fees + slippage)
-//!   "live"  → RealTradingEngine   (wallet balances, keystore, capital check)
+//!   "paper" → PaperTradingEngine  (instant, no network, with fees/slippage)
+//!   "live"  → RealTradingEngine   (on-chain balances, Pyth price, keystore)
 //!
 //! V2.0 CHANGES (PR #72):
-//! ✅ EngineParams struct — runtime context (live price, wallet balances)
+//! ✅ EngineParams for runtime context (live_price, wallet_balances)
 //! ✅ Paper mode: fees (2/4 bps) + slippage from config.execution
-//! ✅ Live mode: wallet_balances from params, keystore wiring, $10 minimum
+//! ✅ Live mode: KeystoreConfig wiring, $10 capital safety check
 //! ✅ fetch_pyth_price extracted to price_feed_utils module
-//! ✅ Matches main.rs V5.4 behavior exactly — convergence, not change
+//! ✅ Matches all behavior from main.rs initialize_components()
 //!
-//! Usage (in main.rs or any orchestrator):
+//! Usage:
 //! ```ignore
 //! use crate::trading::engine::{create_engine, EngineParams};
 //!
-//! // Paper mode — no runtime context needed
+//! // Paper mode (no runtime context needed):
 //! let engine = create_engine(&config, EngineParams::default()).await?;
 //!
-//! // Live mode — provide wallet balances + price from running feed
+//! // Live mode (with pre-fetched price and wallet balances):
 //! let params = EngineParams {
-//!     live_price: Some(initial_price),
-//!     wallet_balances: Some((usdc, sol)),
+//!     live_price: Some(147.35),
+//!     wallet_balances: Some((500.0, 3.5)),
 //! };
 //! let engine = create_engine(&config, params).await?;
 //! ```
@@ -54,16 +54,16 @@ use super::price_feed_utils::fetch_pyth_price;
 
 /// Runtime parameters for engine creation.
 ///
-/// Provides context that only the caller (main.rs) knows at startup:
-/// - Live price from the already-running price feed
-/// - On-chain wallet balances from RPC query
+/// Provides context that only the caller knows (live SOL price from
+/// an already-running feed, on-chain wallet balances).
 ///
-/// Paper mode: use `EngineParams::default()` — everything from config.
-/// Live mode: populate `live_price` and `wallet_balances` for production.
-#[derive(Default)]
+/// - **Paper mode**: Use `EngineParams::default()` — everything comes from config.
+/// - **Live mode**: Provide `live_price` and `wallet_balances` for production.
+///   If omitted, the factory will attempt to fetch/fallback automatically.
+#[derive(Debug, Clone, Default)]
 pub struct EngineParams {
     /// Pre-fetched SOL price from running price feed.
-    /// If None in live mode, factory will fetch from Pyth HTTP.
+    /// If None in live mode, factory fetches from Pyth HTTP.
     pub live_price: Option<f64>,
 
     /// On-chain wallet balances: (usdc, sol).
@@ -79,22 +79,21 @@ pub struct EngineParams {
 /// wrapped in `Arc<dyn TradingEngine>` for thread-safe sharing.
 ///
 /// # Paper Mode (`execution_mode = "paper"`)
-/// - Reads capital from `config.paper_trading`
+/// - Reads initial balances from `config.paper_trading`
 /// - Applies fees: maker=2bps, taker=4bps
 /// - Applies slippage from `config.execution.max_slippage_bps`
-/// - No network calls, safe on any cluster
+/// - No network calls required
 ///
 /// # Live Mode (`execution_mode = "live"`)
-/// - Uses `params.wallet_balances` for real on-chain funds
-/// - Uses `params.live_price` or falls back to Pyth HTTP fetch
-/// - Wires `KeystoreConfig` with keypair path from security config
-/// - Validates minimum capital ($10)
+/// - Uses `params.wallet_balances` for real on-chain capital
+/// - Uses `params.live_price` or fetches from Pyth HTTP
+/// - Validates capital ≥ $10
+/// - Wires KeystoreConfig with wallet path and trade limits
 ///
 /// # Errors
 /// - Invalid `execution_mode` (not "paper" or "live")
-/// - Paper: both initial_usdc and initial_sol are zero/negative
-/// - Live: insufficient capital (<$10)
-/// - Live: Pyth unreachable (when no live_price provided)
+/// - Paper: both USDC and SOL are ≤ 0
+/// - Live: capital below $10, Pyth unreachable, wallet config invalid
 pub async fn create_engine(
     config: &Config,
     params: EngineParams,
@@ -103,7 +102,7 @@ pub async fn create_engine(
     let mode = config.bot.execution_mode.as_str();
 
     info!(
-        "[{}] 🏭 Engine Factory V2.0: mode='{}'",
+        "[{}] 🏭 Engine Factory V2: creating engine for mode='{}'",
         instance, mode
     );
 
@@ -111,10 +110,11 @@ pub async fn create_engine(
         "paper" => {
             let engine = from_config_paper(config)?;
             info!(
-                "[{}] ✅ PaperTradingEngine ready (${:.0} USDC + {:.1} SOL, fees=2/4bps)",
+                "[{}] ✅ PaperTradingEngine ready (${:.0} USDC + {:.1} SOL, fees=2/4bps, slippage={}bps)",
                 instance,
                 config.paper_trading.initial_usdc,
-                config.paper_trading.initial_sol
+                config.paper_trading.initial_sol,
+                config.execution.max_slippage_bps
             );
             Ok(Arc::new(engine))
         }
@@ -138,8 +138,6 @@ pub async fn create_engine(
 }
 
 /// Returns a human-readable label for the current engine mode.
-///
-/// Useful for log prefixes, metrics labels, and status displays.
 pub fn engine_mode_label(config: &Config) -> &'static str {
     if config.bot.is_live() {
         "🔴 LIVE"
@@ -152,81 +150,81 @@ pub fn engine_mode_label(config: &Config) -> &'static str {
 // INTERNAL CONSTRUCTORS
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Construct a PaperTradingEngine from config.
+/// Paper mode: balances from config + fees + slippage.
 ///
-/// V2.0: Now applies fees and slippage to match main.rs V5.4 behavior.
-/// - Maker fee: 2 BPS (0.02%)
-/// - Taker fee: 4 BPS (0.04%)
-/// - Slippage: from config.execution.max_slippage_bps
+/// Matches the exact behavior from main.rs V5.4:
+/// - maker_fee = 2 bps (0.02%)
+/// - taker_fee = 4 bps (0.04%)
+/// - slippage  = config.execution.max_slippage_bps
 fn from_config_paper(config: &Config) -> Result<PaperTradingEngine> {
     let usdc = config.paper_trading.initial_usdc;
     let sol = config.paper_trading.initial_sol;
 
-    // Match main.rs V5.4: both must be positive
     if usdc <= 0.0 || sol <= 0.0 {
         bail!(
-            "Paper trading requires positive initial capital for both currencies. \
+            "Paper trading requires positive initial capital for both tokens. \
              Got: initial_usdc={}, initial_sol={}. \
              Check [paper_trading] in your TOML config.",
             usdc, sol
         );
     }
 
-    // Fees: 2 BPS maker, 4 BPS taker (matching main.rs V5.4)
-    let maker_fee = 2.0_f64 / 10_000.0;
-    let taker_fee = 4.0_f64 / 10_000.0;
-    let slippage = config.execution.max_slippage_bps as f64 / 10_000.0;
+    // Fee schedule: matches main.rs V5.4 hardcoded values
+    let maker_fee_bps = 2.0_f64;
+    let taker_fee_bps = 4.0_f64;
+    let slippage_bps = config.execution.max_slippage_bps as f64;
+
+    let maker_fee = maker_fee_bps / 10_000.0;
+    let taker_fee = taker_fee_bps / 10_000.0;
+    let slippage = slippage_bps / 10_000.0;
 
     info!(
-        "   Paper config: ${:.2} USDC + {:.4} SOL | fees {:.4}%/{:.4}% | slippage {:.4}%",
-        usdc, sol,
-        maker_fee * 100.0, taker_fee * 100.0,
-        slippage * 100.0
+        "   Capital: ${:.2} USDC + {:.4} SOL | Fees: maker {:.4}%, taker {:.4}% | Slippage: {:.4}%",
+        usdc, sol, maker_fee * 100.0, taker_fee * 100.0, slippage * 100.0
     );
 
-    Ok(
-        PaperTradingEngine::new(usdc, sol)
-            .with_fees(maker_fee, taker_fee)
-            .with_slippage(slippage)
-    )
+    let engine = PaperTradingEngine::new(usdc, sol)
+        .with_fees(maker_fee, taker_fee)
+        .with_slippage(slippage);
+
+    Ok(engine)
 }
 
-/// Construct a RealTradingEngine from config + runtime params.
+/// Live mode: on-chain balances + Pyth price + keystore + capital check.
 ///
-/// V2.0 Steps:
-/// 1. Resolve wallet balances (from params or config fallback)
-/// 2. Resolve live SOL price (from params or Pyth fetch)
-/// 3. Capital safety check ($10 minimum)
-/// 4. Build RealTradingConfig with KeystoreConfig
-/// 5. Construct engine
+/// Uses EngineParams for runtime context:
+/// - wallet_balances: from fetch_wallet_balances() in main.rs
+/// - live_price: from running PriceFeed
+///
+/// Falls back gracefully if params are not provided (testing, CLI tools).
 async fn from_config_live(config: &Config, params: &EngineParams) -> Result<RealTradingEngine> {
     let instance = config.bot.instance_name();
 
-    // Step 1: Resolve wallet balances
+    // ── Step 1: Resolve wallet balances ──────────────────────────────────────
     let (initial_usdc, initial_sol) = match params.wallet_balances {
         Some((usdc, sol)) => {
-            info!("[{}] 💰 Using provided wallet balances: ${:.2} USDC + {:.4} SOL",
+            info!("[{}] 💰 Using pre-fetched on-chain balances: ${:.2} USDC + {:.4} SOL",
                   instance, usdc, sol);
             (usdc, sol)
         }
         None => {
             warn!(
-                "[{}] ⚠️  No wallet_balances in EngineParams — falling back to paper_trading config. \
-                 In production, pass real on-chain balances via EngineParams.",
+                "[{}] ⚠️  No wallet balances provided — falling back to paper_trading config. \
+                 For production, pass wallet_balances via EngineParams.",
                 instance
             );
             (config.paper_trading.initial_usdc, config.paper_trading.initial_sol)
         }
     };
 
-    // Step 2: Resolve live SOL price
+    // ── Step 2: Resolve live SOL price ───────────────────────────────────────
     let sol_price = match params.live_price {
-        Some(price) => {
-            info!("[{}] 📈 Using provided live price: ${:.4}", instance, price);
+        Some(price) if price > 0.0 => {
+            info!("[{}] 📡 Using pre-fetched SOL price: ${:.4}", instance, price);
             price
         }
-        None => {
-            info!("[{}] 📡 No live_price in params — fetching from Pyth...", instance);
+        _ => {
+            info!("[{}] 📡 No live price provided — fetching from Pyth...", instance);
             let feed_id = config.pyth.feed_ids.first()
                 .context("No Pyth feed IDs configured. Add at least one to [pyth] feed_ids.")?;
             fetch_pyth_price(&config.pyth.http_endpoint, feed_id).await
@@ -238,20 +236,21 @@ async fn from_config_live(config: &Config, params: &EngineParams) -> Result<Real
         }
     };
 
-    // Step 3: Capital safety check
+    info!("[{}] 💰 SOL price: ${:.4}", instance, sol_price);
+
+    // ── Step 3: Capital safety check ($10 minimum) ──────────────────────────
     let capital_usd = initial_usdc + (initial_sol * sol_price);
     if capital_usd < 10.0 {
         bail!(
             "[{}] Live mode requires minimum $10 capital.\n\
-             Current: ${:.2} (USDC: ${:.2} + SOL: {:.4} @ ${:.4})\n\
+             On-chain: ${:.2} (USDC: ${:.2} + SOL: {:.4} @ ${:.4})\n\
              Fund your wallet before starting live trading.",
             instance, capital_usd, initial_usdc, initial_sol, sol_price
         );
     }
-    info!("[{}] 💰 Capital: ${:.2} (USDC: ${:.2} + SOL: {:.4} @ ${:.4})",
-          instance, capital_usd, initial_usdc, initial_sol, sol_price);
+    info!("[{}] 💵 Total capital: ${:.2} USD", instance, capital_usd);
 
-    // Step 4: Build RealTradingConfig with KeystoreConfig
+    // ── Step 4: Build RealTradingConfig + KeystoreConfig ─────────────────────
     let mut real_config = RealTradingConfig::from_execution_config(&config.execution);
     real_config.keystore = KeystoreConfig {
         keypair_path: config.security.wallet_path.clone(),
@@ -260,19 +259,19 @@ async fn from_config_live(config: &Config, params: &EngineParams) -> Result<Real
         max_daily_volume_usdc: None,
     };
 
-    info!("[{}] 🔑 Keypair: {}", instance, config.security.wallet_path);
-    info!("[{}] ⚙️  Slippage: {:.4}%",
-          instance,
+    info!("[{}]    Slippage: {:.4}%", instance,
           real_config.slippage_bps.unwrap_or(50) as f64 / 100.0);
+    info!("[{}]    Keypair:  {}", instance, config.security.wallet_path);
 
-    // Step 5: Construct engine
+    // ── Step 5: Construct engine ─────────────────────────────────────────────
     let engine = RealTradingEngine::new(
         real_config,
         config,
         initial_usdc,
         initial_sol,
         sol_price,
-    ).await?;
+    ).await
+        .context(format!("[{}] Failed to construct RealTradingEngine", instance))?;
 
     Ok(engine)
 }
@@ -286,9 +285,7 @@ mod tests {
     use super::*;
     use crate::config::ConfigBuilder;
 
-    /// Helper: paper-mode config with specified balances.
-    /// Uses ConfigBuilder for valid base, then overrides balances
-    /// AFTER build() to test engine-level validation.
+    /// Helper to build a minimal paper-mode config for testing.
     fn paper_config(usdc: f64, sol: f64) -> Config {
         let mut config = ConfigBuilder::new()
             .execution_mode("paper")
@@ -298,8 +295,6 @@ mod tests {
         config.paper_trading.initial_sol = sol;
         config
     }
-
-    // ── Paper Mode Tests ────────────────────────────────────────────────
 
     #[tokio::test]
     async fn test_create_engine_paper_mode() {
@@ -314,7 +309,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_engine_paper_zero_usdc_fails() {
-        // V2.0: Both USDC and SOL must be positive (|| check)
         let config = paper_config(0.0, 10.0);
         let result = create_engine(&config, EngineParams::default()).await;
         assert!(result.is_err(), "Zero USDC should fail");
@@ -344,20 +338,6 @@ mod tests {
         assert!(result.is_err(), "Both zero should fail");
     }
 
-    // ── from_config_paper Tests ──────────────────────────────────────────
-
-    #[test]
-    fn test_from_config_paper_applies_fees() {
-        // Verify that from_config_paper returns Ok for valid capital.
-        // (Fee verification requires PaperTradingEngine internals,
-        //  but we at least confirm the builder chain doesn't panic.)
-        let config = paper_config(1000.0, 5.0);
-        let result = from_config_paper(&config);
-        assert!(result.is_ok(), "Valid paper config should produce engine");
-    }
-
-    // ── Engine Mode Label Tests ──────────────────────────────────────────
-
     #[test]
     fn test_engine_mode_label_paper() {
         let config = paper_config(1000.0, 1.0);
@@ -373,8 +353,6 @@ mod tests {
         assert_eq!(engine_mode_label(&config), "🔴 LIVE");
     }
 
-    // ── Invalid Mode Tests ──────────────────────────────────────────────
-
     #[tokio::test]
     async fn test_create_engine_invalid_mode_fails() {
         let mut config = paper_config(1000.0, 5.0);
@@ -388,8 +366,6 @@ mod tests {
         );
     }
 
-    // ── EngineParams Tests ───────────────────────────────────────────────
-
     #[test]
     fn test_engine_params_default() {
         let params = EngineParams::default();
@@ -401,11 +377,11 @@ mod tests {
     fn test_engine_params_with_values() {
         let params = EngineParams {
             live_price: Some(147.35),
-            wallet_balances: Some((5000.0, 10.0)),
+            wallet_balances: Some((500.0, 3.5)),
         };
         assert_eq!(params.live_price.unwrap(), 147.35);
         let (usdc, sol) = params.wallet_balances.unwrap();
-        assert_eq!(usdc, 5000.0);
-        assert_eq!(sol, 10.0);
+        assert_eq!(usdc, 500.0);
+        assert_eq!(sol, 3.5);
     }
 }

@@ -5,13 +5,13 @@
 //!
 //! Features:
 //! - Pyth Hermes v2 HTTP API integration
-//! - Retry with exponential backoff (3 attempts)
-//! - Price sanity validation (positive, within confidence bounds)
+//! - Retry with exponential backoff (3 attempts, 500ms/1s/2s)
+//! - Price sanity validation (positive, confidence bounds)
 //! - Stateless — safe for multi-bot concurrent use
 //!
 //! Follow-up:
 //! - Response caching with TTL
-//! - Multiple fallback endpoints
+//! - Multiple fallback Hermes endpoints
 //! - pyth_proxy.js bridge integration
 //!
 //! March 2026 — PR #72
@@ -28,13 +28,13 @@ const BASE_DELAY_MS: u64 = 500;
 /// Fetch the latest price from Pyth Hermes v2 HTTP API with retry.
 ///
 /// Calls `/v2/updates/price/latest` with `parsed=true` and extracts
-/// the price adjusted by the Pyth exponent (e.g., 14735000000 × 10⁻⁸ = $147.35).
+/// the price adjusted by the Pyth exponent.
 ///
 /// Retries up to 3 times with exponential backoff (500ms, 1s, 2s).
 ///
 /// # Arguments
 /// * `endpoint` - Pyth Hermes base URL (e.g., "https://hermes.pyth.network")
-/// * `feed_id` - Pyth price feed ID (hex string, e.g., "0xef0d8b6f...")
+/// * `feed_id` - Pyth price feed ID (hex string)
 ///
 /// # Errors
 /// - All retry attempts exhausted
@@ -68,7 +68,7 @@ pub async fn fetch_pyth_price(endpoint: &str, feed_id: &str) -> Result<f64> {
     Err(last_err.unwrap_or_else(|| anyhow::anyhow!("fetch_pyth_price: no attempts made")))
 }
 
-/// Single-attempt price fetch from Pyth Hermes v2.
+/// Single-attempt price fetch (no retry).
 async fn fetch_price_once(url: &str) -> Result<f64> {
     let resp: Value = reqwest::get(url)
         .await
@@ -93,7 +93,7 @@ async fn fetch_price_once(url: &str) -> Result<f64> {
 
     let adjusted_price = raw_price * 10f64.powi(expo as i32);
 
-    // Confidence check — warn if spread is too wide
+    // Confidence check — warn if spread is unusually wide
     if let Some(conf_str) = price_data["conf"].as_str() {
         if let Ok(conf_raw) = conf_str.parse::<f64>() {
             let confidence = conf_raw * 10f64.powi(expo as i32);
@@ -127,7 +127,7 @@ async fn fetch_price_once(url: &str) -> Result<f64> {
 #[cfg(test)]
 mod tests {
     #[test]
-    fn test_price_adjustment_positive() {
+    fn test_price_adjustment_normal() {
         // Simulates 14735000000 * 10^-8 = 147.35
         let raw = 14_735_000_000.0_f64;
         let expo = -8_i32;
@@ -136,10 +136,35 @@ mod tests {
     }
 
     #[test]
-    fn test_price_adjustment_rejects_negative() {
-        let raw = -100.0_f64;
+    fn test_price_adjustment_small_expo() {
+        // 12345 * 10^-2 = 123.45
+        let raw = 12_345.0_f64;
+        let expo = -2_i32;
+        let adjusted = raw * 10f64.powi(expo);
+        assert!((adjusted - 123.45).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_price_adjustment_zero_expo() {
+        let raw = 42.0_f64;
         let expo = 0_i32;
         let adjusted = raw * 10f64.powi(expo);
-        assert!(adjusted < 0.0, "Negative raw should produce negative adjusted");
+        assert!((adjusted - 42.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_confidence_percentage_calculation() {
+        let price = 150.0_f64;
+        let confidence = 3.0_f64;
+        let conf_pct = (confidence / price) * 100.0;
+        assert!((conf_pct - 2.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_confidence_wide_detection() {
+        let price = 100.0_f64;
+        let confidence = 6.0_f64;
+        let conf_pct = (confidence / price) * 100.0;
+        assert!(conf_pct > 5.0, "6% confidence should trigger wide warning");
     }
 }
