@@ -1,7 +1,8 @@
 //! ═══════════════════════════════════════════════════════════════════════════
-//! FEES CONFIG V1.0 — Single Source of Truth for All Fee Parameters
+//! FEES CONFIG V1.1 — Single Source of Truth for All Fee Parameters
 //!
 //! PR #75 — Phase 3: FeesConfig Foundation
+//! PR #77 — Phase 4: FeesConfig Wiring (one-side cost helpers)
 //!
 //! Centralizes maker/taker fees, slippage, and profit thresholds that were
 //! previously hardcoded across 4+ files in 3 different unit systems.
@@ -17,7 +18,7 @@
 //!   3. fee_filter.rs:    maker_fee_percent: 0.02, taker_fee_percent: 0.04
 //!   4. grid_rebalancer:  min_spread per regime (0.05% – 0.15%)
 //!
-//! March 2026 — V1.0 LFG 🚀
+//! March 2026 — V1.1 LFG 🚀
 //! ═══════════════════════════════════════════════════════════════════════════
 
 use serde::{Deserialize, Serialize};
@@ -207,6 +208,52 @@ impl FeesConfig {
         };
         base_cost_pct * multiplier
     }
+
+    // ── One-Side Cost Helpers (for order placement gates) ────────────────
+
+    /// One-side trading cost in BPS: taker_fee + slippage.
+    /// Used for order-placement spread checks (not round-trip P&L).
+    /// With defaults: 4 + 5 = 9 bps (0.09%).
+    #[inline]
+    pub fn one_side_cost_bps(&self) -> f64 {
+        self.taker_fee_bps + self.slippage_bps
+    }
+
+    /// One-side trading cost as a percentage.
+    /// With defaults: 0.09%.
+    #[inline]
+    pub fn one_side_cost_percent(&self) -> f64 {
+        self.one_side_cost_bps() / 100.0
+    }
+
+    /// Minimum spread for order PLACEMENT per market regime.
+    ///
+    /// Unlike `min_spread_for_regime()` which uses round-trip cost for P&L
+    /// gating, this uses single-side cost — appropriate for deciding whether
+    /// an individual order is worth placing at a given distance from mid.
+    ///
+    /// Calibrated to reproduce current hardcoded values in
+    /// `grid_rebalancer.rs::should_place_order()` at default fees:
+    ///
+    /// | Regime        | Multiplier | Default result |
+    /// |---------------|-----------|----------------|
+    /// | VERY_LOW_VOL  | 0.55      | ≈0.050%        |
+    /// | LOW_VOL       | 0.90      | ≈0.081%        |
+    /// | MEDIUM_VOL    | 1.10      | ≈0.099%        |
+    /// | HIGH_VOL      | 1.35      | ≈0.122%        |
+    /// | VERY_HIGH_VOL | 1.65      | ≈0.149%        |
+    pub fn min_order_spread_for_regime(&self, regime: &str) -> f64 {
+        let base = self.one_side_cost_percent();
+        let multiplier = match regime {
+            "VERY_LOW_VOL"  => 0.55,
+            "LOW_VOL"       => 0.90,
+            "MEDIUM_VOL"    => 1.10,
+            "HIGH_VOL"      => 1.35,
+            "VERY_HIGH_VOL" => 1.65,
+            _               => 1.10,
+        };
+        base * multiplier
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -278,10 +325,6 @@ mod tests {
 
     #[test]
     fn test_defaults_match_current_hardcodes() {
-        // These defaults MUST match the values currently hardcoded in:
-        // - engine.rs: maker_fee_bps=2.0, taker_fee_bps=4.0
-        // - paper_trader.rs: DEFAULT_MAKER_FEE=0.0002, DEFAULT_TAKER_FEE=0.0004
-        // - fee_filter.rs: maker_fee_percent=0.02, taker_fee_percent=0.04
         let fees = FeesConfig::default();
         assert_eq!(fees.maker_fee_bps, 2.0);
         assert_eq!(fees.taker_fee_bps, 4.0);
@@ -426,5 +469,53 @@ mod tests {
         let fees: FeesConfig = toml::from_str(toml_str).expect("partial override");
         assert_eq!(fees.maker_fee_bps, 3.0); // overridden
         assert_eq!(fees.taker_fee_bps, 4.0); // default
+    }
+
+    // ── One-Side Cost Tests (V1.1) ──────────────────────────────────────
+
+    #[test]
+    fn test_one_side_cost() {
+        let fees = FeesConfig::default();
+        // taker(4) + slippage(5) = 9 bps
+        assert!((fees.one_side_cost_bps() - 9.0).abs() < f64::EPSILON);
+        assert!((fees.one_side_cost_percent() - 0.09).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_min_order_spread_regime_ordering() {
+        let fees = FeesConfig::default();
+        let vlv = fees.min_order_spread_for_regime("VERY_LOW_VOL");
+        let lv = fees.min_order_spread_for_regime("LOW_VOL");
+        let mv = fees.min_order_spread_for_regime("MEDIUM_VOL");
+        let hv = fees.min_order_spread_for_regime("HIGH_VOL");
+        let vhv = fees.min_order_spread_for_regime("VERY_HIGH_VOL");
+
+        // Monotonically increasing with volatility
+        assert!(vlv < lv);
+        assert!(lv < mv);
+        assert!(mv < hv);
+        assert!(hv < vhv);
+
+        // At default fees, approximate the current hardcodes within tolerance
+        assert!((vlv - 0.05).abs() < 0.01, "VERY_LOW_VOL: {}", vlv);
+        assert!((lv  - 0.08).abs() < 0.01, "LOW_VOL: {}", lv);
+        assert!((mv  - 0.10).abs() < 0.01, "MEDIUM_VOL: {}", mv);
+        assert!((hv  - 0.12).abs() < 0.01, "HIGH_VOL: {}", hv);
+        assert!((vhv - 0.15).abs() < 0.01, "VERY_HIGH_VOL: {}", vhv);
+    }
+
+    #[test]
+    fn test_min_order_spread_scales_with_fees() {
+        let mut fees = FeesConfig::default();
+        let baseline = fees.min_order_spread_for_regime("MEDIUM_VOL");
+
+        // Double the fees → spread should exactly double
+        fees.taker_fee_bps *= 2.0;
+        fees.slippage_bps *= 2.0;
+        let doubled = fees.min_order_spread_for_regime("MEDIUM_VOL");
+        assert!(
+            (doubled / baseline - 2.0).abs() < 0.001,
+            "Expected 2x scaling, got {:.4}x", doubled / baseline
+        );
     }
 }
