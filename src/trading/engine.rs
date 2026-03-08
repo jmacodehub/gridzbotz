@@ -1,8 +1,9 @@
 //! ═══════════════════════════════════════════════════════════════════════════
-//! 🏭 ENGINE FACTORY V2.1 — Config-Driven Engine Selection
+//! 🏭 ENGINE FACTORY V2.2 — Config-Driven Engine Selection
 //!
 //! PR #72 — Phase 2: Engine Wiring
 //! PR #77 — Phase 4: FeesConfig Wiring (single source of truth)
+//! PR #79 — Commit 1: Update from_execution_config → from_config
 //!
 //! The single entry point for creating a TradingEngine from config.
 //! Reads `bot.execution_mode` and returns the correct engine:
@@ -20,25 +21,17 @@
 //! V2.1 CHANGES (PR #77):
 //! ✅ Paper mode: fees + slippage from [fees] config (single source of truth)
 //! ✅ Removed manual BPS→fraction conversions — uses FeesConfig helpers
-//! ✅ Fixed slippage source: config.fees (expected cost) not config.execution (max allowed)
+//! ✅ Fixed slippage source: config.fees (expected cost) not config.execution
 //! ✅ Dynamic log lines — no more hardcoded "2/4bps"
 //!
-//! Usage:
-//! ```ignore
-//! use crate::trading::engine::{create_engine, EngineParams};
+//! V2.2 CHANGES (PR #79 Commit 1):
+//! ✅ from_execution_config(&config.execution) → from_config(config)
+//!    RealTradingConfig now receives full Config so it can wire:
+//!    rpc_url (Chainstack), jupiter_api_key (env var), slippage, trade size.
+//!    Passing only ExecutionConfig was insufficient — silently left rpc_url
+//!    as None and jupiter_api_key as None, causing live mode failures.
 //!
-//! // Paper mode (no runtime context needed):
-//! let engine = create_engine(&config, EngineParams::default()).await?;
-//!
-//! // Live mode (with pre-fetched price and wallet balances):
-//! let params = EngineParams {
-//!     live_price: Some(147.35),
-//!     wallet_balances: Some((500.0, 3.5)),
-//! };
-//! let engine = create_engine(&config, params).await?;
-//! ```
-//!
-//! March 2026 — V2.1 LFG 🚀
+//! March 2026 — V2.2 🚀
 //! ═══════════════════════════════════════════════════════════════════════════
 
 use std::sync::Arc;
@@ -108,7 +101,7 @@ pub async fn create_engine(
     let mode = config.bot.execution_mode.as_str();
 
     info!(
-        "[{}] 🏭 Engine Factory V2.1: creating engine for mode='{}'",
+        "[{}] 🏭 Engine Factory V2.2: creating engine for mode='{}'",
         instance, mode
     );
 
@@ -168,7 +161,7 @@ pub fn engine_mode_label(config: &Config) -> &'static str {
 /// Zero hardcoded values — single source of truth.
 fn from_config_paper(config: &Config) -> Result<PaperTradingEngine> {
     let usdc = config.paper_trading.initial_usdc;
-    let sol = config.paper_trading.initial_sol;
+    let sol  = config.paper_trading.initial_sol;
 
     if usdc <= 0.0 || sol <= 0.0 {
         bail!(
@@ -254,12 +247,15 @@ async fn from_config_live(config: &Config, params: &EngineParams) -> Result<Real
     info!("[{}] 💵 Total capital: ${:.2} USD", instance, capital_usd);
 
     // ── Step 4: Build RealTradingConfig + KeystoreConfig ─────────────────────
-    let mut real_config = RealTradingConfig::from_execution_config(&config.execution);
+    // ✅ V2.2 (PR #79): from_config(config) wires rpc_url + jupiter_api_key.
+    //    Previously from_execution_config(&config.execution) left both as None,
+    //    causing silent public RPC fallback and swap failures at runtime.
+    let mut real_config = RealTradingConfig::from_config(config);
     real_config.keystore = KeystoreConfig {
-        keypair_path: config.security.wallet_path.clone(),
+        keypair_path:                config.security.wallet_path.clone(),
         max_transaction_amount_usdc: Some(config.execution.max_trade_size_usdc),
-        max_daily_trades: None,
-        max_daily_volume_usdc: None,
+        max_daily_trades:            None,
+        max_daily_volume_usdc:       None,
     };
 
     info!("[{}]    Slippage: {:.4}%", instance,
@@ -295,7 +291,7 @@ mod tests {
             .build()
             .expect("base test config should be valid");
         config.paper_trading.initial_usdc = usdc;
-        config.paper_trading.initial_sol = sol;
+        config.paper_trading.initial_sol  = sol;
         config
     }
 
@@ -379,7 +375,7 @@ mod tests {
     #[test]
     fn test_engine_params_with_values() {
         let params = EngineParams {
-            live_price: Some(147.35),
+            live_price:      Some(147.35),
             wallet_balances: Some((500.0, 3.5)),
         };
         assert_eq!(params.live_price.unwrap(), 147.35);
