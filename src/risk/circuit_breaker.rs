@@ -333,6 +333,7 @@ mod tests {
                 enable_circuit_breaker: true,
                 circuit_breaker_threshold_pct: 15.0,
                 circuit_breaker_cooldown_secs: 60,
+                max_consecutive_losses: 5,
             },
             fees: FeesConfig::default(),
             pyth: PythConfig::default(),

@@ -1263,6 +1263,10 @@ pub struct RiskConfig {
 
     /// Circuit breaker cooldown (seconds)
     pub circuit_breaker_cooldown_secs: u64,
+
+    /// Maximum consecutive losing trades before circuit breaker trips
+    #[serde(default = "default_max_consecutive_losses")]
+    pub max_consecutive_losses: u32,
 }
 
 impl RiskConfig {
@@ -1273,6 +1277,10 @@ impl RiskConfig {
 
         if self.max_drawdown_pct <= 0.0 || self.max_drawdown_pct > 100.0 {
             bail!("max_drawdown_pct must be between 0-100%");
+        }
+
+                if self.max_consecutive_losses == 0 {
+            bail!("max_consecutive_losses must be > 0");
         }
 
         if self.enable_circuit_breaker {
@@ -1576,6 +1584,7 @@ fn default_macd_histogram_threshold() -> f64 { 0.5 }
 fn default_macd_warmup_periods() -> usize { 26 }
 fn default_wallet_path() -> String { "~/.config/solana/id.json".to_string() }
 fn default_max_trade_size_usdc() -> f64 { 250.0 }
+fn default_max_consecutive_losses() -> u32 { 5 }
 
 // ═══════════════════════════════════════════════════════════════════════════
 // MAIN CONFIG IMPLEMENTATION - V5.1 PRODUCTION GRADE! 🚀
@@ -1783,6 +1792,9 @@ impl Config {
         println!("   Circuit Breaker:  {} ({:.1}%)",
             if self.risk.enable_circuit_breaker { "✅" } else { "❌" },
             self.risk.circuit_breaker_threshold_pct);
+        if self.risk.enable_circuit_breaker {
+            println!("   Max Consec Loss:  {} trades", self.risk.max_consecutive_losses);
+        }
 
         println!("\n{}\n", border);
     }
@@ -1857,6 +1869,7 @@ impl ConfigBuilder {
                     enable_circuit_breaker: true,
                     circuit_breaker_threshold_pct: 8.0,
                     circuit_breaker_cooldown_secs: 300,
+                    max_consecutive_losses: default_max_consecutive_losses(),
                 },
                 fees: FeesConfig::default(),
                 execution: ExecutionConfig::default(),
