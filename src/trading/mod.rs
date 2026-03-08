@@ -13,6 +13,11 @@
 //! - Enhanced Metrics: Trade-level analytics and performance tracking
 //! - Adaptive Optimizer: Self-learning grid spacing and position sizing
 //!
+//! V5.4 CHANGES (Mar 2026 — PR #72):
+//! ✅ price_feed_utils.rs — fetch_pyth_price() with 3x retry + confidence check
+//! ✅ engine.rs V2 — EngineParams, fees/slippage for paper, keystore for live
+//! ✅ EngineParams exported in prelude for main.rs wiring
+//!
 //! V5.4 CHANGES (Mar 2026 — PR #71):
 //! ✅ engine.rs added — create_engine() factory for config-driven mode selection
 //!    Reads bot.execution_mode → returns Arc<dyn TradingEngine>
@@ -72,6 +77,7 @@ pub mod real_trader;         // 🔥 ENABLED - Phase 5 Complete!
 pub mod enhanced_metrics;    // 📊 V4.1: Enhanced analytics tracking
 pub mod adaptive_optimizer;  // 🧠 V4.2: Self-learning optimizer
 pub mod engine;              // 🏭 V5.4: Config-driven engine factory
+pub mod price_feed_utils;    // 📡 V5.4: Pyth HTTP price fetching with retry (PR #72)
 
 // WebSocket feeds (optional feature)
 #[cfg(feature = "websockets")]
@@ -82,12 +88,13 @@ pub mod binance_ws;
 pub mod pyth_lazer;
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Engine Factory Exports (V5.4 — PR #71) 🏭
+// Engine Factory Exports (V5.4 — PR #72) 🏭
 // ═══════════════════════════════════════════════════════════════════════════
 
 pub use engine::{
     create_engine,
     engine_mode_label,
+    EngineParams,
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -472,9 +479,10 @@ pub async fn get_live_price(feed_id: &str) -> Option<f64> {
 
 pub mod prelude {
     pub use super::{
-        // Engine Factory (V5.4 — PR #71) 🏭
+        // Engine Factory (V5.4 — PR #72) 🏭
         create_engine,
         engine_mode_label,
+        EngineParams,
 
         // Engines
         PaperTradingEngine,
