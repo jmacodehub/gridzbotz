@@ -1,5 +1,16 @@
 //! =============================================================================
-//! REAL TRADER ENGINE V2.6 - MODULAR & BULLETPROOF
+//! REAL TRADER ENGINE V2.7 - MODULAR & BULLETPROOF
+//!
+//! V2.7 CHANGES (feat/dynamic-priority-fees — PR #79 Commit 8):
+//! ✅ AsyncRpcFeeSource: async FeeDataSource impl using nonblocking RpcClient.
+//!    Proper Tokio citizen — no sync-in-async blocking. Dedicated 5s timeout.
+//! ✅ PriorityFeeEstimator wired into RealTradingEngine (new fields).
+//!    enable_dynamic=true  → RPC sampling → percentile → cached → injected
+//!    enable_dynamic=false → static fallback (fallback_microlamports)
+//! ✅ build_jupiter_swap(): hardcoded 10K REMOVED — dynamic fee injected.
+//!    Unit conversion: µL/CU × 300K estimated CU → total max_lamports.
+//!    Floor at MIN_MAX_LAMPORTS (5K) for tx landing safety.
+//!    Jupiter priorityLevel='high' handles actual fee; we set the cap.
 //!
 //! V2.6 CHANGES (fix/real-trader-fee-shadow-rpc-wiring — PR #79 Commit 1):
 //! ✅ Removed shadow fields: maker_fee_bps + taker_fee_bps from RealTradingConfig.
@@ -43,13 +54,16 @@
 
 use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
-use log::{error, info};
+use log::{debug, error, info};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::str::FromStr;
+use std::time::Duration;
 use tokio::sync::RwLock;
+use solana_client::nonblocking::rpc_client::RpcClient as AsyncRpcClient;
+use super::priority_fee_estimator::{PriorityFeeEstimator, FeeDataSource};
 
 // -----------------------------------------------------------------------------
 // MODULAR IMPORTS
@@ -66,6 +80,81 @@ use solana_sdk::{
     transaction::VersionedTransaction,
     pubkey::Pubkey,
 };
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ⚡ ASYNC RPC FEE SOURCE — FeeDataSource impl for PriorityFeeEstimator
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Uses the async Solana RPC client (proper Tokio citizen — no sync blocking).
+// Dedicated client with its own timeout, decoupled from trading pipeline.
+//
+// Note: src/rpc/fee_source.rs provides the sync equivalent (RpcFeeSource)
+// for CLI/diagnostic use. This async version is for the live trading loop.
+// TODO(tech-debt): consolidate FeeSource + FeeDataSource traits in one location.
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Estimated CU budget for Jupiter swaps (used to convert µL/CU → total lamports).
+/// Jupiter's `dynamicComputeUnitLimit: true` handles actual CU; this is only
+/// for our max_lamports cap calculation. Typical range: 200K-400K CU.
+const JUPITER_ESTIMATED_CU: u64 = 300_000;
+
+/// Minimum max_lamports floor — ensures txs can land even if estimator
+/// returns very low values during unusually calm periods.
+const MIN_MAX_LAMPORTS: u64 = 5_000;
+
+struct AsyncRpcFeeSource {
+    client: AsyncRpcClient,
+    rpc_url: String, // diagnostics only
+}
+
+impl AsyncRpcFeeSource {
+    fn new(rpc_url: &str, timeout: Duration) -> Self {
+        debug!("AsyncRpcFeeSource: targeting {} (timeout {:?})", rpc_url, timeout);
+        Self {
+            client: AsyncRpcClient::new_with_timeout(rpc_url.to_string(), timeout),
+            rpc_url: rpc_url.to_string(),
+        }
+    }
+}
+
+#[async_trait]
+impl FeeDataSource for AsyncRpcFeeSource {
+    async fn fetch_recent_fees(&self) -> Vec<u64> {
+        match self.client.get_recent_prioritization_fees(&[]).await {
+            Ok(entries) => {
+                let fees: Vec<u64> = entries
+                    .iter()
+                    .map(|e| e.prioritization_fee)
+                    .collect();
+
+                if fees.is_empty() {
+                    log::warn!(
+                        "RPC {} returned 0 fee samples — estimator will use fallback",
+                        self.rpc_url
+                    );
+                } else {
+                    let non_zero = fees.iter().filter(|&&f| f > 0).count();
+                    debug!(
+                        "Fee source: {} slots, {} non-zero, range {}-{} µL ({})",
+                        fees.len(),
+                        non_zero,
+                        fees.iter().min().copied().unwrap_or(0),
+                        fees.iter().max().copied().unwrap_or(0),
+                        self.rpc_url,
+                    );
+                }
+                fees
+            }
+            Err(e) => {
+                log::warn!(
+                    "RPC fee sampling failed ({}): {e} — estimator will use fallback",
+                    self.rpc_url
+                );
+                vec![]
+            }
+        }
+    }
+}
 
 // -----------------------------------------------------------------------------
 // CONFIGURATION
@@ -245,6 +334,10 @@ pub struct RealTradingEngine {
     successful_executions: Arc<AtomicU64>,
     failed_executions:     Arc<AtomicU64>,
     emergency_shutdown:    Arc<AtomicBool>,
+    /// Dynamic priority fee estimator (None = static mode).
+    priority_fee_estimator: Option<Arc<PriorityFeeEstimator>>,
+    /// Static fallback fee in µL/CU (used when estimator is None).
+    static_priority_fee: u64,
 }
 
 impl RealTradingEngine {
@@ -261,7 +354,7 @@ impl RealTradingEngine {
         initial_balance_sol: f64,
         initial_sol_price_usd: f64,
     ) -> Result<Self> {
-        info!("[RealEngine] Initializing V2.6");
+        info!("[RealEngine] Initializing V2.7");
 
         config.validate()?;
 
@@ -275,13 +368,43 @@ impl RealTradingEngine {
             CircuitBreaker::with_balance(global_config, initial_nav)
         ));
 
+        // ── Dynamic priority fees (PR #79) ─────────────────────────────
+        let (priority_fee_estimator, static_priority_fee) =
+            if global_config.priority_fees.enable_dynamic {
+                let source = AsyncRpcFeeSource::new(
+                    &global_config.network.rpc_url,
+                    Duration::from_secs(5),
+                );
+                let estimator = PriorityFeeEstimator::new(
+                    global_config.priority_fees.clone(),
+                    Arc::new(source),
+                );
+                info!(
+                    "[RealEngine] Dynamic priority fees ENABLED \
+                     (P{}, ×{}, cache {}s, bounds {}-{} µL/CU)",
+                    global_config.priority_fees.percentile,
+                    global_config.priority_fees.multiplier,
+                    global_config.priority_fees.cache_ttl_secs,
+                    global_config.priority_fees.min_microlamports,
+                    global_config.priority_fees.max_microlamports,
+                );
+                (
+                    Some(Arc::new(estimator)),
+                    global_config.priority_fees.fallback_microlamports,
+                )
+            } else {
+                let fee = global_config.priority_fees.fallback_microlamports;
+                info!("[RealEngine] Priority fees STATIC: {} µL/CU", fee);
+                (None, fee)
+            };
+
         let balance_tracker = Arc::new(BalanceTracker::new(
             initial_balance_usdc,
             initial_balance_sol,
             initial_sol_price_usd,
         ));
 
-        info!("[RealEngine] Initialized V2.6");
+        info!("[RealEngine] Initialized V2.7");
         info!("  Wallet : {}",        keystore.pubkey());
         info!("  NAV    : ${:.2} (SOL @ ${:.4})",
             balance_tracker.initial_balance_usd(), initial_sol_price_usd);
@@ -299,6 +422,8 @@ impl RealTradingEngine {
             successful_executions: Arc::new(AtomicU64::new(0)),
             failed_executions:     Arc::new(AtomicU64::new(0)),
             emergency_shutdown:    Arc::new(AtomicBool::new(false)),
+            priority_fee_estimator,
+            static_priority_fee,
         })
     }
 
@@ -415,6 +540,33 @@ impl RealTradingEngine {
                 "jupiter_api_key not configured — set GRIDZBOTZ_JUPITER_API_KEY env var"
             ))?;
 
+        // ── Dynamic priority fee (PR #79 V2.7) ─────────────────────────
+        // Estimator returns µL/CU. Jupiter expects total max_lamports cap.
+        // Conversion: max_lamports = (µL_per_CU × estimated_CU) / 1_000_000
+        // Jupiter's priorityLevel handles actual fee selection; max_lamports
+        // is our safety ceiling that adapts to network conditions.
+        let per_cu_microlamports = match &self.priority_fee_estimator {
+            Some(estimator) => {
+                let fee = estimator.get_priority_fee().await;
+                debug!("[Jupiter] Dynamic fee: {} µL/CU", fee);
+                fee
+            }
+            None => {
+                debug!("[Jupiter] Static fee: {} µL/CU", self.static_priority_fee);
+                self.static_priority_fee
+            }
+        };
+
+        let max_lamports = per_cu_microlamports
+            .saturating_mul(JUPITER_ESTIMATED_CU)
+            / 1_000_000;
+        let max_lamports = max_lamports.max(MIN_MAX_LAMPORTS);
+
+        debug!(
+            "[Jupiter] Priority cap: {} µL/CU × {}CU = {} max lamports",
+            per_cu_microlamports, JUPITER_ESTIMATED_CU, max_lamports
+        );
+
         // Create Jupiter client with production API V4.1 (secure: accepts Pubkey)
         let jupiter = JupiterClient::new(
             rpc_url,
@@ -425,9 +577,7 @@ impl RealTradingEngine {
             jupiter_api_key,
         )?
         .with_slippage(self.config.slippage_bps.unwrap_or(50))
-        // TODO(tech-debt): Replace hardcoded 10_000 with dynamic priority fee
-        //   estimator (RpcMedianEstimator) — wired in PR #79 Commit 4.
-        .with_priority_fee(10_000, "high".to_string());
+        .with_priority_fee(max_lamports, "high".to_string());
 
         // Determine swap direction and amount
         let (input_mint, output_mint, amount) = match side {
@@ -548,7 +698,7 @@ impl RealTradingEngine {
 
         println!();
         println!("=======================================================");
-        println!("  REAL TRADING ENGINE V2.6 - STATUS");
+        println!("  REAL TRADING ENGINE V2.7 - STATUS");
         println!("=======================================================");
         println!();
         println!("Balances:");
@@ -571,6 +721,13 @@ impl RealTradingEngine {
         println!("Executor:");
         println!("  Success Rate    : {:.1}%", executor_stats.success_rate);
         println!("  Total Exec      : {}",     executor_stats.total_executions);
+        println!();
+        println!("Priority Fees:");
+        if self.priority_fee_estimator.is_some() {
+            println!("  Mode    : DYNAMIC");
+        } else {
+            println!("  Mode    : STATIC ({} µL/CU)", self.static_priority_fee);
+        }
         println!();
         println!("Circuit Breaker:");
         let breaker = self.circuit_breaker.read().await;
