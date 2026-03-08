@@ -1,40 +1,21 @@
 //! ═══════════════════════════════════════════════════════════════════════════
-//! 💰 FEES CONFIG — Unified Fee Management for GridzBotz
+//! FEES CONFIG V1.0 — Single Source of Truth for All Fee Parameters
 //!
-//! PR #75 — Single Source of Truth for All Fee-Related Parameters
+//! PR #75 — Phase 3: FeesConfig Foundation
 //!
-//! This module provides the canonical `FeesConfig` struct that centralizes
-//! all fee-related configuration. Previously, fees were scattered across:
+//! Centralizes maker/taker fees, slippage, and profit thresholds that were
+//! previously hardcoded across 4+ files in 3 different unit systems.
 //!
-//! - `engine.rs`: hardcoded `maker_fee_bps = 2.0`, `taker_fee_bps = 4.0`
-//! - `paper_trader.rs`: `DEFAULT_MAKER_FEE = 0.0002` (fraction)
-//! - `fee_filter.rs`: `maker_fee_percent: 0.02` (percentage)
-//! - `grid_rebalancer.rs`: implicit min_spread thresholds per regime
+//! Canonical unit: **Basis Points (BPS)** — 1 bps = 0.01%
+//! Conversion helpers provided for all consumers:
+//!   - fraction()  → 0.0002  (for paper_trader.rs multiplication)
+//!   - percent()   → 0.02    (for fee_filter.rs percentage math)
 //!
-//! Now all consumers read from `config.fees.*` with type-safe converters.
-//!
-//! ## Unit Convention
-//!
-//! **BPS (Basis Points) is the canonical unit in config.**
-//!
-//! - 1 BPS = 0.01% = 0.0001 (fraction)
-//! - 100 BPS = 1%
-//!
-//! Conversion helpers eliminate unit confusion:
-//! - `maker_fee_fraction()` → 0.0002 (for multiplication in paper_trader)
-//! - `maker_fee_percent()` → 0.02 (for fee_filter percentage math)
-//!
-//! ## TOML Example
-//!
-//! ```toml
-//! [fees]
-//! maker_fee_bps = 2.0         # 0.02% — standard Solana DEX maker fee
-//! taker_fee_bps = 4.0         # 0.04% — standard Solana DEX taker fee
-//! slippage_bps = 5.0          # 0.05% — expected execution slippage
-//! min_profit_multiplier = 2.0 # Require 2x round-trip costs for profitability
-//! enable_smart_filter = false # Enable SmartFeeFilter (opt-in)
-//! market_impact_coefficient = 0.01  # Impact per SOL of position
-//! ```
+//! HARDCODE LOCATIONS THIS REPLACES:
+//!   1. engine.rs:        maker_fee_bps = 2.0, taker_fee_bps = 4.0
+//!   2. paper_trader.rs:  DEFAULT_MAKER_FEE = 0.0002, DEFAULT_TAKER_FEE = 0.0004
+//!   3. fee_filter.rs:    maker_fee_percent: 0.02, taker_fee_percent: 0.04
+//!   4. grid_rebalancer:  min_spread per regime (0.05% – 0.15%)
 //!
 //! March 2026 — V1.0 LFG 🚀
 //! ═══════════════════════════════════════════════════════════════════════════
@@ -42,7 +23,7 @@
 use serde::{Deserialize, Serialize};
 
 // ═══════════════════════════════════════════════════════════════════════════
-// DEFAULT VALUE FUNCTIONS (for serde)
+// DEFAULTS (match current hardcoded values exactly — zero regression)
 // ═══════════════════════════════════════════════════════════════════════════
 
 fn default_maker_fee_bps() -> f64 { 2.0 }
@@ -52,90 +33,64 @@ fn default_min_profit_multiplier() -> f64 { 2.0 }
 fn default_market_impact_coefficient() -> f64 { 0.01 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// FEES CONFIG STRUCT
+// FEES CONFIG
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Unified fee configuration for all trading operations.
+/// Centralized fee configuration — single source of truth.
 ///
-/// This struct is the **single source of truth** for fee-related parameters.
-/// All trading components (engine, strategies, filters) should read from this
-/// config rather than using hardcoded values.
+/// All fee values are specified in **basis points** (1 bps = 0.01%).
+/// Use the conversion helpers to get the format each consumer expects:
 ///
-/// ## Unit: Basis Points (BPS)
+/// ```ignore
+/// let fees = FeesConfig::default();
+/// assert_eq!(fees.maker_fee_bps, 2.0);           // BPS (raw)
+/// assert_eq!(fees.maker_fee_fraction(), 0.0002);  // for multiplication
+/// assert_eq!(fees.maker_fee_percent(), 0.02);     // for percentage math
+/// ```
 ///
-/// All fee values are stored in BPS for consistency with industry standards:
-/// - 1 BPS = 0.01% = 0.0001 (as a fraction)
-/// - Jupiter/Raydium typically charge 2-4 BPS maker, 4-10 BPS taker
+/// ## TOML Usage
 ///
-/// Use the conversion methods to get the value in your preferred unit:
-/// - `maker_fee_fraction()` → for direct multiplication (e.g., `amount * fee`)
-/// - `maker_fee_percent()` → for display or percentage-based math
+/// ```toml
+/// [fees]
+/// maker_fee_bps = 2.0         # 0.02% — standard Solana DEX maker fee
+/// taker_fee_bps = 4.0         # 0.04% — standard Solana DEX taker fee
+/// slippage_bps = 5.0          # 0.05% — expected execution slippage
+/// min_profit_multiplier = 2.0 # require 2x costs before trading
+/// enable_smart_filter = false  # opt-in: wire SmartFeeFilter for trade gating
+/// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FeesConfig {
-    /// Maker fee in basis points (1 BPS = 0.01%).
-    ///
-    /// Maker orders add liquidity to the order book and typically receive
-    /// lower fees. On Solana DEXs like Jupiter aggregating Orca/Raydium,
-    /// maker fees are typically 2-4 BPS.
-    ///
-    /// Default: 2.0 BPS (0.02%)
+    /// Maker fee in basis points (1 bps = 0.01%).
+    /// Default: 2.0 bps (0.02%) — standard Solana DEX maker fee.
     #[serde(default = "default_maker_fee_bps")]
     pub maker_fee_bps: f64,
 
-    /// Taker fee in basis points (1 BPS = 0.01%).
-    ///
-    /// Taker orders remove liquidity and typically pay higher fees.
-    /// On Solana DEXs, taker fees are typically 4-10 BPS.
-    ///
-    /// Default: 4.0 BPS (0.04%)
+    /// Taker fee in basis points.
+    /// Default: 4.0 bps (0.04%) — standard Solana DEX taker fee.
     #[serde(default = "default_taker_fee_bps")]
     pub taker_fee_bps: f64,
 
-    /// Expected execution slippage in basis points.
-    ///
-    /// This is the typical price movement between quote and execution.
-    /// Used for profitability calculations and trade filtering.
-    /// Does NOT affect the actual slippage tolerance sent to Jupiter
-    /// (that's in ExecutionConfig.max_slippage_bps).
-    ///
-    /// Default: 5.0 BPS (0.05%)
+    /// Expected slippage in basis points.
+    /// Default: 5.0 bps (0.05%).
     #[serde(default = "default_slippage_bps")]
     pub slippage_bps: f64,
 
     /// Minimum profit multiplier over total round-trip costs.
-    ///
-    /// A trade is only considered profitable if:
-    /// `expected_profit >= round_trip_costs * min_profit_multiplier`
-    ///
-    /// Where round_trip_costs = maker_fee + taker_fee + (2 * slippage)
-    ///
-    /// Higher values are more conservative (fewer but higher-quality trades).
-    /// GIGA testing showed 2.0x is optimal for SOL/USDC grid trading.
-    ///
-    /// Default: 2.0 (require 2x costs to trade)
+    /// A trade must have expected profit >= costs × this multiplier.
+    /// Default: 2.0 (require 2× round-trip costs).
     #[serde(default = "default_min_profit_multiplier")]
     pub min_profit_multiplier: f64,
 
-    /// Enable the SmartFeeFilter for trade gating.
-    ///
-    /// When enabled, trades are filtered through SmartFeeFilter which
-    /// considers regime-adjusted fees, market impact, and profitability.
-    /// Proven +50% ROI improvement in battle royale testing.
-    ///
-    /// Default: false (opt-in — enable after validating in paper mode)
+    /// Enable SmartFeeFilter for trade gating.
+    /// When true, SmartFeeFilter is wired as a strategy that gates trades
+    /// based on whether expected profit exceeds fee + slippage costs.
+    /// Default: false (opt-in to avoid surprise behavior changes).
     #[serde(default)]
     pub enable_smart_filter: bool,
 
     /// Market impact coefficient per SOL of position size.
-    ///
-    /// Larger positions move the market more. This coefficient estimates
-    /// additional slippage as: `market_impact = coefficient * position_sol`
-    ///
-    /// For SOL/USDC on Jupiter with typical liquidity:
-    /// - 0.01 = 1 BPS additional impact per SOL
-    /// - A 10 SOL position adds ~10 BPS of expected slippage
-    ///
-    /// Default: 0.01
+    /// Used by SmartFeeFilter to estimate price impact for larger orders.
+    /// Default: 0.01 (1% impact per SOL — conservative estimate).
     #[serde(default = "default_market_impact_coefficient")]
     pub market_impact_coefficient: f64,
 }
@@ -153,128 +108,162 @@ impl Default for FeesConfig {
     }
 }
 
-impl FeesConfig {
-    // ═══════════════════════════════════════════════════════════════════════
-    // BPS → FRACTION CONVERTERS (for paper_trader.rs style multiplication)
-    // ═══════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════
+// CONVERSION HELPERS — zero-cost, compile-time inlineable
+// ═══════════════════════════════════════════════════════════════════════════
 
-    /// Convert maker fee from BPS to fraction for direct multiplication.
-    ///
-    /// Example: 2.0 BPS → 0.0002
-    ///
-    /// Usage: `let fee = amount * config.fees.maker_fee_fraction();`
+impl FeesConfig {
+    // ── Maker Fee Conversions ────────────────────────────────────────────
+
+    /// Maker fee as a fraction (for direct multiplication).
+    /// 2.0 bps → 0.0002
     #[inline]
     pub fn maker_fee_fraction(&self) -> f64 {
         self.maker_fee_bps / 10_000.0
     }
 
-    /// Convert taker fee from BPS to fraction for direct multiplication.
-    ///
-    /// Example: 4.0 BPS → 0.0004
-    #[inline]
-    pub fn taker_fee_fraction(&self) -> f64 {
-        self.taker_fee_bps / 10_000.0
-    }
-
-    /// Convert slippage from BPS to fraction for direct multiplication.
-    ///
-    /// Example: 5.0 BPS → 0.0005
-    #[inline]
-    pub fn slippage_fraction(&self) -> f64 {
-        self.slippage_bps / 10_000.0
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════
-    // BPS → PERCENT CONVERTERS (for fee_filter.rs style percentage math)
-    // ═══════════════════════════════════════════════════════════════════════
-
-    /// Convert maker fee from BPS to percentage.
-    ///
-    /// Example: 2.0 BPS → 0.02 (meaning 0.02%)
-    ///
-    /// Usage in percentage math: `spread_pct > maker_fee_percent + taker_fee_percent`
+    /// Maker fee as a percentage.
+    /// 2.0 bps → 0.02
     #[inline]
     pub fn maker_fee_percent(&self) -> f64 {
         self.maker_fee_bps / 100.0
     }
 
-    /// Convert taker fee from BPS to percentage.
-    ///
-    /// Example: 4.0 BPS → 0.04 (meaning 0.04%)
+    // ── Taker Fee Conversions ────────────────────────────────────────────
+
+    /// Taker fee as a fraction (for direct multiplication).
+    /// 4.0 bps → 0.0004
+    #[inline]
+    pub fn taker_fee_fraction(&self) -> f64 {
+        self.taker_fee_bps / 10_000.0
+    }
+
+    /// Taker fee as a percentage.
+    /// 4.0 bps → 0.04
     #[inline]
     pub fn taker_fee_percent(&self) -> f64 {
         self.taker_fee_bps / 100.0
     }
 
-    /// Convert slippage from BPS to percentage.
-    ///
-    /// Example: 5.0 BPS → 0.05 (meaning 0.05%)
+    // ── Slippage Conversions ─────────────────────────────────────────────
+
+    /// Slippage as a fraction (for direct multiplication).
+    /// 5.0 bps → 0.0005
+    #[inline]
+    pub fn slippage_fraction(&self) -> f64 {
+        self.slippage_bps / 10_000.0
+    }
+
+    /// Slippage as a percentage.
+    /// 5.0 bps → 0.05
     #[inline]
     pub fn slippage_percent(&self) -> f64 {
         self.slippage_bps / 100.0
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // DERIVED CALCULATIONS
-    // ═══════════════════════════════════════════════════════════════════════
+    // ── Aggregate Helpers ────────────────────────────────────────────────
 
-    /// Calculate total round-trip cost in BPS.
-    ///
-    /// Round-trip = entry (taker) + exit (maker) + slippage both ways
-    ///
-    /// For a grid bot:
-    /// - Entry is typically taker (crossing spread)
-    /// - Exit is typically maker (posting limit order)
-    /// - Slippage occurs on both legs
+    /// Total round-trip cost in BPS: maker + taker + 2× slippage.
+    /// With defaults: 2 + 4 + 10 = 16 bps (0.16%).
     #[inline]
     pub fn round_trip_cost_bps(&self) -> f64 {
         self.maker_fee_bps + self.taker_fee_bps + (self.slippage_bps * 2.0)
     }
 
-    /// Calculate total round-trip cost as a fraction.
-    #[inline]
-    pub fn round_trip_cost_fraction(&self) -> f64 {
-        self.round_trip_cost_bps() / 10_000.0
-    }
-
-    /// Calculate total round-trip cost as a percentage.
+    /// Total round-trip cost as a percentage.
+    /// With defaults: 0.16%.
     #[inline]
     pub fn round_trip_cost_percent(&self) -> f64 {
         self.round_trip_cost_bps() / 100.0
     }
 
-    /// Calculate minimum profitable spread in BPS.
-    ///
-    /// This is the minimum price movement required to cover costs
-    /// and meet the profit multiplier requirement.
-    ///
-    /// `min_spread = round_trip_cost * min_profit_multiplier`
-    #[inline]
-    pub fn min_profitable_spread_bps(&self) -> f64 {
-        self.round_trip_cost_bps() * self.min_profit_multiplier
-    }
-
-    /// Calculate minimum profitable spread as a percentage.
+    /// Minimum spread (in percent) required to be profitable.
+    /// Equals round_trip_cost_percent × min_profit_multiplier.
+    /// With defaults: 0.16% × 2.0 = 0.32%.
     #[inline]
     pub fn min_profitable_spread_percent(&self) -> f64 {
-        self.min_profitable_spread_bps() / 100.0
+        self.round_trip_cost_percent() * self.min_profit_multiplier
     }
 
-    /// Estimate market impact for a given position size in SOL.
+    /// Minimum spread for a specific market regime.
+    /// Returns the fee-derived minimum spread adjusted by a regime multiplier.
     ///
-    /// Returns additional expected slippage in BPS.
-    #[inline]
-    pub fn estimate_market_impact_bps(&self, position_sol: f64) -> f64 {
-        self.market_impact_coefficient * position_sol * 100.0 // coefficient is per-SOL, convert to BPS
+    /// Replaces the hardcoded min_spread values in grid_rebalancer.rs:
+    ///   VERY_LOW_VOL  → base_cost × 0.5  (tighter in calm markets)
+    ///   LOW_VOL       → base_cost × 0.75
+    ///   MEDIUM_VOL    → base_cost × 1.0
+    ///   HIGH_VOL      → base_cost × 1.2
+    ///   VERY_HIGH_VOL → base_cost × 1.5  (wider in volatile markets)
+    pub fn min_spread_for_regime(&self, regime: &str) -> f64 {
+        let base_cost_pct = self.round_trip_cost_percent();
+        let multiplier = match regime {
+            "VERY_LOW_VOL"  => 0.5,
+            "LOW_VOL"       => 0.75,
+            "MEDIUM_VOL"    => 1.0,
+            "HIGH_VOL"      => 1.2,
+            "VERY_HIGH_VOL" => 1.5,
+            _               => 1.0,
+        };
+        base_cost_pct * multiplier
     }
+}
 
-    /// Calculate total expected cost for a trade including market impact.
-    ///
-    /// Returns total cost in BPS for a single-leg trade.
-    pub fn total_trade_cost_bps(&self, position_sol: f64, is_taker: bool) -> f64 {
-        let base_fee = if is_taker { self.taker_fee_bps } else { self.maker_fee_bps };
-        let impact = self.estimate_market_impact_bps(position_sol);
-        base_fee + self.slippage_bps + impact
+// ═══════════════════════════════════════════════════════════════════════════
+// VALIDATION
+// ═══════════════════════════════════════════════════════════════════════════
+
+impl FeesConfig {
+    /// Validate fee configuration at startup. Fail fast with actionable errors.
+    pub fn validate(&self) -> Result<(), String> {
+        if self.maker_fee_bps < 0.0 {
+            return Err(format!(
+                "fees.maker_fee_bps must be >= 0, got {}. \
+                 Check [fees] section in your TOML config.",
+                self.maker_fee_bps
+            ));
+        }
+        if self.taker_fee_bps < 0.0 {
+            return Err(format!(
+                "fees.taker_fee_bps must be >= 0, got {}. \
+                 Check [fees] section in your TOML config.",
+                self.taker_fee_bps
+            ));
+        }
+        if self.slippage_bps < 0.0 {
+            return Err(format!(
+                "fees.slippage_bps must be >= 0, got {}. \
+                 Check [fees] section in your TOML config.",
+                self.slippage_bps
+            ));
+        }
+        if self.min_profit_multiplier < 1.0 {
+            return Err(format!(
+                "fees.min_profit_multiplier must be >= 1.0, got {}. \
+                 Values below 1.0 mean trading at a guaranteed loss.",
+                self.min_profit_multiplier
+            ));
+        }
+        if self.maker_fee_bps > 100.0 {
+            return Err(format!(
+                "fees.maker_fee_bps={} seems too high (>1%). \
+                 Value is in basis points: 2.0 = 0.02%. Did you mean {}?",
+                self.maker_fee_bps, self.maker_fee_bps / 100.0
+            ));
+        }
+        if self.taker_fee_bps > 100.0 {
+            return Err(format!(
+                "fees.taker_fee_bps={} seems too high (>1%). \
+                 Value is in basis points: 4.0 = 0.04%. Did you mean {}?",
+                self.taker_fee_bps, self.taker_fee_bps / 100.0
+            ));
+        }
+        if self.market_impact_coefficient < 0.0 || self.market_impact_coefficient > 1.0 {
+            return Err(format!(
+                "fees.market_impact_coefficient must be 0.0–1.0, got {}.",
+                self.market_impact_coefficient
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -287,113 +276,154 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_default_values_match_current_hardcodes() {
-        let config = FeesConfig::default();
-        
-        // These MUST match the values currently hardcoded in engine.rs
-        assert_eq!(config.maker_fee_bps, 2.0, "maker_fee_bps must match engine.rs hardcode");
-        assert_eq!(config.taker_fee_bps, 4.0, "taker_fee_bps must match engine.rs hardcode");
-        assert_eq!(config.slippage_bps, 5.0, "slippage_bps must match paper_trader.rs DEFAULT_SLIPPAGE");
-        assert_eq!(config.min_profit_multiplier, 2.0);
-        assert!(!config.enable_smart_filter, "smart filter must be opt-in");
+    fn test_defaults_match_current_hardcodes() {
+        // These defaults MUST match the values currently hardcoded in:
+        // - engine.rs: maker_fee_bps=2.0, taker_fee_bps=4.0
+        // - paper_trader.rs: DEFAULT_MAKER_FEE=0.0002, DEFAULT_TAKER_FEE=0.0004
+        // - fee_filter.rs: maker_fee_percent=0.02, taker_fee_percent=0.04
+        let fees = FeesConfig::default();
+        assert_eq!(fees.maker_fee_bps, 2.0);
+        assert_eq!(fees.taker_fee_bps, 4.0);
+        assert_eq!(fees.slippage_bps, 5.0);
+        assert_eq!(fees.min_profit_multiplier, 2.0);
+        assert!(!fees.enable_smart_filter);
     }
 
     #[test]
-    fn test_fraction_conversions() {
-        let config = FeesConfig::default();
-        
-        // 2 BPS = 0.0002
-        assert!((config.maker_fee_fraction() - 0.0002).abs() < 1e-10);
-        // 4 BPS = 0.0004
-        assert!((config.taker_fee_fraction() - 0.0004).abs() < 1e-10);
-        // 5 BPS = 0.0005
-        assert!((config.slippage_fraction() - 0.0005).abs() < 1e-10);
+    fn test_maker_fee_conversions() {
+        let fees = FeesConfig::default();
+        assert!((fees.maker_fee_fraction() - 0.0002).abs() < f64::EPSILON);
+        assert!((fees.maker_fee_percent() - 0.02).abs() < f64::EPSILON);
     }
 
     #[test]
-    fn test_percent_conversions() {
-        let config = FeesConfig::default();
-        
-        // 2 BPS = 0.02%
-        assert!((config.maker_fee_percent() - 0.02).abs() < 1e-10);
-        // 4 BPS = 0.04%
-        assert!((config.taker_fee_percent() - 0.04).abs() < 1e-10);
-        // 5 BPS = 0.05%
-        assert!((config.slippage_percent() - 0.05).abs() < 1e-10);
+    fn test_taker_fee_conversions() {
+        let fees = FeesConfig::default();
+        assert!((fees.taker_fee_fraction() - 0.0004).abs() < f64::EPSILON);
+        assert!((fees.taker_fee_percent() - 0.04).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_slippage_conversions() {
+        let fees = FeesConfig::default();
+        assert!((fees.slippage_fraction() - 0.0005).abs() < f64::EPSILON);
+        assert!((fees.slippage_percent() - 0.05).abs() < f64::EPSILON);
     }
 
     #[test]
     fn test_round_trip_cost() {
-        let config = FeesConfig::default();
-        
-        // Round-trip = maker (2) + taker (4) + slippage*2 (10) = 16 BPS
-        assert_eq!(config.round_trip_cost_bps(), 16.0);
-        assert!((config.round_trip_cost_fraction() - 0.0016).abs() < 1e-10);
-        assert!((config.round_trip_cost_percent() - 0.16).abs() < 1e-10);
+        let fees = FeesConfig::default();
+        // maker(2) + taker(4) + 2*slippage(10) = 16 bps
+        assert!((fees.round_trip_cost_bps() - 16.0).abs() < f64::EPSILON);
+        assert!((fees.round_trip_cost_percent() - 0.16).abs() < f64::EPSILON);
     }
 
     #[test]
     fn test_min_profitable_spread() {
-        let config = FeesConfig::default();
-        
-        // Min spread = round_trip (16) * multiplier (2.0) = 32 BPS
-        assert_eq!(config.min_profitable_spread_bps(), 32.0);
-        assert!((config.min_profitable_spread_percent() - 0.32).abs() < 1e-10);
+        let fees = FeesConfig::default();
+        // 0.16% round-trip × 2.0 multiplier = 0.32%
+        assert!((fees.min_profitable_spread_percent() - 0.32).abs() < f64::EPSILON);
     }
 
     #[test]
-    fn test_market_impact_estimation() {
-        let config = FeesConfig::default();
-        
-        // Default coefficient is 0.01, so 10 SOL = 10 BPS impact
-        let impact = config.estimate_market_impact_bps(10.0);
-        assert!((impact - 10.0).abs() < 1e-10);
+    fn test_min_spread_for_regime_ordering() {
+        let fees = FeesConfig::default();
+        let vlv = fees.min_spread_for_regime("VERY_LOW_VOL");
+        let lv = fees.min_spread_for_regime("LOW_VOL");
+        let mv = fees.min_spread_for_regime("MEDIUM_VOL");
+        let hv = fees.min_spread_for_regime("HIGH_VOL");
+        let vhv = fees.min_spread_for_regime("VERY_HIGH_VOL");
+
+        // More vol = wider spread required
+        assert!(vlv < lv);
+        assert!(lv < mv);
+        assert!(mv < hv);
+        assert!(hv < vhv);
+
+        // All in reasonable range (0.01% – 1.0%)
+        for spread in [vlv, lv, mv, hv, vhv] {
+            assert!(spread > 0.01, "Spread too tight: {}", spread);
+            assert!(spread < 1.0, "Spread too wide: {}", spread);
+        }
     }
 
     #[test]
-    fn test_total_trade_cost() {
-        let config = FeesConfig::default();
-        
-        // Taker 1 SOL: taker(4) + slippage(5) + impact(1) = 10 BPS
-        let cost = config.total_trade_cost_bps(1.0, true);
-        assert!((cost - 10.0).abs() < 1e-10);
-        
-        // Maker 1 SOL: maker(2) + slippage(5) + impact(1) = 8 BPS
-        let cost = config.total_trade_cost_bps(1.0, false);
-        assert!((cost - 8.0).abs() < 1e-10);
+    fn test_custom_fees() {
+        let fees = FeesConfig {
+            maker_fee_bps: 5.0,
+            taker_fee_bps: 10.0,
+            slippage_bps: 8.0,
+            min_profit_multiplier: 3.0,
+            enable_smart_filter: true,
+            market_impact_coefficient: 0.02,
+        };
+        assert!((fees.maker_fee_fraction() - 0.0005).abs() < f64::EPSILON);
+        assert!((fees.taker_fee_fraction() - 0.001).abs() < f64::EPSILON);
+        // Round trip: 5 + 10 + 16 = 31 bps
+        assert!((fees.round_trip_cost_bps() - 31.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_validate_valid_config() {
+        assert!(FeesConfig::default().validate().is_ok());
+    }
+
+    #[test]
+    fn test_validate_negative_maker_fee() {
+        let mut fees = FeesConfig::default();
+        fees.maker_fee_bps = -1.0;
+        let err = fees.validate().unwrap_err();
+        assert!(err.contains("maker_fee_bps"));
+    }
+
+    #[test]
+    fn test_validate_negative_taker_fee() {
+        let mut fees = FeesConfig::default();
+        fees.taker_fee_bps = -1.0;
+        let err = fees.validate().unwrap_err();
+        assert!(err.contains("taker_fee_bps"));
+    }
+
+    #[test]
+    fn test_validate_too_high_maker_warns() {
+        let mut fees = FeesConfig::default();
+        fees.maker_fee_bps = 200.0; // 2% — probably a mistake
+        let err = fees.validate().unwrap_err();
+        assert!(err.contains("too high"));
+    }
+
+    #[test]
+    fn test_validate_sub_one_multiplier() {
+        let mut fees = FeesConfig::default();
+        fees.min_profit_multiplier = 0.5; // guaranteed loss
+        let err = fees.validate().unwrap_err();
+        assert!(err.contains("guaranteed loss"));
     }
 
     #[test]
     fn test_serde_round_trip() {
-        let original = FeesConfig {
-            maker_fee_bps: 3.5,
-            taker_fee_bps: 7.0,
-            slippage_bps: 10.0,
-            min_profit_multiplier: 2.5,
-            enable_smart_filter: true,
-            market_impact_coefficient: 0.02,
-        };
-        
-        let json = serde_json::to_string(&original).unwrap();
-        let restored: FeesConfig = serde_json::from_str(&json).unwrap();
-        
-        assert_eq!(original.maker_fee_bps, restored.maker_fee_bps);
-        assert_eq!(original.taker_fee_bps, restored.taker_fee_bps);
-        assert_eq!(original.slippage_bps, restored.slippage_bps);
-        assert_eq!(original.min_profit_multiplier, restored.min_profit_multiplier);
-        assert_eq!(original.enable_smart_filter, restored.enable_smart_filter);
-        assert_eq!(original.market_impact_coefficient, restored.market_impact_coefficient);
+        let original = FeesConfig::default();
+        let toml_str = toml::to_string(&original).expect("serialize");
+        let restored: FeesConfig = toml::from_str(&toml_str).expect("deserialize");
+        assert!((original.maker_fee_bps - restored.maker_fee_bps).abs() < f64::EPSILON);
+        assert!((original.taker_fee_bps - restored.taker_fee_bps).abs() < f64::EPSILON);
+        assert!((original.slippage_bps - restored.slippage_bps).abs() < f64::EPSILON);
     }
 
     #[test]
-    fn test_serde_defaults_on_missing_fields() {
-        // Simulate a TOML with only some fields specified
-        let json = r#"{"maker_fee_bps": 3.0}"#;
-        let config: FeesConfig = serde_json::from_str(json).unwrap();
-        
-        assert_eq!(config.maker_fee_bps, 3.0); // specified
-        assert_eq!(config.taker_fee_bps, 4.0); // default
-        assert_eq!(config.slippage_bps, 5.0); // default
-        assert!(!config.enable_smart_filter);  // default false
+    fn test_serde_missing_fields_use_defaults() {
+        // Empty TOML → all defaults (existing configs without [fees] work)
+        let fees: FeesConfig = toml::from_str("").expect("empty should use defaults");
+        assert_eq!(fees.maker_fee_bps, 2.0);
+        assert_eq!(fees.taker_fee_bps, 4.0);
+        assert_eq!(fees.slippage_bps, 5.0);
+    }
+
+    #[test]
+    fn test_serde_partial_override() {
+        let toml_str = "maker_fee_bps = 3.0";
+        let fees: FeesConfig = toml::from_str(toml_str).expect("partial override");
+        assert_eq!(fees.maker_fee_bps, 3.0); // overridden
+        assert_eq!(fees.taker_fee_bps, 4.0); // default
     }
 }
