@@ -1,28 +1,34 @@
 //! ═══════════════════════════════════════════════════════════════════════════
-//! 💎 SMART FEE FILTER V2.0 - PROJECT FLASH
-//! 
+//! 💎 SMART FEE FILTER V2.1 - PROJECT FLASH
+//!
 //! Intelligent fee-aware trade filtering to maximize net profitability.
-//! 
+//!
 //! V2.0 ENHANCEMENTS - Production-Grade Intelligence:
 //! ✅ Multi-Factor Profit Calculation (fees + slippage + market impact)
-//! ✅ Dynamic Minimum Spread Based on Market Regime  
+//! ✅ Dynamic Minimum Spread Based on Market Regime
 //! ✅ Volatility-Adjusted Thresholds
 //! ✅ Time-Based Fee Optimization (maker rebates)
 //! ✅ Comprehensive Profit Simulation
 //! ✅ Statistical Tracking & Analytics
-//! 
+//!
+//! V2.1 (PR #77):
+//! ✅ from_fees_config() factory — single source of truth via FeesConfig
+//! ✅ Fix misleading doc comments (fraction vs percent notation)
+//!
 //! Based on GIGA Test Results:
 //! - Activity Paradox: More fills ≠ More profit
 //! - Fee filtering prevented 40% of unprofitable trades
 //! - 2x profit multiplier = optimal baseline
-//! 
-//! February 8, 2026 - V2.0 INTELLIGENT FILTERING! 🚀
+//!
+//! February 8, 2026 - V2.0 | March 2026 - V2.1 🚀
 //! ═══════════════════════════════════════════════════════════════════════════
 
 use serde::{Deserialize, Serialize};
 use log::{debug, trace};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+
+use crate::config::FeesConfig;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // CONFIGURATION - Flexible & Environment-Aware
@@ -34,50 +40,50 @@ pub struct SmartFeeFilterConfig {
     // ─────────────────────────────────────────────────────────────────────────
     // Core Fee Structure
     // ─────────────────────────────────────────────────────────────────────────
-    
-    /// Base maker fee (e.g., 0.0002 = 0.02%)
+
+    /// Base maker fee as percent (e.g., 0.02 means 0.02%)
     pub maker_fee_percent: f64,
-    
-    /// Base taker fee (e.g., 0.0004 = 0.04%)
+
+    /// Base taker fee as percent (e.g., 0.04 means 0.04%)
     pub taker_fee_percent: f64,
-    
-    /// Expected slippage percentage
+
+    /// Expected slippage as percent (e.g., 0.05 means 0.05%)
     pub slippage_percent: f64,
-    
+
     // ─────────────────────────────────────────────────────────────────────────
     // Profit Multipliers
     // ─────────────────────────────────────────────────────────────────────────
-    
+
     /// Minimum profit multiplier over total costs
     /// - 1.0 = break-even (not recommended)
     /// - 2.0 = double the costs (GIGA-proven optimal)
     /// - 3.0 = triple (very conservative)
     pub min_profit_multiplier: f64,
-    
+
     /// Volatility scaling factor for dynamic thresholds
     /// - Higher volatility = higher minimum spread required
     pub volatility_scaling_factor: f64,
-    
+
     // ─────────────────────────────────────────────────────────────────────────
     // Market Impact Modeling
     // ─────────────────────────────────────────────────────────────────────────
-    
+
     /// Enable market impact estimation
     pub enable_market_impact: bool,
-    
+
     /// Order size impact coefficient (larger orders = more slippage)
     pub market_impact_coefficient: f64,
-    
+
     // ─────────────────────────────────────────────────────────────────────────
     // Advanced Features
     // ─────────────────────────────────────────────────────────────────────────
-    
+
     /// Enable time-of-day fee optimization
     pub enable_time_optimization: bool,
-    
+
     /// Enable dynamic regime-based adjustment
     pub enable_regime_adjustment: bool,
-    
+
     /// Grace period for first N trades (reduce strictness initially)
     pub grace_period_trades: u64,
 }
@@ -85,19 +91,19 @@ pub struct SmartFeeFilterConfig {
 impl Default for SmartFeeFilterConfig {
     fn default() -> Self {
         Self {
-            // Standard Solana DEX fees
-            maker_fee_percent: 0.02,    // 0.02%
-            taker_fee_percent: 0.04,    // 0.04%
-            slippage_percent: 0.05,     // 0.05%
-            
+            // Standard Solana DEX fees (percent unit: 0.02 = 0.02%)
+            maker_fee_percent: 0.02,    // 2 bps
+            taker_fee_percent: 0.04,    // 4 bps
+            slippage_percent: 0.05,     // 5 bps
+
             // GIGA-proven optimal multiplier
             min_profit_multiplier: 2.0,
             volatility_scaling_factor: 1.5,
-            
+
             // Market impact
             enable_market_impact: true,
             market_impact_coefficient: 0.01,  // 1% per 1 SOL
-            
+
             // Advanced features
             enable_time_optimization: false,  // Future enhancement
             enable_regime_adjustment: true,
@@ -115,7 +121,7 @@ impl SmartFeeFilterConfig {
             ..Default::default()
         }
     }
-    
+
     /// Create aggressive configuration (lower thresholds, more trades)
     pub fn aggressive() -> Self {
         Self {
@@ -124,7 +130,7 @@ impl SmartFeeFilterConfig {
             ..Default::default()
         }
     }
-    
+
     /// Create testing configuration (permissive)
     pub fn testing() -> Self {
         Self {
@@ -135,6 +141,30 @@ impl SmartFeeFilterConfig {
             ..Default::default()
         }
     }
+
+    /// Create from FeesConfig (single source of truth).
+    ///
+    /// Maps BPS canonical unit → percent unit used by SmartFeeFilter.
+    /// Inherits min_profit_multiplier and market_impact_coefficient.
+    pub fn from_fees_config(fees: &FeesConfig) -> Self {
+        Self {
+            maker_fee_percent: fees.maker_fee_percent(),
+            taker_fee_percent: fees.taker_fee_percent(),
+            slippage_percent: fees.slippage_percent(),
+            min_profit_multiplier: fees.min_profit_multiplier,
+            enable_market_impact: true,
+            market_impact_coefficient: fees.market_impact_coefficient,
+            enable_regime_adjustment: true,
+            ..Default::default()
+        }
+    }
+
+    /// Create from FeesConfig with a custom profit multiplier override.
+    pub fn from_fees_config_with_multiplier(fees: &FeesConfig, multiplier: f64) -> Self {
+        let mut config = Self::from_fees_config(fees);
+        config.min_profit_multiplier = multiplier;
+        config
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -143,12 +173,12 @@ impl SmartFeeFilterConfig {
 
 pub struct SmartFeeFilter {
     config: SmartFeeFilterConfig,
-    
+
     // Statistics (thread-safe)
     total_checks: Arc<AtomicU64>,
     trades_passed: Arc<AtomicU64>,
     trades_filtered: Arc<AtomicU64>,
-    
+
     // Tracking
     trades_executed: Arc<AtomicU64>,
     total_fees_saved: Arc<tokio::sync::RwLock<f64>>,
@@ -166,13 +196,13 @@ impl SmartFeeFilter {
             total_fees_saved: Arc::new(tokio::sync::RwLock::new(0.0)),
         }
     }
-    
+
     // ═══════════════════════════════════════════════════════════════════
     // CORE FILTERING LOGIC - V2.0 INTELLIGENT! 🧠
     // ═══════════════════════════════════════════════════════════════════
-    
+
     /// Determine if trade should be executed
-    /// 
+    ///
     /// Returns (should_execute, expected_net_profit, reason)
     pub fn should_execute_trade(
         &self,
@@ -183,42 +213,42 @@ impl SmartFeeFilter {
         market_regime: &str,
     ) -> (bool, f64, String) {
         self.total_checks.fetch_add(1, Ordering::Relaxed);
-        
+
         // Check grace period
         let executed = self.trades_executed.load(Ordering::Relaxed);
         if executed < self.config.grace_period_trades {
-            trace!("🎁 Grace period: Allowing trade {}/{}", 
+            trace!("🎁 Grace period: Allowing trade {}/{}",
                    executed + 1, self.config.grace_period_trades);
             self.trades_passed.fetch_add(1, Ordering::Relaxed);
             return (true, 0.0, "Grace period".to_string());
         }
-        
+
         // Calculate comprehensive costs
         let costs = self.calculate_total_costs(
-            entry_price, 
-            exit_price, 
+            entry_price,
+            exit_price,
             position_size_sol
         );
-        
+
         // Calculate expected gross profit
         let gross_profit = (exit_price - entry_price).abs() * position_size_sol;
         // gross_profit_pct reserved for future analytics
         let _gross_profit_pct = (gross_profit / (entry_price * position_size_sol)) * 100.0;
-        
+
         // Calculate net profit
         let net_profit = gross_profit - costs.total_cost;
         let net_profit_pct = (net_profit / (entry_price * position_size_sol)) * 100.0;
-        
+
         // Get dynamic minimum profit threshold
         let min_required_profit = self.calculate_min_required_profit(
             costs.total_cost,
             current_volatility,
             market_regime,
         );
-        
+
         // Decision logic
         let should_execute = net_profit >= min_required_profit;
-        
+
         if should_execute {
             debug!("✅ Trade PASSED: Net profit ${:.4} ({:.3}%) >= ${:.4} min",
                    net_profit, net_profit_pct, min_required_profit);
@@ -226,7 +256,7 @@ impl SmartFeeFilter {
                    entry_price, exit_price, position_size_sol);
             debug!("   Costs: ${:.4} | Regime: {} | Vol: {:.2}%",
                    costs.total_cost, market_regime, current_volatility * 100.0);
-            
+
             self.trades_passed.fetch_add(1, Ordering::Relaxed);
             (true, net_profit, "Profitable after all costs".to_string())
         } else {
@@ -236,24 +266,24 @@ impl SmartFeeFilter {
                    gross_profit, costs.total_cost, net_profit);
             debug!("   Fees would eat {:.1}% of profit!",
                    (costs.total_cost / gross_profit) * 100.0);
-            
+
             self.trades_filtered.fetch_add(1, Ordering::Relaxed);
-            
+
             let reason = if net_profit < 0.0 {
                 format!("Would lose ${:.4} after fees", net_profit.abs())
             } else {
                 format!("Net profit ${:.4} below {:.0}x threshold",
                         net_profit, self.config.min_profit_multiplier)
             };
-            
+
             (false, net_profit, reason)
         }
     }
-    
+
     // ═══════════════════════════════════════════════════════════════════
     // COST CALCULATION - Comprehensive & Accurate
     // ═══════════════════════════════════════════════════════════════════
-    
+
     /// Calculate total costs for a round-trip trade
     fn calculate_total_costs(
         &self,
@@ -263,26 +293,26 @@ impl SmartFeeFilter {
     ) -> TradeCosts {
         let entry_value_usdc = entry_price * position_size_sol;
         let exit_value_usdc = exit_price * position_size_sol;
-        
+
         // Entry fees (buy = taker)
         let entry_fee = entry_value_usdc * (self.config.taker_fee_percent / 100.0);
-        
+
         // Exit fees (sell = maker, typically)
         let exit_fee = exit_value_usdc * (self.config.maker_fee_percent / 100.0);
-        
+
         // Slippage costs (both directions)
         let entry_slippage = entry_value_usdc * (self.config.slippage_percent / 100.0);
         let exit_slippage = exit_value_usdc * (self.config.slippage_percent / 100.0);
-        
+
         // Market impact (if enabled)
         let market_impact = if self.config.enable_market_impact {
             self.calculate_market_impact(entry_value_usdc, position_size_sol)
         } else {
             0.0
         };
-        
+
         let total_cost = entry_fee + exit_fee + entry_slippage + exit_slippage + market_impact;
-        
+
         TradeCosts {
             entry_fee,
             exit_fee,
@@ -292,19 +322,17 @@ impl SmartFeeFilter {
             total_cost,
         }
     }
-    
+
     /// Calculate market impact cost (larger orders = more slippage)
     fn calculate_market_impact(&self, trade_value_usdc: f64, position_size_sol: f64) -> f64 {
-        // Simple linear model: impact increases with position size
-        // Real implementation would query order book depth
         let impact_factor = position_size_sol * self.config.market_impact_coefficient;
         trade_value_usdc * (impact_factor / 100.0)
     }
-    
+
     // ═══════════════════════════════════════════════════════════════════
     // DYNAMIC THRESHOLD CALCULATION - Regime-Aware! 🎯
     // ═══════════════════════════════════════════════════════════════════
-    
+
     /// Calculate minimum required profit based on market conditions
     fn calculate_min_required_profit(
         &self,
@@ -314,7 +342,7 @@ impl SmartFeeFilter {
     ) -> f64 {
         // Base minimum: cost * multiplier
         let mut min_profit = base_cost * self.config.min_profit_multiplier;
-        
+
         // Regime-based adjustment (if enabled)
         if self.config.enable_regime_adjustment {
             let regime_factor = match market_regime {
@@ -327,25 +355,23 @@ impl SmartFeeFilter {
             };
             min_profit *= regime_factor;
         }
-        
+
         // Volatility-based adjustment
         if volatility > 1.0 {
-            // High volatility: reduce threshold (more opportunities)
             let vol_factor = 1.0 - (volatility - 1.0) * 0.1;
             min_profit *= vol_factor.max(0.7);  // Cap at 30% reduction
         } else if volatility < 0.5 {
-            // Low volatility: increase threshold (harder to profit)
             let vol_factor = 1.0 + (0.5 - volatility) * self.config.volatility_scaling_factor;
             min_profit *= vol_factor.min(2.0);  // Cap at 2x increase
         }
-        
+
         min_profit
     }
-    
+
     // ═══════════════════════════════════════════════════════════════════
     // SIMPLIFIED API - For Backward Compatibility
     // ═══════════════════════════════════════════════════════════════════
-    
+
     /// Simple boolean check (backward compatible)
     pub fn should_trade(
         &self,
@@ -353,7 +379,6 @@ impl SmartFeeFilter {
         exit_price: f64,
         position_size_sol: f64,
     ) -> bool {
-        // Use default volatility and regime
         let (should_execute, _, _) = self.should_execute_trade(
             entry_price,
             exit_price,
@@ -363,7 +388,7 @@ impl SmartFeeFilter {
         );
         should_execute
     }
-    
+
     /// Calculate expected net profit for planning
     pub fn calculate_net_profit(
         &self,
@@ -375,30 +400,30 @@ impl SmartFeeFilter {
         let gross_profit = (exit_price - entry_price).abs() * position_size_sol;
         gross_profit - costs.total_cost
     }
-    
+
     // ═══════════════════════════════════════════════════════════════════
     // STATISTICS & ANALYTICS
     // ═══════════════════════════════════════════════════════════════════
-    
+
     /// Get comprehensive filter statistics
     pub fn stats(&self) -> FeeFilterStats {
         let total = self.total_checks.load(Ordering::Relaxed);
         let passed = self.trades_passed.load(Ordering::Relaxed);
         let filtered = self.trades_filtered.load(Ordering::Relaxed);
         let executed = self.trades_executed.load(Ordering::Relaxed);
-        
+
         let filter_rate = if total > 0 {
             (filtered as f64 / total as f64) * 100.0
         } else {
             0.0
         };
-        
+
         let approval_rate = if total > 0 {
             (passed as f64 / total as f64) * 100.0
         } else {
             0.0
         };
-        
+
         FeeFilterStats {
             total_checks: total,
             trades_passed: passed,
@@ -409,12 +434,12 @@ impl SmartFeeFilter {
             min_profit_multiplier: self.config.min_profit_multiplier,
         }
     }
-    
+
     /// Notify filter that a trade was executed (for grace period tracking)
     pub fn record_execution(&self) {
         self.trades_executed.fetch_add(1, Ordering::Relaxed);
     }
-    
+
     /// Reset statistics
     pub fn reset_stats(&self) {
         self.total_checks.store(0, Ordering::Relaxed);
@@ -462,7 +487,7 @@ pub struct FeeFilterStats {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     /// Helper: build a filter with grace_period disabled so the cost/profit
     /// logic runs immediately on the first check.
     fn filter_no_grace() -> SmartFeeFilter {
@@ -474,90 +499,120 @@ mod tests {
 
     #[test]
     fn test_profitable_trade() {
-        // grace_period_trades=0 so the cost/profit logic runs immediately.
-        // 5% gross profit at 2x multiplier with default fees + slippage
-        // produces positive net_profit well above the threshold.
         let filter = filter_no_grace();
-        
+
         let entry = 100.0;
         let exit = 105.0;  // 5% gross profit
         let size = 1.0;
-        
+
         let (should_execute, net_profit, _) = filter.should_execute_trade(
             entry, exit, size, 1.0, "MEDIUM_VOL"
         );
-        
+
         assert!(should_execute, "5% profit trade should pass the fee filter");
         assert!(net_profit > 0.0, "net_profit must be positive, got {}", net_profit);
     }
-    
+
     #[test]
     fn test_unprofitable_trade() {
-        // grace_period_trades=0 so filtering logic is active from the start.
-        // 0.1% gross profit is consumed entirely by fees+slippage (~0.16 USDC)
-        // leaving negative net_profit, well below the 2x cost threshold.
         let filter = filter_no_grace();
-        
+
         let entry = 100.0;
         let exit = 100.1;  // Only 0.1% gross profit
         let size = 1.0;
-        
+
         let (should_execute, _, _) = filter.should_execute_trade(
             entry, exit, size, 1.0, "MEDIUM_VOL"
         );
-        
+
         assert!(!should_execute, "0.1% profit trade should be blocked by fee filter");
     }
-    
+
     #[test]
     fn test_regime_adjustment() {
         let mut config = SmartFeeFilterConfig::default();
         config.enable_regime_adjustment = true;
         config.grace_period_trades = 0;
         let filter = SmartFeeFilter::new(config);
-        
+
         let entry = 100.0;
         let exit = 101.0;
         let size = 1.0;
-        
+
         // High vol should be more permissive
         let (high_vol_ok, _, _) = filter.should_execute_trade(
             entry, exit, size, 2.0, "HIGH_VOL"
         );
-        
+
         // Low vol should be more strict
         let (low_vol_ok, _, _) = filter.should_execute_trade(
             entry, exit, size, 0.3, "VERY_LOW_VOL"
         );
-        
+
         // High vol more likely to pass
         assert!(high_vol_ok || !low_vol_ok);
     }
-    
+
     #[test]
     fn test_grace_period() {
         let mut config = SmartFeeFilterConfig::default();
         config.grace_period_trades = 5;
         let filter = SmartFeeFilter::new(config);
-        
+
         // Even unprofitable trades should pass during grace period
         let entry = 100.0;
         let exit = 100.05;  // Minimal profit
         let size = 1.0;
-        
+
         let (should_execute, _, reason) = filter.should_execute_trade(
             entry, exit, size, 1.0, "MEDIUM_VOL"
         );
-        
+
         assert!(should_execute);
         assert!(reason.contains("Grace"));
     }
 
     #[test]
     fn test_default_trait() {
-        // Verify impl Default for SmartFeeFilter resolves correctly
         let f = SmartFeeFilter::default();
         let stats = f.stats();
         assert_eq!(stats.total_checks, 0);
+    }
+
+    // ── V2.1: FeesConfig factory tests ────────────────────────────────────
+
+    #[test]
+    fn test_from_fees_config_default() {
+        let fees = FeesConfig::default();
+        let config = SmartFeeFilterConfig::from_fees_config(&fees);
+        assert!((config.maker_fee_percent - 0.02).abs() < f64::EPSILON);
+        assert!((config.taker_fee_percent - 0.04).abs() < f64::EPSILON);
+        assert!((config.slippage_percent - 0.05).abs() < f64::EPSILON);
+        // Non-fee defaults preserved
+        assert_eq!(config.min_profit_multiplier, 2.0);
+        assert!(config.enable_market_impact);
+        assert!(config.enable_regime_adjustment);
+    }
+
+    #[test]
+    fn test_from_fees_config_with_multiplier() {
+        let fees = FeesConfig::default();
+        let config = SmartFeeFilterConfig::from_fees_config_with_multiplier(&fees, 3.5);
+        assert!((config.maker_fee_percent - 0.02).abs() < f64::EPSILON);
+        assert_eq!(config.min_profit_multiplier, 3.5);
+    }
+
+    #[test]
+    fn test_from_fees_config_with_custom_fees() {
+        let fees = FeesConfig {
+            maker_fee_bps: 5.0,
+            taker_fee_bps: 10.0,
+            slippage_bps: 8.0,
+            ..FeesConfig::default()
+        };
+        let config = SmartFeeFilterConfig::from_fees_config(&fees);
+        assert!((config.maker_fee_percent - 0.05).abs() < f64::EPSILON);
+        assert!((config.taker_fee_percent - 0.10).abs() < f64::EPSILON);
+        assert!((config.slippage_percent - 0.08).abs() < f64::EPSILON);
     }
 }
