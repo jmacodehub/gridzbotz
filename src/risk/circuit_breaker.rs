@@ -334,6 +334,7 @@ mod tests {
                 circuit_breaker_threshold_pct: 15.0,
                 circuit_breaker_cooldown_secs: 60,
             },
+            fees: FeesConfig::default(),
             pyth: PythConfig::default(),
             performance: PerformanceConfig::default(),
             logging: LoggingConfig::default(),
