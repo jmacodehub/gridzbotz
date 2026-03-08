@@ -55,6 +55,9 @@ use std::path::{Path};
 use std::fs;
 use log::{info, warn};
 pub mod secrets;
+pub mod fees;
+pub use fees::FeesConfig;
+
 // ═══════════════════════════════════════════════════════════════════════════
 // MAIN CONFIGURATION - The Heart of GridzBotz
 // ═══════════════════════════════════════════════════════════════════════════
@@ -83,6 +86,10 @@ pub struct Config {
 
     /// Risk management rules
     pub risk: RiskConfig,
+
+    /// Fees configuration (trading fees, priority fees, Jito tips)
+    #[serde(default)]
+    pub fees: FeesConfig,
 
     /// Live execution settings (Jupiter, priority fees, slippage)
     /// Active when bot.execution_mode = "live"
@@ -1626,6 +1633,11 @@ impl Config {
         self.risk.validate()
             .context("Risk config validation failed")?;
 
+        // Fees validation
+        self.fees.validate()
+            .map_err(|e| anyhow::anyhow!(e))
+            .context("Fees config validation failed")?;
+
         // Execution validation — only required when mode = "live"
         if self.bot.is_live() {
             info!("🔴 LIVE MODE DETECTED — validating execution config");
@@ -1825,6 +1837,7 @@ impl ConfigBuilder {
                     circuit_breaker_threshold_pct: 8.0,
                     circuit_breaker_cooldown_secs: 300,
                 },
+                fees: FeesConfig::default(),
                 execution: ExecutionConfig::default(),
                 pyth: PythConfig::default(),
                 performance: PerformanceConfig::default(),

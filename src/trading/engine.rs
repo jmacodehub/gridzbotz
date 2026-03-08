@@ -170,8 +170,8 @@ fn from_config_paper(config: &Config) -> Result<PaperTradingEngine> {
     }
 
     // Fee schedule: matches main.rs V5.4 hardcoded values
-    let maker_fee_bps = 2.0_f64;
-    let taker_fee_bps = 4.0_f64;
+    let maker_fee_bps = config.fees.maker_fee_bps;
+    let taker_fee_bps = config.fees.taker_fee_bps;
     let slippage_bps = config.execution.max_slippage_bps as f64;
 
     let maker_fee = maker_fee_bps / 10_000.0;

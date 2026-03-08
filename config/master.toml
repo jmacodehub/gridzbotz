@@ -394,6 +394,28 @@ circuit_breaker_threshold_pct = 8.0
 circuit_breaker_cooldown_secs = 300
 
 # ═══════════════════════════════════════════════════════════════════════════
+#  💰 FEE CONFIGURATION — Single Source of Truth (V1.0)
+#
+#  All values in basis points (1 bps = 0.01%).
+#  These replace hardcoded fees scattered across 4 files:
+#    engine.rs (2.0/4.0 bps), paper_trader.rs (0.0002/0.0004 fraction),
+#    fee_filter.rs (0.02/0.04 percent), grid_rebalancer.rs (regime spreads)
+#
+#  Round-trip cost with defaults: 2 + 4 + 2×5 = 16 bps (0.16%)
+#  Min profitable spread: 16 bps × 2.0 multiplier = 0.32%
+#
+#  To tune per-pair: copy this section into your pair-specific TOML.
+#  Omitting [fees] entirely → all defaults apply (zero breaking change).
+# ═══════════════════════════════════════════════════════════════════════════
+[fees]
+maker_fee_bps = 2.0                  # 0.02% — standard Solana DEX maker fee
+taker_fee_bps = 4.0                  # 0.04% — standard Solana DEX taker fee
+slippage_bps  = 5.0                  # 0.05% — expected execution slippage
+min_profit_multiplier = 2.0          # require 2× round-trip costs to trade
+enable_smart_filter = false          # opt-in: SmartFeeFilter trade gating
+market_impact_coefficient = 0.01     # 1% impact per SOL (conservative)
+
+# ═══════════════════════════════════════════════════════════════════════════
 #  📡 PYTH PRICE FEED
 # ═══════════════════════════════════════════════════════════════════════════
 [pyth]
