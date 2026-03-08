@@ -23,7 +23,7 @@ fn default_percentile() -> u8 { 50 }
 fn default_multiplier() -> f64 { 1.2 }
 fn default_min_microlamports() -> u64 { 1_000 }
 fn default_max_microlamports() -> u64 { 500_000 }
-fn default_fallback_microlamports() -> u64 { 5_000 }
+fn default_fallback_microlamports() -> u64 { 100_000 }
 fn default_cache_ttl_secs() -> u64 { 10 }
 fn default_sample_blocks() -> u64 { 150 }
 
@@ -179,7 +179,7 @@ mod tests {
         assert!((cfg.multiplier - 1.2).abs() < f64::EPSILON);
         assert_eq!(cfg.min_microlamports, 1_000);
         assert_eq!(cfg.max_microlamports, 500_000);
-        assert_eq!(cfg.fallback_microlamports, 5_000);
+        assert_eq!(cfg.fallback_microlamports, 100_000);
         assert_eq!(cfg.cache_ttl_secs, 10);
         assert_eq!(cfg.sample_blocks, 150);
     }
@@ -272,7 +272,7 @@ mod tests {
         let cfg: PriorityFeeConfig = toml::from_str("").expect("empty should use defaults");
         assert!(!cfg.enable_dynamic);
         assert_eq!(cfg.strategy, "percentile");
-        assert_eq!(cfg.fallback_microlamports, 5_000);
+        assert_eq!(cfg.fallback_microlamports, 100_000);
     }
 
     #[test]
