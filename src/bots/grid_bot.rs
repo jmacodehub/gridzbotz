@@ -1,5 +1,11 @@
 //! ═══════════════════════════════════════════════════════════════════
-//! GRID BOT V5.2 - ELITE AUTONOMOUS TRADING ORCHESTRATOR
+//! GRID BOT V5.5 - ELITE AUTONOMOUS TRADING ORCHESTRATOR
+//!
+//! V5.5 CHANGES (PR #74 — Grid Init Fix + Version Sync):
+//! ✅ FIX: initialize_with_price() calls place_grid_orders() directly
+//!    (was calling reposition_grid() which triggered emergency path)
+//! ✅ Version strings synced: V5.2 → V5.5 across all log messages
+//! ✅ Metadata aligned with main.rs V5.5 banner
 //!
 //! V5.2 CHANGES (PR #36 - Multi-Bot Engine Injection):
 //! ✅ Engine polymorphism: GridBot.engine → Arc<dyn TradingEngine>
@@ -27,7 +33,7 @@
 //! V4.4: Fill fan-out (drain_fills -> notify_fill)
 //! V4.3: GridLevel pairing, adaptive optimizer, enhanced metrics
 //!
-//! March 2026 - V5.2 MULTI-BOT ENGINE INJECTION
+//! March 2026 - V5.5 GRID INIT FIX + VERSION SYNC
 //! ═══════════════════════════════════════════════════════════════════
 
 use std::sync::Arc;
@@ -73,17 +79,17 @@ impl GridBot {
         config: Config,
         engine: Arc<dyn TradingEngine + Send + Sync>,
     ) -> Result<Self> {
-        info!("[BOT-V5.2] Initializing GridBot V5.2 Multi-Bot Engine Injection...");
-        info!("[BOT-V5.2] Engine: Injected by main.rs (Paper or Real based on --mode)");
-        info!("[BOT-V5.2] Adaptive Intelligence: ENABLED");
-        info!("[BOT-V5.2] Fill Fan-out: ENABLED");
-        info!("[BOT-V5.2] Config-driven strategy loading: ENABLED");
+        info!("[BOT-V5.5] Initializing GridBot V5.5 Multi-Bot Engine Injection...");
+        info!("[BOT-V5.5] Engine: Injected by main.rs (Paper or Real based on --mode)");
+        info!("[BOT-V5.5] Adaptive Intelligence: ENABLED");
+        info!("[BOT-V5.5] Fill Fan-out: ENABLED");
+        info!("[BOT-V5.5] Config-driven strategy loading: ENABLED");
 
         let analytics_ctx = AnalyticsContext::default();
         let mut manager = StrategyManager::new(analytics_ctx);
 
         // ─── Strategy 1: Grid (always primary) ────────────────────────────────
-        info!("[BOT-V5.2] Loading GridRebalancer from config...");
+        info!("[BOT-V5.5] Loading GridRebalancer from config...");
         let grid_config = GridRebalancerConfig {
             grid_spacing:                   config.trading.grid_spacing_percent / 100.0,
             order_size:                     config.trading.min_order_size,
@@ -107,46 +113,39 @@ impl GridBot {
         let grid_rebalancer = GridRebalancer::new(grid_config)
             .context("Failed to create GridRebalancer")?;
         manager.add_strategy(grid_rebalancer);
-        info!("[BOT-V5.2] ✅ GridRebalancer loaded (weight={:.1})", config.strategies.grid.weight);
+        info!("[BOT-V5.5] ✅ GridRebalancer loaded (weight={:.1})", config.strategies.grid.weight);
 
         // ─── Strategy 2: Momentum ─────────────────────────────────────────────
-        // TOML: lookback_period  ->  MomentumConfig.fast_period
-        // TOML: threshold        ->  internal constant (not in native Config)
-        // slow_period + min_confidence covered by ..default()
         if config.strategies.momentum.enabled {
-            info!("[BOT-V5.2] Loading Momentum strategy from config...");
+            info!("[BOT-V5.5] Loading Momentum strategy from config...");
             let cfg = MomentumConfig {
                 fast_period: config.strategies.momentum.lookback_period,
                 ..MomentumConfig::default()
             };
             let strategy = MomentumStrategy::new_from_config(&cfg);
             manager.add_strategy(strategy);
-            info!("[BOT-V5.2] ✅ Momentum loaded (weight={:.1}, fast_period={})",
+            info!("[BOT-V5.5] ✅ Momentum loaded (weight={:.1}, fast_period={})",
                   config.strategies.momentum.weight,
                   config.strategies.momentum.lookback_period);
         }
 
         // ─── Strategy 3: Mean Reversion ───────────────────────────────────────
-        // TOML: sma_period  ->  MeanReversionConfig.mean_period
-        // Threshold bands are internal to the strategy; not in native Config.
-        // min_confidence covered by ..default()
         if config.strategies.mean_reversion.enabled {
-            info!("[BOT-V5.2] Loading MeanReversion strategy from config...");
+            info!("[BOT-V5.5] Loading MeanReversion strategy from config...");
             let cfg = MeanReversionConfig {
                 mean_period: config.strategies.mean_reversion.sma_period,
                 ..MeanReversionConfig::default()
             };
             let strategy = MeanReversionStrategy::new_from_config(&cfg);
             manager.add_strategy(strategy);
-            info!("[BOT-V5.2] ✅ MeanReversion loaded (weight={:.1}, mean_period={})",
+            info!("[BOT-V5.5] ✅ MeanReversion loaded (weight={:.1}, mean_period={})",
                   config.strategies.mean_reversion.weight,
                   config.strategies.mean_reversion.sma_period);
         }
 
         // ─── Strategy 4: RSI ──────────────────────────────────────────────────
-        // TOML: period -> RsiConfig.rsi_period (all 5 fields explicit, no unknowns)
         if config.strategies.rsi.enabled {
-            info!("[BOT-V5.2] Loading RSI strategy from config...");
+            info!("[BOT-V5.5] Loading RSI strategy from config...");
             let cfg = RsiConfig {
                 rsi_period:           config.strategies.rsi.period,
                 oversold_threshold:   config.strategies.rsi.oversold_threshold,
@@ -156,7 +155,7 @@ impl GridBot {
             };
             let strategy = RSIStrategy::new_from_config(&cfg);
             manager.add_strategy(strategy);
-            info!("[BOT-V5.2] ✅ RSI loaded (weight={:.1}, period={}, zones={}/{}, extreme={}/{})",
+            info!("[BOT-V5.5] ✅ RSI loaded (weight={:.1}, period={}, zones={}/{}, extreme={}/{})",
                   config.strategies.rsi.weight,
                   config.strategies.rsi.period,
                   config.strategies.rsi.oversold_threshold,
@@ -166,9 +165,8 @@ impl GridBot {
         }
 
         // ─── Strategy 5: Momentum MACD ────────────────────────────────────────
-        // TOML fields match 1:1; min_confidence covered by ..default()
         if config.strategies.momentum_macd.enabled {
-            info!("[BOT-V5.2] Loading MomentumMACD strategy from config...");
+            info!("[BOT-V5.5] Loading MomentumMACD strategy from config...");
             let cfg = MomentumMACDConfig {
                 strong_histogram_threshold: config.strategies.momentum_macd.strong_histogram_threshold,
                 min_warmup_periods:         config.strategies.momentum_macd.min_warmup_periods,
@@ -176,22 +174,22 @@ impl GridBot {
             };
             let strategy = MomentumMACDStrategy::new_from_config(&cfg);
             manager.add_strategy(strategy);
-            info!("[BOT-V5.2] ✅ MomentumMACD loaded (weight={:.1}, warmup={}, hist_thresh={:.2})",
+            info!("[BOT-V5.5] ✅ MomentumMACD loaded (weight={:.1}, warmup={}, hist_thresh={:.2})",
                   config.strategies.momentum_macd.weight,
                   config.strategies.momentum_macd.min_warmup_periods,
                   config.strategies.momentum_macd.strong_histogram_threshold);
         }
 
         // ─── Engine is now injected by main.rs ───────────────────────────────
-        info!("[BOT-V5.2] Using injected TradingEngine (Paper or Real)");
+        info!("[BOT-V5.5] Using injected TradingEngine (Paper or Real)");
 
         let grid_state         = GridStateTracker::new();
         let enhanced_metrics   = EnhancedMetrics::new();
         let base_spacing       = config.trading.grid_spacing_percent / 100.0;
         let base_size          = config.trading.min_order_size;
         let adaptive_optimizer = AdaptiveOptimizer::new(base_spacing, base_size);
-        info!("[BOT-V5.2] Adaptive optimizer initialized (every {} cycles)", OPTIMIZATION_INTERVAL_CYCLES);
-        info!("[BOT-V5.2] GridBot V5.2 initialization complete (grid placement deferred until price known)");
+        info!("[BOT-V5.5] Adaptive optimizer initialized (every {} cycles)", OPTIMIZATION_INTERVAL_CYCLES);
+        info!("[BOT-V5.5] GridBot V5.5 initialization complete (grid placement deferred until price known)");
 
         Ok(Self {
             manager,
@@ -216,20 +214,36 @@ impl GridBot {
         Ok(())
     }
 
+    /// V5.5 FIX: First-time grid placement via place_grid_orders() directly.
+    ///
+    /// Previously called reposition_grid() which is designed for RE-positioning
+    /// an already-initialized grid. Since grid_initialized is false at startup,
+    /// it would hit the emergency path with confusing warnings.
+    ///
+    /// Now: place_grid_orders() → set grid_initialized → update metrics.
+    /// Clean, direct, no emergency path needed.
     pub async fn initialize_with_price(&mut self, feed: &PriceFeed) -> Result<()> {
         info!("┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓");
-        info!("┃  V5.2 GRID INIT — awaiting live price...       ┃");
+        info!("┃  V5.5 GRID INIT — awaiting live price...       ┃");
         info!("┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛");
         let initial_price = feed.latest_price().await;
         if initial_price <= 0.0 {
             bail!("Invalid initial price ${:.2} — cannot initialize grid", initial_price);
         }
         info!("[BOT] Live price received: ${:.4}", initial_price);
-        self.reposition_grid(initial_price, initial_price).await
+
+        // V5.5: Direct grid placement for first-time init.
+        // place_grid_orders() is the correct call here — NOT reposition_grid()
+        // which expects grid_initialized == true.
+        self.place_grid_orders(initial_price).await
             .context("Initial grid placement failed")?;
-        if !self.grid_initialized {
-            bail!("Grid placement completed but grid_initialized flag not set — logic error");
-        }
+        self.grid_initialized = true;
+        self.last_price = Some(initial_price);
+
+        let total_levels = self.config.trading.grid_levels as usize;
+        let used_levels  = self.grid_state.count().await;
+        self.enhanced_metrics.update_grid_stats(total_levels, used_levels);
+
         info!("┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓");
         info!("┃  ✅ Grid initialized — ready for trading loop   ┃");
         info!("┃  {} levels  |  {:.3}% spacing              ┃",
@@ -464,7 +478,7 @@ impl GridBot {
         let stats  = self.get_stats().await;
         let border = "=".repeat(60);
         println!("\n{}", border);
-        println!("   [BOT] GRID BOT V5.2 - STATUS REPORT");
+        println!("   [BOT] GRID BOT V5.5 - STATUS REPORT");
         println!("{}", border);
         println!("\n[PERFORMANCE]");
         println!("  Total Cycles:      {}", stats.total_cycles);
@@ -526,7 +540,7 @@ pub struct BotStats {
 
 impl BotStats {
     pub fn display_summary(&self) {
-        println!("\n[STATS] BOT STATISTICS SUMMARY V5.2");
+        println!("\n[STATS] BOT STATISTICS SUMMARY V5.5");
         println!("   Cycles:            {}", self.total_cycles);
         println!("   Trades:            {}", self.successful_trades);
         println!("   Repositions:       {}", self.grid_repositions);
@@ -550,7 +564,7 @@ impl BotStats {
         if self.trading_paused {
             println!("   Status:            PAUSED");
         } else {
-            println!("   Status:            V5.2 ACTIVE");
+            println!("   Status:            V5.5 ACTIVE");
         }
     }
 }

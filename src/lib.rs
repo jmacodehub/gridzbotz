@@ -1,15 +1,16 @@
 //! ═══════════════════════════════════════════════════════════════════════════
-//! 🤖 SOLANA GRID TRADING BOT - MULTI-STRATEGY V4.0 "CONSERVATIVE AI"
+//! 🤖 GRIDZBOTZ V5.5 — PRODUCTION GRID TRADING BOT
 //!
 //! High-performance Rust implementation with:
 //! • Dynamic grid repositioning
 //! • Multi-strategy consensus engine (MACD, RSI, Mean Reversion)
+//! • Engine factory (paper ↔ live from config)
 //! • Real-time risk management
 //! • Market regime detection
 //! • Automatic order lifecycle management
 //! • Technical indicators library (ATR, MACD, EMA, SMA)
 //!
-//! Built for production trading on Solana DEX (OpenBook/Serum)
+//! Built for production trading on Solana DEX (Jupiter V6)
 //!
 //! Architecture:
 //! ```text
@@ -17,13 +18,13 @@
 //! │                      GridBot (Orchestrator)                     │
 //! ├─────────────────────────────────────────────────────────────────┤
 //! │  Config  │  Trading  │  Strategies  │  Risk  │  Metrics  │ DEX │
-//! │          │           │  Indicators  │        │           │     │
+//! │          │  Engine   │  Indicators  │        │           │     │
 //! └─────────────────────────────────────────────────────────────────┘
 //! ```
 //!
-//! Version: 4.0.0
+//! Version: 5.5.0
 //! License: MIT
-//! Date: February 10, 2026
+//! Date: March 8, 2026
 //! ═══════════════════════════════════════════════════════════════════════════
 
 #![allow(missing_docs)]
@@ -43,7 +44,7 @@
 // if_same_then_else               — identical confidence arms; momentum.rs
 // doc_lazy_continuation           — list-item indent; trading/trade.rs
 // clone_on_copy                   — Pubkey.clone() → deref; real_trader.rs
-// should_implement_trait          — SmartFeeFilter::default() naming
+// should_implement_trait           — SmartFeeFilter::default() naming
 // derivable_impls                 — SpacingMode Default; grid_rebalancer.rs
 // assertions_on_constants         — assert!(true) guard; bots/grid_bot.rs
 // len_zero                        — prices.len() > 0 → !is_empty()
@@ -90,7 +91,7 @@ pub mod trading;
 /// Strategy implementations (grid, momentum, RSI, mean reversion)
 pub mod strategies;
 
-/// Technical indicators (ATR, MACD, EMA, SMA) - NEW in v4.0!
+/// Technical indicators (ATR, MACD, EMA, SMA, Volatility)
 pub mod indicators;
 
 /// Risk management (circuit breakers, position sizing, stop loss)
@@ -102,7 +103,7 @@ pub mod security;
 /// Performance metrics and analytics
 pub mod metrics;
 
-/// DEX integration (OpenBook/Serum)
+/// DEX integration (Jupiter V6)
 pub mod dex;
 
 /// Utility functions and helpers
@@ -164,15 +165,15 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const NAME: &str = env!("CARGO_PKG_NAME");
 
 /// Project codename
-pub const CODENAME: &str = "MULTI-STRATEGY V4.0 - CONSERVATIVE AI";
+pub const CODENAME: &str = "GRIDZBOTZ V5.5 — Production Grid Trading";
 
 /// Build information
 pub const BUILD_INFO: BuildInfo = BuildInfo {
     version: VERSION,
     name: NAME,
     codename: CODENAME,
-    git_hash: "phase3a",
-    build_date: "2026-02-10",
+    git_hash: "v5.5-init-fix",
+    build_date: "2026-03-08",
     rust_version: "1.70",
 };
 
@@ -197,7 +198,11 @@ pub struct BuildInfo {
 // Library Initialization
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Initialize the trading bot library with enhanced startup banner.
+/// Initialize the trading bot library.
+///
+/// V5.5: Banner display is handled by main.rs print_banner() — init() only
+/// sets up the RUST_LOG default. This eliminates the dual-banner issue where
+/// lib.rs printed V0.2.5/V4.0 and main.rs printed V5.5.
 ///
 /// # Returns
 ///
@@ -213,7 +218,8 @@ pub struct BuildInfo {
 /// }
 /// ```
 pub fn init() -> Result<(), Box<dyn std::error::Error>> {
-    print_startup_banner();
+    // V5.5: Banner removed — main.rs print_banner() handles display.
+    // This avoids the dual-banner issue (old V0.2.5 + new V5.5).
 
     // Initialize logging if not already configured
     if std::env::var("RUST_LOG").is_err() {
@@ -233,7 +239,7 @@ pub fn init() -> Result<(), Box<dyn std::error::Error>> {
 ///
 /// Returns `Ok(())` if configuration is valid, otherwise returns validation errors.
 pub fn init_with_config(config: &Config) -> Result<(), Box<dyn std::error::Error>> {
-    print_startup_banner();
+    // V5.5: Banner removed — main.rs print_banner() handles display.
 
     // Validate configuration
     config.validate()?;
@@ -248,13 +254,14 @@ pub fn init_with_config(config: &Config) -> Result<(), Box<dyn std::error::Error
 // Display & Utility Functions
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Print enhanced startup banner with version info
-fn print_startup_banner() {
+/// Print startup banner with version info.
+/// Available for direct use, but main.rs print_banner() is preferred
+/// as it includes config-aware mode/instance display.
+pub fn print_startup_banner() {
     let border = "═".repeat(70);
 
     println!("\n{}", border);
-    println!("  🤖 {} V{}", NAME.to_uppercase(), VERSION);
-    println!("  🧠 {}", CODENAME);
+    println!("  🤖 GRIDZBOTZ V5.5 — Production Grid Trading");
     println!("{}", border);
     println!();
     println!("  💪 Built with Rust for MAXIMUM PERFORMANCE!");
@@ -306,7 +313,7 @@ pub fn version_string() -> String {
 /// async fn main() -> Result<()> {
 ///     let config = Config::from_file("config/master.toml")?;
 ///
-///     // V5.2: GridBot::new() requires config + injected engine
+///     // V5.5: GridBot::new() requires config + injected engine
 ///     // PaperTradingEngine::new(initial_usdc, initial_sol)
 ///     let engine = Arc::new(PaperTradingEngine::new(10_000.0, 5.0));
 ///     let mut bot = GridBot::new(config, engine)?;
@@ -389,7 +396,7 @@ mod tests {
     fn test_version_string() {
         let ver_str = version_string();
         assert!(ver_str.contains(VERSION));
-        assert!(ver_str.contains("CONSERVATIVE AI"));
+        assert!(ver_str.contains("GRIDZBOTZ V5.5"));
         println!("✅ Version string: {}", ver_str);
     }
 
