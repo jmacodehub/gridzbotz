@@ -17,6 +17,7 @@ config/archive/
 .env
 .env.local
 .env.production
+.env.bak
 *.pem
 *.key
 keystore*.json
