@@ -34,7 +34,6 @@
 #  Run: cargo run --release -- --config config/production/mainnet-sol-usdc-v3.6-enhanced.toml
 # ═══════════════════════════════════════════════════════════════════════════
 
-test_name = "Mainnet SOL/USDC V3.6 Enhanced"
 
 # ═══════════════════════════════════════════════════════════════════════════
 #  🤖 BOT CORE

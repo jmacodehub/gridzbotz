@@ -67,6 +67,7 @@ pub use fees::FeesConfig;
 /// This is the single source of truth for all bot behavior.
 /// Every setting can be customized via TOML files.
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct Config {
     /// Bot metadata and environment
     pub bot: BotConfig,
@@ -130,6 +131,7 @@ pub struct Config {
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct BotConfig {
     /// Bot name (e.g., "GridzBot-Live-1")
     pub name: String,
@@ -213,6 +215,7 @@ impl BotConfig {
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct NetworkConfig {
     /// Solana cluster: "devnet", "testnet", "mainnet-beta"
     pub cluster: String,
@@ -265,6 +268,7 @@ impl NetworkConfig {
 /// require_password = false
 /// ```
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct SecurityConfig {
     /// Path to Solana keypair file (JSON format)
     #[serde(default = "default_wallet_path")]
@@ -372,6 +376,7 @@ impl SecurityConfig {
 /// max_retries = 3
 /// ```
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct ExecutionConfig {
     /// Maximum SOL amount per single Jupiter swap.
     /// Hard safety cap — no single trade exceeds this regardless of grid sizing.
@@ -478,6 +483,7 @@ impl ExecutionConfig {
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct TradingConfig {
     // ─────────────────────────────────────────────────────────────────────────
     // Core Grid Settings (Required)
@@ -792,6 +798,7 @@ impl TradingConfig {
 /// enable_gate = true     -> enable_gate = true
 /// ```
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct RegimeGateConfig {
     /// Enable regime-based trading gates
     pub enable_regime_gate: bool,
@@ -849,6 +856,7 @@ impl Default for RegimeGateConfig {
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct StrategiesConfig {
     /// Active strategies (e.g., ["grid", "momentum"])
     pub active: Vec<String>,
@@ -949,6 +957,7 @@ impl Default for StrategiesConfig {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct GridStrategyConfig {
     pub enabled: bool,
     pub weight: f64,
@@ -957,6 +966,7 @@ pub struct GridStrategyConfig {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct MomentumStrategyConfig {
     pub enabled: bool,
     pub weight: f64,
@@ -976,6 +986,7 @@ pub struct MomentumStrategyConfig {
 /// Usage: call `to_mean_reversion_params()` to get a `MeanReversionConfig`
 /// suitable for `MeanReversionStrategy::new_from_config()`.
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct MeanReversionStrategyConfig {
     pub enabled: bool,
     pub weight: f64,
@@ -1010,6 +1021,7 @@ pub struct MeanReversionStrategyConfig {
 /// Usage: call `to_rsi_params()` to get an `RsiConfig`
 /// suitable for `RsiStrategy::new_from_config()`.
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct RsiStrategyConfig {
     pub enabled: bool,
     pub weight: f64,
@@ -1046,6 +1058,7 @@ pub struct RsiStrategyConfig {
 /// min_warmup_periods = 26
 /// ```
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct MomentumMACDStrategyConfig {
     /// Include this strategy in the consensus vote
     pub enabled: bool,
@@ -1227,6 +1240,7 @@ impl Default for MomentumMACDStrategyConfig {
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct RiskConfig {
     /// Maximum position size as % of portfolio
     pub max_position_size_pct: f64,
@@ -1279,6 +1293,7 @@ impl RiskConfig {
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct PythConfig {
     pub http_endpoint: String,
     pub feed_ids: Vec<String>,
@@ -1314,6 +1329,7 @@ impl Default for PythConfig {
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct PerformanceConfig {
     /// Main cycle interval (milliseconds)
     #[serde(default = "default_cycle_interval")]
@@ -1343,6 +1359,7 @@ impl Default for PerformanceConfig {
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct LoggingConfig {
     /// Log level: "trace", "debug", "info", "warn", "error"
     pub level: String,
@@ -1370,6 +1387,7 @@ impl Default for LoggingConfig {
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct MetricsConfig {
     #[serde(default = "default_true")]
     pub enable_metrics: bool,
@@ -1393,6 +1411,7 @@ impl Default for MetricsConfig {
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct PaperTradingConfig {
     /// Initial USDC balance
     #[serde(default = "default_initial_usdc")]
@@ -1488,6 +1507,7 @@ impl Default for PaperTradingConfig {
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct DatabaseConfig {
     #[serde(default)]
     pub enabled: bool,
@@ -1497,6 +1517,7 @@ pub struct DatabaseConfig {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct AlertsConfig {
     #[serde(default)]
     pub enabled: bool,

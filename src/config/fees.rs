@@ -59,6 +59,7 @@ fn default_market_impact_coefficient() -> f64 { 0.01 }
 /// enable_smart_filter = false  # opt-in: wire SmartFeeFilter for trade gating
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct FeesConfig {
     /// Maker fee in basis points (1 bps = 0.01%).
     /// Default: 2.0 bps (0.02%) — standard Solana DEX maker fee.

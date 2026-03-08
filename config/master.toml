@@ -72,7 +72,6 @@
 #
 # ═══════════════════════════════════════════════════════════════════════════
 
-test_name = "Master V5.4.2 - Canonical Template"
 
 # ═══════════════════════════════════════════════════════════════════════════
 #  🤖 BOT CORE
@@ -142,8 +141,8 @@ require_password = false
 
 # ⚠️  V5.4.1: max_trade_size_usdc MOVED to [execution] — it was silently ignored here.
 # max_transaction_amount_usdc is DEPRECATED — use max_trade_size_usdc in [execution].
-max_daily_trades      = 100
-max_daily_volume_usdc = 500.0
+#max_daily_trades      = 100
+#max_daily_volume_usdc = 500.0
 
 # ═══════════════════════════════════════════════════════════════════════════
 #  ⚡ EXECUTION (Live Trading Knobs)
@@ -280,7 +279,8 @@ enable_regime_gate       = false     # 🔥 DISABLED for master/testing — enab
 min_volatility_to_trade  = 0.0       # 0.0 = no minimum (any vol trades)
 # 🆕 V5.4.1: HIGH threshold — pause if volatility exceeds this %
 # Extracted from multi-v5-ai research (was missing from master)
-max_volatility_to_trade  = 8.0       # 8% ceiling — extreme market protection
+# ⚠️ PR #76: Ghost field — not yet in TradingConfig. Wire in PR #77.
+# max_volatility_to_trade  = 8.0       # 8% ceiling — extreme market protection
 pause_in_very_low_vol    = false     # Set true in production
 # 🔮 Future: Per-regime fee tolerances (from multi-v5-ai [fee_filtering], archived Feb 2026)
 #    Classify market into 4 regimes and apply different max-fee caps per regime.
@@ -333,7 +333,6 @@ require_timeframe_alignment  = false
 enabled        = true
 weight         = 1.0
 min_confidence = 0.5
-reposition_threshold_pct = 0.50
 
 # ─── Strategy 2: Momentum ───────────────────────────────────────────────
 [strategies.momentum]

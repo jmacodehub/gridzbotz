@@ -24,7 +24,6 @@
 #  Next: 48h paper run → compare vs mainnet-sol-usdc-v1 (grid-only baseline)
 # ═══════════════════════════════════════════════════════════════════════════
 
-test_name = "R&D: Multi-Strategy Consensus Profile"
 
 [bot]
 name           = "MultiStrat-RD-v1"
