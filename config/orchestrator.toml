@@ -1,24 +1,42 @@
-# ════════════════════════════════════════════════════════════
-# GRIDZBOTZ ORCHESTRATOR CONFIG V1.0
-# Multi-bot fleet management — PR #86 / GAP-3
+# ══════════════════════════════════════════════════════════════════════
+# ORCHESTRATOR CONFIG V1.0 (PR #86 — Multi-Bot Fleet Commander)
 #
-# Usage: cargo run -- --orchestrate config/orchestrator.toml
+# Usage:
+#   cargo run -- --orchestrate config/orchestrator.toml
 #
-# Each entry in bot_configs is an independent bot TOML.
-# New pair = new config file, never new code.
-# ════════════════════════════════════════════════════════════
+# Rules:
+#   • Each bot_configs entry = path to an individual bot TOML
+#   • New trading pair = new TOML in config/bots/, add path here
+#   • Never new code — config-driven everything
+#   • Paper-validate fleet before switching any bot to live mode
+#
+# Safety invariant:
+#   All bots listed here MUST use execution_mode = "paper" until
+#   the fleet has been paper-validated for ≥24 h without incident.
+# ══════════════════════════════════════════════════════════════════════
 
-# Bot config files to load — each runs as an independent instance
+# ── Bot fleet ───────────────────────────────────────────────────────────────
+# Each entry is the path to an individual bot TOML.
+# The orchestrator loads each independently — bots can have different
+# pairs, grid spacing, and capital allocations.
+# Add a new pair: create config/bots/<pair>.toml, append path here.
 bot_configs = [
     "config/bots/sol-usdc-grid-01.toml",
     "config/bots/sol-usdc-grid-02.toml",
 ]
 
-# Tick interval in milliseconds (applied to all bots)
+# ── Timing ────────────────────────────────────────────────────────────────
+# How often each bot's process_tick() loop fires (milliseconds).
+# Individual bots can still override this via their own TOML.
 cycle_interval_ms = 1000
 
-# Emit aggregated fleet stats every N cycles
+# ── Observability ──────────────────────────────────────────────────────────
+# How often (in cycles) to emit aggregated OrchestratorStats to logs.
+# 30 cycles × 1000 ms = stats line every 30 seconds.
 stats_interval = 30
 
-# mpsc channel buffer per bot (total = N * this)
+# ── Channel buffer ──────────────────────────────────────────────────────────
+# Bounded mpsc channel buffer per bot.
+# Total buffer = N bots × channel_buffer_per_bot (min 32 enforced in code).
+# Increase if you see dropped tick messages under high load.
 channel_buffer_per_bot = 10
