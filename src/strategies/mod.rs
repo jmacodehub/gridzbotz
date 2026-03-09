@@ -15,6 +15,7 @@
 //   ✅ V5.5 on_fill() trait method + notify_fill() fan-out
 //   ✅ Phase 1: 7 strategy modules wired (mean_reversion, rsi, momentum,
 //      momentum_macd, rsi_enhanced, consensus_wma, fee_filter)
+//   ✅ V5.6 StrategyRegistryBuilder for config-driven registration (GAP-2)
 // ══════════════════════════════════════════════════════════════════════
 
 use anyhow::Result;
@@ -31,6 +32,7 @@ pub mod grid_rebalancer;
 pub mod mean_reversion;
 pub mod momentum;
 pub mod momentum_macd;
+pub mod registry;
 pub mod rsi;
 pub mod rsi_enhanced;
 pub mod shared;
@@ -43,6 +45,7 @@ pub use grid_rebalancer::*;
 pub use mean_reversion::*;
 pub use momentum::*;
 pub use momentum_macd::*;
+pub use registry::*;
 pub use rsi::*;
 pub use rsi_enhanced::*;
 pub use shared::*;
