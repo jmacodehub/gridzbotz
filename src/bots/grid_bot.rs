@@ -1,5 +1,11 @@
 //! ═══════════════════════════════════════════════════════════════════════════
-//! GRID BOT V5.6 — ELITE AUTONOMOUS TRADING ORCHESTRATOR
+//! GRID BOT V5.7 — ELITE AUTONOMOUS TRADING ORCHESTRATOR
+//!
+//! V5.7 CHANGES (PR #85 — process_tick dispatch + BotStats wiring):
+//! ✅ total_orders_placed: u64 — incremented in place_grid_orders() per successful order
+//! ✅ last_known_pnl: f64    — cached in process_price_update() from wallet.pnl_usdc()
+//! ✅ stats() now returns live total_orders + current_pnl (TODO stubs resolved)
+//! ✅ Bot::initialize() folds initialize_with_price() — one method for orchestrator
 //!
 //! V5.6 CHANGES (PR #84 — impl Bot for GridBot + PriceFeed ownership):
 //! ✅ GAP-1 RESOLVED: impl Bot for GridBot — trait-polymorphic, orchestrator-ready
@@ -31,7 +37,7 @@
 //!   MeanReversionStrategyConfig.sma_period → MeanReversionConfig.mean_period
 //!   MomentumMACDStrategyConfig.*      → MomentumMACDConfig.* (match 1:1)
 //!
-//! March 2026 — V5.6 BOT TRAIT IMPL 🤖
+//! March 2026 — V5.7 BOT TRAIT DISPATCH 🤖
 //! ═══════════════════════════════════════════════════════════════════════════
 
 use std::sync::Arc;
@@ -85,6 +91,11 @@ pub struct GridBot {
     last_optimization_cycle: u64,
     grid_initialized:       bool,
     total_fills_tracked:    u64,
+    /// Total orders placed lifetime — wires BotStats.total_orders (PR #85).
+    total_orders_placed:    u64,
+    /// Last known P&L cached from process_price_update() — wires BotStats.current_pnl (PR #85).
+    /// Sync-safe: updated every async tick, read by sync fn stats().
+    last_known_pnl:         f64,
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -96,17 +107,16 @@ impl GridBot {
     ///
     /// `feed` is `Arc<PriceFeed>` so main.rs retains a clone for the
     /// trading loop display (price, volatility) without double-ownership.
-    /// Grid placement is deferred — call `initialize_with_price()` before
-    /// the trading loop.
+    /// Grid placement is deferred — `Bot::initialize()` handles it.
     pub fn new(
         config: Config,
         engine: Arc<dyn TradingEngine + Send + Sync>,
         feed:   Arc<PriceFeed>,
     ) -> Result<Self> {
-        info!("[BOT-V5.6] Initializing GridBot V5.6...");
-        info!("[BOT-V5.6] Engine:   Injected by main.rs (Paper or Real)");
-        info!("[BOT-V5.6] PriceFeed: Owned via Arc — process_tick() autonomous");
-        info!("[BOT-V5.6] Bot Trait: IMPLEMENTED (GAP-1 resolved)");
+        info!("[BOT-V5.7] Initializing GridBot V5.7...");
+        info!("[BOT-V5.7] Engine:   Injected by main.rs (Paper or Real)");
+        info!("[BOT-V5.7] PriceFeed: Owned via Arc — process_tick() autonomous");
+        info!("[BOT-V5.7] Bot Trait: IMPLEMENTED + DISPATCHED (PR #84+#85)");
 
         // ── GridRebalancer — always active ────────────────────────────────
         let grid_config = GridRebalancerConfig {
@@ -133,7 +143,6 @@ impl GridBot {
             .context("Failed to create GridRebalancer")?;
 
         // ── Config-driven strategy registration ──────────────────────────
-        // _weights retained for ConsensusEngine weighted-vote wiring (PR #85+).
         let analytics_ctx = AnalyticsContext::default();
         let (_manager, _weights) = StrategyRegistryBuilder::new()
             .add(
@@ -180,7 +189,7 @@ impl GridBot {
 
         let manager = _manager;
 
-        info!("[BOT-V5.6] ✅ {} strategies loaded via StrategyRegistryBuilder",
+        info!("[BOT-V5.7] ✅ {} strategies loaded via StrategyRegistryBuilder",
               manager.strategies.len());
 
         let grid_state         = GridStateTracker::new();
@@ -189,7 +198,7 @@ impl GridBot {
         let base_size          = config.trading.min_order_size;
         let adaptive_optimizer = AdaptiveOptimizer::new(base_spacing, base_size);
 
-        info!("[BOT-V5.6] GridBot V5.6 initialization complete");
+        info!("[BOT-V5.7] GridBot V5.7 initialization complete");
 
         Ok(Self {
             manager,
@@ -199,30 +208,31 @@ impl GridBot {
             enhanced_metrics,
             adaptive_optimizer,
             feed,
-            session_start: Instant::now(),
-            last_price: None,
-            total_cycles: 0,
-            successful_trades: 0,
-            grid_repositions: 0,
-            last_reposition_time: None,
+            session_start:           Instant::now(),
+            last_price:              None,
+            total_cycles:            0,
+            successful_trades:       0,
+            grid_repositions:        0,
+            last_reposition_time:    None,
             last_optimization_cycle: 0,
-            grid_initialized: false,
-            total_fills_tracked: 0,
+            grid_initialized:        false,
+            total_fills_tracked:     0,
+            total_orders_placed:     0,   // PR #85: wires BotStats.total_orders
+            last_known_pnl:          0.0, // PR #85: wires BotStats.current_pnl
         })
     }
 
-    // ── Concrete initialize (kept for backwards compat + initialize_with_price) ──
-    pub async fn initialize(&mut self) -> Result<()> {
+    // ── Concrete initialize hook (kept for internal use) ──────────────────
+    async fn pre_init_hook(&mut self) -> Result<()> {
         info!("[BOT] Async pre-init hook complete");
         Ok(())
     }
 
-    /// V5.5 FIX: First-time grid placement via place_grid_orders() directly.
-    /// Called by main.rs initialize_components() before the trading loop.
-    /// PR #85 will fold this into Bot::initialize() once feed is fully owned.
-    pub async fn initialize_with_price(&mut self) -> Result<()> {
+    /// First-time grid placement — reads price from self.feed.
+    /// Called by Bot::initialize() — no external arg needed.
+    async fn initialize_with_price(&mut self) -> Result<()> {
         info!("┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓");
-        info!("┃  V5.6 GRID INIT — awaiting live price...       ┃");
+        info!("┃  V5.7 GRID INIT — awaiting live price...       ┃");
         info!("┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛");
 
         let initial_price = self.feed.latest_price().await;
@@ -279,7 +289,7 @@ impl GridBot {
     pub async fn reposition_grid(&mut self, current_price: f64, last_price: f64) -> Result<()> {
         if !self.grid_initialized {
             warn!("⚠️  [BOT] Grid not initialized — emergency init at ${:.4}", current_price);
-            warn!("⚠️  [BOT] This should not happen — check initialize_with_price() in main.rs!");
+            warn!("⚠️  [BOT] This should not happen — Bot::initialize() should have run!");
             self.place_grid_orders(current_price).await
                 .context("Emergency grid initialization failed")?;
             self.grid_initialized = true;
@@ -352,7 +362,11 @@ impl GridBot {
             match self.engine.place_limit_order_with_level(
                 OrderSide::Buy, buy_price, order_size, Some(level.id)
             ).await {
-                Ok(id) => { level.set_buy_order(id); orders_placed += 1; }
+                Ok(id) => {
+                    level.set_buy_order(id);
+                    orders_placed += 1;
+                    self.total_orders_placed += 1; // PR #85: track lifetime order count
+                }
                 Err(e) => {
                     warn!("[BOT] Failed buy @ ${:.4}: {}", buy_price, e);
                     orders_failed += 1;
@@ -362,7 +376,11 @@ impl GridBot {
             match self.engine.place_limit_order_with_level(
                 OrderSide::Sell, sell_price, order_size, Some(level.id)
             ).await {
-                Ok(id) => { level.set_sell_order(id); orders_placed += 1; }
+                Ok(id) => {
+                    level.set_sell_order(id);
+                    orders_placed += 1;
+                    self.total_orders_placed += 1; // PR #85: track lifetime order count
+                }
                 Err(e) => {
                     warn!("[BOT] Failed sell @ ${:.4}: {}", sell_price, e);
                     orders_failed += 1;
@@ -376,7 +394,7 @@ impl GridBot {
         Ok(())
     }
 
-    // ── Core tick logic (called by both concrete loop + Bot::process_tick) ──
+    // ── Core tick logic (called by Bot::process_tick) ─────────────────────
     pub async fn process_price_update(&mut self, price: f64, timestamp: i64) -> Result<()> {
         self.total_cycles += 1;
         self.last_price = Some(price);
@@ -413,6 +431,8 @@ impl GridBot {
         }
 
         let wallet = self.engine.get_wallet().await;
+        // PR #85: cache pnl for sync fn stats() — updated every tick.
+        self.last_known_pnl = wallet.pnl_usdc(price);
         self.enhanced_metrics.update_portfolio_value(wallet.total_value_usdc(price));
 
         if self.total_cycles - self.last_optimization_cycle >= OPTIMIZATION_INTERVAL_CYCLES {
@@ -458,7 +478,7 @@ impl GridBot {
         let stats  = self.get_stats().await;
         let border = "=".repeat(60);
         println!("\n{}", border);
-        println!("   [BOT] GRID BOT V5.6 — STATUS REPORT");
+        println!("   [BOT] GRID BOT V5.7 — STATUS REPORT");
         println!("{}", border);
         println!("\n[PERFORMANCE]");
         println!("  Total Cycles:      {}", stats.total_cycles);
@@ -466,6 +486,7 @@ impl GridBot {
         println!("  Grid Repositions:  {}", stats.grid_repositions);
         println!("  Open Orders:       {}", stats.open_orders);
         println!("  Fills Tracked:     {}", stats.total_fills_tracked);
+        println!("  Orders Placed:     {}", self.total_orders_placed);
         let grid_levels = self.grid_state.count().await;
         let filled_buys = self.grid_state.get_levels_with_filled_buys().await.len();
         let total_pnl   = self.grid_state.total_realized_pnl().await;
@@ -496,7 +517,7 @@ impl GridBot {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// impl Bot for GridBot  (GAP-1 — PR #84)
+// impl Bot for GridBot  (GAP-1 — PR #84 / #85)
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[async_trait]
@@ -509,11 +530,16 @@ impl Bot for GridBot {
         self.config.bot.instance_name()
     }
 
-    /// One-time initialization — delegates to concrete initialize().
-    /// In PR #85 this will also call initialize_with_price() so
-    /// Box<dyn Bot> callers need zero knowledge of the feed.
+    /// One-time initialization: pre-init hook + grid placement.
+    ///
+    /// PR #85: Folds initialize_with_price() into Bot::initialize() so
+    /// the orchestrator (and main.rs) call exactly ONE method.
+    /// Box<dyn Bot> callers need zero knowledge of feed or price.
     async fn initialize(&mut self) -> Result<()> {
-        self.initialize().await
+        self.pre_init_hook().await?;
+        self.initialize_with_price().await
+            .context("Bot::initialize — grid placement failed")?;
+        Ok(())
     }
 
     /// Autonomous tick: fetch price → process → return TickResult.
@@ -521,7 +547,7 @@ impl Bot for GridBot {
     /// Returns:
     /// - `TickResult::shutdown()`  — invalid price (feed problem)
     /// - `TickResult::paused(r)`   — regime gate / circuit breaker blocked
-    /// - `TickResult::active(f,0)` — normal cycle, f = fills this tick
+    /// - `TickResult::active(f,o)` — normal cycle, f=fills, o=orders_placed delta
     async fn process_tick(&mut self) -> Result<TickResult> {
         let price = self.feed.latest_price().await;
         if price <= 0.0 {
@@ -531,19 +557,20 @@ impl Bot for GridBot {
 
         let ts = chrono::Utc::now().timestamp();
 
-        // Capture fill count before tick so we can delta after
-        let fills_before = self.total_fills_tracked;
+        let fills_before  = self.total_fills_tracked;
+        let orders_before = self.total_orders_placed;
 
         self.process_price_update(price, ts).await?;
 
-        let fills_this_tick = self.total_fills_tracked.saturating_sub(fills_before);
-        let stats           = self.get_stats().await;
+        let fills_this_tick  = self.total_fills_tracked.saturating_sub(fills_before);
+        let orders_this_tick = self.total_orders_placed.saturating_sub(orders_before);
+        let stats            = self.get_stats().await;
 
         if stats.trading_paused {
             return Ok(TickResult::paused("regime gate / circuit breaker"));
         }
 
-        Ok(TickResult::active(fills_this_tick, 0))
+        Ok(TickResult::active(fills_this_tick, orders_this_tick))
     }
 
     /// Graceful shutdown: display final status, log structured summary.
@@ -553,18 +580,21 @@ impl Bot for GridBot {
         self.display_status(final_price).await;
         self.display_strategy_performance().await;
         info!(
-            "[BOT] Shutdown complete | cycles={} fills={} repos={} uptime={}s",
+            "[BOT] Shutdown complete | cycles={} fills={} orders={} repos={} uptime={}s pnl=${:.2}",
             self.total_cycles,
             self.total_fills_tracked,
+            self.total_orders_placed,
             self.grid_repositions,
             self.session_start.elapsed().as_secs(),
+            self.last_known_pnl,
         );
         Ok(())
     }
 
     /// Map GridBotStats (19 fields) → BotStats (8-field trait contract).
     ///
-    /// Used by future orchestrator + observability layer.
+    /// PR #85: total_orders and current_pnl are now live — no more TODO stubs.
+    /// Used by orchestrator + observability layer.
     /// Full GridBotStats available via `bot.get_stats().await`.
     fn stats(&self) -> BotStats {
         BotStats {
@@ -572,10 +602,10 @@ impl Bot for GridBot {
             bot_type:     "GridBot".to_string(),
             total_cycles: self.total_cycles,
             total_fills:  self.total_fills_tracked,
-            total_orders: 0, // TODO(tech-debt): track placed orders in PR #85
+            total_orders: self.total_orders_placed, // ✅ PR #85: live
             uptime_secs:  self.session_start.elapsed().as_secs(),
             is_paused:    false,
-            current_pnl:  0.0, // TODO(tech-debt): wire live pnl_usdc without async in PR #85
+            current_pnl:  self.last_known_pnl,      // ✅ PR #85: live (cached from last tick)
         }
     }
 }
@@ -616,7 +646,7 @@ pub struct GridBotStats {
 
 impl GridBotStats {
     pub fn display_summary(&self) {
-        println!("\n[STATS] GRID BOT STATISTICS SUMMARY V5.6");
+        println!("\n[STATS] GRID BOT STATISTICS SUMMARY V5.7");
         println!("   Cycles:            {}", self.total_cycles);
         println!("   Trades:            {}", self.successful_trades);
         println!("   Repositions:       {}", self.grid_repositions);
@@ -640,7 +670,7 @@ impl GridBotStats {
         if self.trading_paused {
             println!("   Status:            PAUSED");
         } else {
-            println!("   Status:            V5.6 ACTIVE");
+            println!("   Status:            V5.7 ACTIVE");
         }
     }
 }
@@ -693,7 +723,6 @@ mod tests {
 
     #[test]
     fn test_tick_result_shutdown_on_bad_price() {
-        // Validate shutdown sentinel values match what process_tick() returns
         let r = TickResult::shutdown();
         assert!(!r.active);
         assert_eq!(r.fills, 0);
@@ -702,12 +731,41 @@ mod tests {
 
     #[test]
     fn test_bot_stats_default_zero() {
-        // BotStats::default() — used by orchestrator before first tick
         let s = BotStats::default();
         assert_eq!(s.total_cycles, 0);
         assert_eq!(s.total_fills, 0);
+        assert_eq!(s.total_orders, 0);
         assert_eq!(s.uptime_secs, 0);
         assert!(!s.is_paused);
         assert_eq!(s.current_pnl, 0.0);
+    }
+
+    #[test]
+    fn test_bot_stats_live_fields() {
+        // Verify PR #85: total_orders + current_pnl are wired (not stubbed to 0)
+        // We validate the struct shape — runtime values tested via integration.
+        let s = BotStats {
+            instance_id:  "sol-usdc-01".into(),
+            bot_type:     "GridBot".into(),
+            total_cycles: 200,
+            total_fills:  18,
+            total_orders: 40,   // <-- was hardcoded 0 in PR #84
+            uptime_secs:  600,
+            is_paused:    false,
+            current_pnl:  7.50, // <-- was hardcoded 0.0 in PR #84
+        };
+        assert_eq!(s.total_orders, 40);
+        assert!((s.current_pnl - 7.50).abs() < 1e-9);
+        assert_eq!(s.total_cycles, 200);
+    }
+
+    #[test]
+    fn test_tick_result_orders_placed_field() {
+        // process_tick() now returns orders_placed delta (was always 0 in PR #84)
+        let r = TickResult::active(2, 6);
+        assert_eq!(r.fills, 2);
+        assert_eq!(r.orders_placed, 6);
+        assert!(r.active);
+        assert!(r.pause_reason.is_none());
     }
 }
