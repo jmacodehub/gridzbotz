@@ -1,5 +1,13 @@
-//! ═══════════════════════════════════════════════════════════════════════════
-//! GRID BOT V5.7 — ELITE AUTONOMOUS TRADING ORCHESTRATOR
+//! ═════════════════════════════════════════════════════════════════════════
+//! GRID BOT V5.8 — ELITE AUTONOMOUS TRADING ORCHESTRATOR
+//!
+//! V5.8 CHANGES (PR #86 — Multi-Bot Orchestrator):
+//! ✅ intent_registry: Option<IntentRegistry> field added to GridBot struct
+//! ✅ set_intent_registry() impl overrides Bot trait default no-op
+//! ✅ place_grid_orders(): atomic DashMap::entry() conflict guard before each
+//!    place_limit_order_with_level() call — skips level if another bot owns it
+//! ✅ On grid reposition: clears own intent keys before placing new orders
+//! ✅ Solo mode: intent_registry = None — zero behavior change, zero perf cost
 //!
 //! V5.7 CHANGES (PR #85 — process_tick dispatch + BotStats wiring):
 //! ✅ total_orders_placed: u64 — incremented in place_grid_orders() per successful order
@@ -37,8 +45,8 @@
 //!   MeanReversionStrategyConfig.sma_period → MeanReversionConfig.mean_period
 //!   MomentumMACDStrategyConfig.*      → MomentumMACDConfig.* (match 1:1)
 //!
-//! March 2026 — V5.7 BOT TRAIT DISPATCH 🤖
-//! ═══════════════════════════════════════════════════════════════════════════
+//! March 2026 — V5.8 MULTI-BOT ORCHESTRATOR 🤖
+//! ═════════════════════════════════════════════════════════════════════════
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -46,7 +54,7 @@ use async_trait::async_trait;
 use anyhow::{Result, Context, bail};
 use log::{info, warn, debug, trace};
 
-use crate::bots::bot_trait::{Bot, BotStats, TickResult};
+use crate::bots::bot_trait::{Bot, BotStats, IntentRegistry, TickResult};
 use crate::strategies::{
     StrategyManager, GridRebalancer, GridRebalancerConfig,
     StrategyRegistryBuilder,
@@ -68,9 +76,9 @@ use crate::config::Config;
 
 const OPTIMIZATION_INTERVAL_CYCLES: u64 = 50;
 
-// ═══════════════════════════════════════════════════════════════════════════
+// ═════════════════════════════════════════════════════════════════════════
 // GRID BOT STRUCT
-// ═══════════════════════════════════════════════════════════════════════════
+// ═════════════════════════════════════════════════════════════════════════
 
 pub struct GridBot {
     pub manager:            StrategyManager,
@@ -81,6 +89,10 @@ pub struct GridBot {
     pub adaptive_optimizer: AdaptiveOptimizer,
     /// Owned price feed — enables autonomous process_tick() (GAP-1 / PR #84).
     feed:                   Arc<PriceFeed>,
+    /// Shared intent registry for multi-bot conflict detection (PR #86).
+    /// `None` in solo mode — zero behavior change, zero perf cost.
+    /// `Some(registry)` in orchestrated mode — injected by Orchestrator before initialize().
+    intent_registry:        Option<IntentRegistry>,
     /// Session start time — used for uptime_secs in BotStats.
     session_start:          Instant,
     last_price:             Option<f64>,
@@ -98,9 +110,9 @@ pub struct GridBot {
     last_known_pnl:         f64,
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
+// ═════════════════════════════════════════════════════════════════════════
 // CONSTRUCTOR
-// ═══════════════════════════════════════════════════════════════════════════
+// ═════════════════════════════════════════════════════════════════════════
 
 impl GridBot {
     /// Create a new GridBot with injected engine and price feed.
@@ -113,12 +125,12 @@ impl GridBot {
         engine: Arc<dyn TradingEngine + Send + Sync>,
         feed:   Arc<PriceFeed>,
     ) -> Result<Self> {
-        info!("[BOT-V5.7] Initializing GridBot V5.7...");
-        info!("[BOT-V5.7] Engine:   Injected by main.rs (Paper or Real)");
-        info!("[BOT-V5.7] PriceFeed: Owned via Arc — process_tick() autonomous");
-        info!("[BOT-V5.7] Bot Trait: IMPLEMENTED + DISPATCHED (PR #84+#85)");
+        info!("[BOT-V5.8] Initializing GridBot V5.8...");
+        info!("[BOT-V5.8] Engine:   Injected by main.rs (Paper or Real)");
+        info!("[BOT-V5.8] PriceFeed: Owned via Arc — process_tick() autonomous");
+        info!("[BOT-V5.8] Bot Trait: IMPLEMENTED + DISPATCHED (PR #84+#85+#86)");
 
-        // ── GridRebalancer — always active ────────────────────────────────
+        // ── GridRebalancer — always active ──────────────────────────────────────────
         let grid_config = GridRebalancerConfig {
             grid_spacing:                   config.trading.grid_spacing_percent / 100.0,
             order_size:                     config.trading.min_order_size,
@@ -142,7 +154,7 @@ impl GridBot {
         let grid_rebalancer = GridRebalancer::new(grid_config)
             .context("Failed to create GridRebalancer")?;
 
-        // ── Config-driven strategy registration ──────────────────────────
+        // ── Config-driven strategy registration ─────────────────────────────────
         let analytics_ctx = AnalyticsContext::default();
         let (_manager, _weights) = StrategyRegistryBuilder::new()
             .add(
@@ -189,7 +201,7 @@ impl GridBot {
 
         let manager = _manager;
 
-        info!("[BOT-V5.7] ✅ {} strategies loaded via StrategyRegistryBuilder",
+        info!("[BOT-V5.8] ✅ {} strategies loaded via StrategyRegistryBuilder",
               manager.strategies.len());
 
         let grid_state         = GridStateTracker::new();
@@ -198,7 +210,7 @@ impl GridBot {
         let base_size          = config.trading.min_order_size;
         let adaptive_optimizer = AdaptiveOptimizer::new(base_spacing, base_size);
 
-        info!("[BOT-V5.7] GridBot V5.7 initialization complete");
+        info!("[BOT-V5.8] GridBot V5.8 initialization complete");
 
         Ok(Self {
             manager,
@@ -208,6 +220,7 @@ impl GridBot {
             enhanced_metrics,
             adaptive_optimizer,
             feed,
+            intent_registry:         None, // PR #86: injected by orchestrator if multi-bot mode
             session_start:           Instant::now(),
             last_price:              None,
             total_cycles:            0,
@@ -217,12 +230,12 @@ impl GridBot {
             last_optimization_cycle: 0,
             grid_initialized:        false,
             total_fills_tracked:     0,
-            total_orders_placed:     0,   // PR #85: wires BotStats.total_orders
-            last_known_pnl:          0.0, // PR #85: wires BotStats.current_pnl
+            total_orders_placed:     0,
+            last_known_pnl:          0.0,
         })
     }
 
-    // ── Concrete initialize hook (kept for internal use) ──────────────────
+    // ── Concrete initialize hook (kept for internal use) ──────────────────────
     async fn pre_init_hook(&mut self) -> Result<()> {
         info!("[BOT] Async pre-init hook complete");
         Ok(())
@@ -231,9 +244,9 @@ impl GridBot {
     /// First-time grid placement — reads price from self.feed.
     /// Called by Bot::initialize() — no external arg needed.
     async fn initialize_with_price(&mut self) -> Result<()> {
-        info!("┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓");
-        info!("┃  V5.7 GRID INIT — awaiting live price...       ┃");
-        info!("┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛");
+        info!("┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓");
+        info!("┃  V5.8 GRID INIT — awaiting live price...       ┃");
+        info!("┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛");
 
         let initial_price = self.feed.latest_price().await;
         if initial_price <= 0.0 {
@@ -250,12 +263,12 @@ impl GridBot {
         let used_levels  = self.grid_state.count().await;
         self.enhanced_metrics.update_grid_stats(total_levels, used_levels);
 
-        info!("┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓");
+        info!("┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓");
         info!("┃  ✅ Grid initialized — ready for trading loop   ┃");
         info!("┃  {} levels  |  {:.3}% spacing              ┃",
               self.config.trading.grid_levels,
               self.config.trading.grid_spacing_percent);
-        info!("┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛");
+        info!("┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛");
         Ok(())
     }
 
@@ -308,6 +321,14 @@ impl GridBot {
             warn!("[BOT] {} levels have filled buys — preserving sell orders!", filled_buys.len());
         }
 
+        // PR #86: clear own intent keys before releasing and repositioning
+        // so other bots can claim these levels during the reposition window.
+        if let Some(registry) = &self.intent_registry {
+            let instance = self.config.bot.instance_name().to_string();
+            registry.retain(|_, v| v != &instance);
+            debug!("[BOT] Cleared intent registry entries for '{}' before reposition", instance);
+        }
+
         let cancellable = self.grid_state.get_cancellable_levels().await;
         let mut cancelled_count = 0;
         for level_id in cancellable {
@@ -345,12 +366,14 @@ impl GridBot {
         let grid_spacing = self.adaptive_optimizer.current_spacing_percent;
         let order_size   = self.adaptive_optimizer.current_position_size;
         let num_levels   = self.config.trading.grid_levels;
+        let pair_name    = self.config.bot.instance_name().to_string(); // used as registry key prefix
 
         debug!("[BOT] Grid params: {} levels @ {:.3}% spacing, {:.3} SOL/order",
                num_levels, grid_spacing * 100.0, order_size);
 
-        let mut orders_placed = 0;
-        let mut orders_failed = 0;
+        let mut orders_placed  = 0;
+        let mut orders_failed  = 0;
+        let mut intent_skipped = 0;
         let buy_levels  = num_levels / 2;
         let sell_levels = num_levels - buy_levels;
 
@@ -359,17 +382,40 @@ impl GridBot {
             let sell_price = current_price * (1.0 + grid_spacing * i as f64);
             let mut level  = self.grid_state.create_level(buy_price, sell_price, order_size).await;
 
+            // PR #86: atomic intent conflict check — solo mode: None = no-op (zero cost)
+            if let Some(registry) = &self.intent_registry {
+                let instance = self.config.bot.instance_name().to_string();
+                let key = (pair_name.clone(), level.id);
+                match registry.entry(key) {
+                    dashmap::Entry::Vacant(e) => {
+                        // No other bot on this level — claim it.
+                        e.insert(instance);
+                    }
+                    dashmap::Entry::Occupied(e) => {
+                        // Another bot already owns this level — skip entirely.
+                        warn!("[INTENT] Level {} (buy ${:.4} / sell ${:.4}) owned by '{}' — skipping",
+                              level.id, buy_price, sell_price, e.get());
+                        intent_skipped += 1;
+                        continue;
+                    }
+                }
+            }
+
             match self.engine.place_limit_order_with_level(
                 OrderSide::Buy, buy_price, order_size, Some(level.id)
             ).await {
                 Ok(id) => {
                     level.set_buy_order(id);
                     orders_placed += 1;
-                    self.total_orders_placed += 1; // PR #85: track lifetime order count
+                    self.total_orders_placed += 1;
                 }
                 Err(e) => {
                     warn!("[BOT] Failed buy @ ${:.4}: {}", buy_price, e);
                     orders_failed += 1;
+                    // Release intent on failure so another bot can try.
+                    if let Some(registry) = &self.intent_registry {
+                        registry.remove(&(pair_name.clone(), level.id));
+                    }
                     continue;
                 }
             }
@@ -379,7 +425,7 @@ impl GridBot {
                 Ok(id) => {
                     level.set_sell_order(id);
                     orders_placed += 1;
-                    self.total_orders_placed += 1; // PR #85: track lifetime order count
+                    self.total_orders_placed += 1;
                 }
                 Err(e) => {
                     warn!("[BOT] Failed sell @ ${:.4}: {}", sell_price, e);
@@ -389,12 +435,17 @@ impl GridBot {
             self.grid_state.update_level(level).await;
         }
 
-        info!("[BOT] Placed {} orders ({} pairs), {} failed",
-              orders_placed, buy_levels.min(sell_levels), orders_failed);
+        if intent_skipped > 0 {
+            info!("[BOT] Placed {} orders ({} pairs), {} failed, {} skipped (intent conflict)",
+                  orders_placed, buy_levels.min(sell_levels), orders_failed, intent_skipped);
+        } else {
+            info!("[BOT] Placed {} orders ({} pairs), {} failed",
+                  orders_placed, buy_levels.min(sell_levels), orders_failed);
+        }
         Ok(())
     }
 
-    // ── Core tick logic (called by Bot::process_tick) ─────────────────────
+    // ── Core tick logic (called by Bot::process_tick) ─────────────────────────
     pub async fn process_price_update(&mut self, price: f64, timestamp: i64) -> Result<()> {
         self.total_cycles += 1;
         self.last_price = Some(price);
@@ -431,7 +482,6 @@ impl GridBot {
         }
 
         let wallet = self.engine.get_wallet().await;
-        // PR #85: cache pnl for sync fn stats() — updated every tick.
         self.last_known_pnl = wallet.pnl_usdc(price);
         self.enhanced_metrics.update_portfolio_value(wallet.total_value_usdc(price));
 
@@ -478,7 +528,7 @@ impl GridBot {
         let stats  = self.get_stats().await;
         let border = "=".repeat(60);
         println!("\n{}", border);
-        println!("   [BOT] GRID BOT V5.7 — STATUS REPORT");
+        println!("   [BOT] GRID BOT V5.8 — STATUS REPORT");
         println!("{}", border);
         println!("\n[PERFORMANCE]");
         println!("  Total Cycles:      {}", stats.total_cycles);
@@ -501,6 +551,11 @@ impl GridBot {
         println!("\n[TRADING]");
         println!("  Win Rate:          {:.2}%", stats.win_rate);
         println!("  Total Fees:        ${:.2}", stats.total_fees);
+        // PR #86: show orchestration status
+        println!("\n[ORCHESTRATION]");
+        println!("  Mode:              {}",
+                 if self.intent_registry.is_some() { "Multi-Bot (intent registry active)" }
+                 else { "Solo" });
         println!("\n[METRICS]");
         self.enhanced_metrics.display();
         self.adaptive_optimizer.display();
@@ -516,9 +571,9 @@ impl GridBot {
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// impl Bot for GridBot  (GAP-1 — PR #84 / #85)
-// ═══════════════════════════════════════════════════════════════════════════
+// ═════════════════════════════════════════════════════════════════════════
+// impl Bot for GridBot  (GAP-1 — PR #84 / #85 / #86)
+// ═════════════════════════════════════════════════════════════════════════
 
 #[async_trait]
 impl Bot for GridBot {
@@ -528,6 +583,14 @@ impl Bot for GridBot {
 
     fn instance_id(&self) -> &str {
         self.config.bot.instance_name()
+    }
+
+    /// Wire the shared intent registry — called by orchestrator before initialize().
+    /// Stores the registry so place_grid_orders() can perform conflict checks.
+    /// Default no-op on the trait is overridden here for GridBot.
+    fn set_intent_registry(&mut self, registry: IntentRegistry) {
+        info!("[BOT] Intent registry wired for instance '{}'", self.instance_id());
+        self.intent_registry = Some(registry);
     }
 
     /// One-time initialization: pre-init hook + grid placement.
@@ -579,6 +642,12 @@ impl Bot for GridBot {
         let final_price = self.last_price.unwrap_or(0.0);
         self.display_status(final_price).await;
         self.display_strategy_performance().await;
+        // PR #86: clear own intent keys on shutdown so the slot is available immediately
+        if let Some(registry) = &self.intent_registry {
+            let instance = self.config.bot.instance_name().to_string();
+            registry.retain(|_, v| v != &instance);
+            info!("[BOT] Cleared intent registry entries on shutdown for '{}'", instance);
+        }
         info!(
             "[BOT] Shutdown complete | cycles={} fills={} orders={} repos={} uptime={}s pnl=${:.2}",
             self.total_cycles,
@@ -602,17 +671,17 @@ impl Bot for GridBot {
             bot_type:     "GridBot".to_string(),
             total_cycles: self.total_cycles,
             total_fills:  self.total_fills_tracked,
-            total_orders: self.total_orders_placed, // ✅ PR #85: live
+            total_orders: self.total_orders_placed,
             uptime_secs:  self.session_start.elapsed().as_secs(),
             is_paused:    false,
-            current_pnl:  self.last_known_pnl,      // ✅ PR #85: live (cached from last tick)
+            current_pnl:  self.last_known_pnl,
         }
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
+// ═════════════════════════════════════════════════════════════════════════
 // GRID BOT STATS  (19 fields — grid-specific analytics)
-// ═══════════════════════════════════════════════════════════════════════════
+// ═════════════════════════════════════════════════════════════════════════
 
 /// Grid-bot-specific statistics for observability, dashboards, and analytics.
 ///
@@ -646,7 +715,7 @@ pub struct GridBotStats {
 
 impl GridBotStats {
     pub fn display_summary(&self) {
-        println!("\n[STATS] GRID BOT STATISTICS SUMMARY V5.7");
+        println!("\n[STATS] GRID BOT STATISTICS SUMMARY V5.8");
         println!("   Cycles:            {}", self.total_cycles);
         println!("   Trades:            {}", self.successful_trades);
         println!("   Repositions:       {}", self.grid_repositions);
@@ -670,14 +739,14 @@ impl GridBotStats {
         if self.trading_paused {
             println!("   Status:            PAUSED");
         } else {
-            println!("   Status:            V5.7 ACTIVE");
+            println!("   Status:            V5.8 ACTIVE");
         }
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
+// ═════════════════════════════════════════════════════════════════════════
 // TESTS
-// ═══════════════════════════════════════════════════════════════════════════
+// ═════════════════════════════════════════════════════════════════════════
 
 #[cfg(test)]
 mod tests {
@@ -742,17 +811,15 @@ mod tests {
 
     #[test]
     fn test_bot_stats_live_fields() {
-        // Verify PR #85: total_orders + current_pnl are wired (not stubbed to 0)
-        // We validate the struct shape — runtime values tested via integration.
         let s = BotStats {
             instance_id:  "sol-usdc-01".into(),
             bot_type:     "GridBot".into(),
             total_cycles: 200,
             total_fills:  18,
-            total_orders: 40,   // <-- was hardcoded 0 in PR #84
+            total_orders: 40,
             uptime_secs:  600,
             is_paused:    false,
-            current_pnl:  7.50, // <-- was hardcoded 0.0 in PR #84
+            current_pnl:  7.50,
         };
         assert_eq!(s.total_orders, 40);
         assert!((s.current_pnl - 7.50).abs() < 1e-9);
@@ -761,7 +828,6 @@ mod tests {
 
     #[test]
     fn test_tick_result_orders_placed_field() {
-        // process_tick() now returns orders_placed delta (was always 0 in PR #84)
         let r = TickResult::active(2, 6);
         assert_eq!(r.fills, 2);
         assert_eq!(r.orders_placed, 6);
