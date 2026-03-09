@@ -1,13 +1,17 @@
 //! ═══════════════════════════════════════════════════════════════════════════
-//! 🚀 PROJECT FLASH V5.6 – Production Grid Trading Bot
+//! 🚀 PROJECT FLASH V5.7 – Production Grid Trading Bot
+//!
+//! V5.7 CHANGES (PR #85 — process_tick dispatch + Box<dyn Bot>):
+//! ✅ run_trading_loop takes &mut dyn Bot — type-agnostic, orchestrator-ready
+//! ✅ loop body uses bot.process_tick() — concrete process_price_update() retired
+//! ✅ shutdown_components calls bot.shutdown() — trait method (displays status + logs)
+//! ✅ initialize_components: Bot::initialize() covers grid placement — no explicit call
+//! ✅ local type GridBot → Box<dyn Bot> in main()
 //!
 //! V5.6 CHANGES (PR #84 — impl Bot for GridBot + PriceFeed ownership):
 //! ✅ GridBot::new() now takes Arc<PriceFeed> — bot owns its price source
 //! ✅ initialize_components(): feed wrapped in Arc, clone injected into bot
-//! ✅ initialize_with_price() called on bot directly (no feed arg needed)
 //! ✅ shutdown_components() delegates to Bot::shutdown() trait method
-//! ✅ run_trading_loop still uses concrete GridBot + process_price_update()
-//!    Box<dyn Bot> dispatch promoted in PR #85 after paper smoke test
 //!
 //! V5.5 CHANGES (PR #73 — Engine Factory Wiring):
 //! ✅ 60-line match block → 15-line create_engine() call
@@ -26,12 +30,12 @@
 //! ✅ Engine builder in initialize_components() creates Paper or Real engine
 //! ✅ GridBot::new(config, engine, feed) receives injected engine + feed
 //!
-//! March 2026 — V5.6 BOT TRAIT IMPL 🤖
+//! March 2026 — V5.7 BOT TRAIT DISPATCH 🤖
 //! ═══════════════════════════════════════════════════════════════════════════
 
 use solana_grid_bot::init;
 use solana_grid_bot::config::Config;
-use solana_grid_bot::bots::GridBot;
+use solana_grid_bot::bots::{GridBot, Bot};
 use solana_grid_bot::trading::{PriceFeed, EngineParams, create_engine, engine_mode_label};
 
 use std::{error::Error, time::Instant, path::PathBuf, sync::Arc};
@@ -46,7 +50,7 @@ use clap::Parser;
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[derive(Parser, Debug)]
-#[clap(name = "gridzbotz", version = "5.6.0")]
+#[clap(name = "gridzbotz", version = "5.7.0")]
 #[clap(about = "Production-grade Solana grid trading bot", long_about = None)]
 struct Args {
     /// Configuration file path
@@ -94,31 +98,31 @@ impl Args {
 // ═══════════════════════════════════════════════════════════════════════════
 
 struct SessionMetrics {
-    start_time:          Instant,
-    cycle_times:         Vec<u64>,
-    repositions:         u32,
-    errors:              u32,
-    price_updates:       u64,
-    successful_cycles:   u32,
-    failed_cycles:       u32,
+    start_time:           Instant,
+    cycle_times:          Vec<u64>,
+    repositions:          u32,
+    errors:               u32,
+    price_updates:        u64,
+    successful_cycles:    u32,
+    failed_cycles:        u32,
     failed_price_fetches: u32,
-    slow_cycles:         u32,
-    regime_gate_blocks:  u32,
+    slow_cycles:          u32,
+    regime_gate_blocks:   u32,
 }
 
 impl SessionMetrics {
     fn new() -> Self {
         Self {
-            start_time: Instant::now(),
-            cycle_times: Vec::with_capacity(1000),
-            repositions: 0,
-            errors: 0,
-            price_updates: 0,
-            successful_cycles: 0,
-            failed_cycles: 0,
+            start_time:           Instant::now(),
+            cycle_times:          Vec::with_capacity(1000),
+            repositions:          0,
+            errors:               0,
+            price_updates:        0,
+            successful_cycles:    0,
+            failed_cycles:        0,
             failed_price_fetches: 0,
-            slow_cycles: 0,
-            regime_gate_blocks: 0,
+            slow_cycles:          0,
+            regime_gate_blocks:   0,
         }
     }
 
@@ -193,8 +197,8 @@ fn print_banner(config: &Config) {
         "🟡 PAPER — simulation, fills logged to CSV"
     };
     println!("\n{}", border);
-    println!("     🚀 GRIDZBOTZ V5.6 — PRODUCTION GRID TRADING BOT");
-    println!("     🤖 Bot Trait Impl · Arc<PriceFeed> · GAP-1 Resolved");
+    println!("     🚀 GRIDZBOTZ V5.7 — PRODUCTION GRID TRADING BOT");
+    println!("     🤖 Box<dyn Bot> Dispatch · process_tick() · GAP-1 Complete");
     println!("{}", border);
     println!("\n   Mode:        {}", mode_label);
     println!("   Instance:    {} | v{} | {}",
@@ -304,12 +308,12 @@ async fn fetch_wallet_balances(rpc_url: &str, wallet_path: &str) -> Result<(f64,
 
 // ═══════════════════════════════════════════════════════════════════════════
 // COMPONENT INITIALIZATION
-// V5.6: feed wrapped in Arc — clone injected into GridBot::new().
-//       Bot owns its price source; main.rs retains Arc for loop display.
+// V5.7: Bot::initialize() covers both pre-init + grid placement.
+//       No explicit initialize_with_price() call needed.
 // ═══════════════════════════════════════════════════════════════════════════
 
-async fn initialize_components(config: &Config) -> Result<(GridBot, Arc<PriceFeed>)> {
-    info!("🔧 Initializing core components V5.6...");
+async fn initialize_components(config: &Config) -> Result<(Box<dyn Bot>, Arc<PriceFeed>)> {
+    info!("🔧 Initializing core components V5.7...");
 
     // ── 1. Price Feed ────────────────────────────────────────────────────
     info!("🚀 Starting V3.5 Hybrid Price Feed (Pyth/Hermes)...");
@@ -348,32 +352,30 @@ async fn initialize_components(config: &Config) -> Result<(GridBot, Arc<PriceFee
     let engine = create_engine(config, params).await?;
     info!("✅ TradingEngine constructed via engine factory");
 
-    // ── 3. GridBot — inject engine + Arc<PriceFeed> clone ────────────────
-    // main.rs retains the outer Arc for feed.latest_price() / feed.volatility()
-    // in the trading loop display. Bot owns an independent clone.
-    info!("🤖 Initializing GridBot V5.6 with injected engine + Arc<PriceFeed>...");
-    let mut bot = GridBot::new(config.clone(), engine, Arc::clone(&feed))?;
-    bot.initialize().await?;
-    info!("✅ GridBot built — grid placement deferred until price known");
+    // ── 3. GridBot → Box<dyn Bot> ─────────────────────────────────────────
+    // Bot::initialize() folds both pre_init_hook + initialize_with_price().
+    // Orchestrator (PR #86+) calls only Bot::initialize() — no concrete methods.
+    info!("🤖 Initializing GridBot V5.7 → Box<dyn Bot>...");
+    let mut bot: Box<dyn Bot> = Box::new(
+        GridBot::new(config.clone(), engine, Arc::clone(&feed))?
+    );
 
-    // ── 4. Grid initialization with live price ───────────────────────────
-    info!("⚙️  Initializing grid with live price data...");
-    bot.initialize_with_price().await
-        .context("Failed to initialize bot grid")?;
+    // ── 4. Single initialize() call — grid placement included ────────────
+    info!("⚙️  Bot::initialize() — pre-init + grid placement...");
+    bot.initialize().await
+        .context("Bot::initialize failed")?;
     info!("✅ Bot initialization complete — grid ready for trading!");
 
     Ok((bot, feed))
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// TRADING LOOP
-// Concrete GridBot + process_price_update() preserved.
-// Box<dyn Bot> dispatch promoted in PR #85 after paper smoke test.
+// TRADING LOOP — V5.7: Box<dyn Bot> + process_tick() dispatch
 // ═══════════════════════════════════════════════════════════════════════════
 
 async fn run_trading_loop(
     config:   &Config,
-    bot:      &mut GridBot,
+    bot:      &mut dyn Bot,
     feed:     &Arc<PriceFeed>,
     shutdown: Arc<AtomicBool>,
 ) -> Result<SessionMetrics> {
@@ -390,7 +392,7 @@ async fn run_trading_loop(
     let stats_interval       = config.metrics.stats_interval as u32;
     let slow_cycle_threshold = cycle_interval * 3;
 
-    info!("🔥 STARTING TRADING LOOP — V5.6 BOT TRAIT IMPL");
+    info!("🔥 STARTING TRADING LOOP — V5.7 Box<dyn Bot> DISPATCH");
     if config.bot.is_live() {
         info!("   Total Cycles:     ∞ (live mode — Ctrl+C to stop)");
     } else {
@@ -412,6 +414,7 @@ async fn run_trading_loop(
 
         let cycle_start = Instant::now();
 
+        // ── Feed health-check: validate price before handing to bot ──────
         let price = feed.latest_price().await;
         if price <= 0.0 {
             error!("Invalid price at cycle {}: {}", cycle, price);
@@ -423,23 +426,35 @@ async fn run_trading_loop(
         metrics.price_updates += 1;
 
         let volatility = feed.volatility().await;
-        let ts         = chrono::Utc::now().timestamp();
 
-        match bot.process_price_update(price, ts).await {
-            Ok(_) => {
-                let stats = bot.get_stats().await;
-
-                let new_repositions = stats.grid_repositions
-                    .saturating_sub(last_reposition_count);
-                if new_repositions > 0 {
-                    metrics.repositions += new_repositions as u32;
-                    last_reposition_count = stats.grid_repositions;
+        // ── Trait dispatch — bot is type-agnostic from here ─────────────
+        match bot.process_tick().await {
+            Ok(tick) => {
+                if !tick.active {
+                    warn!("🛑 Bot signalled shutdown at cycle {} — exiting loop", cycle);
+                    break;
                 }
 
-                let status = if stats.trading_paused {
+                let s = bot.stats();
+
+                let new_repositions = s.total_orders
+                    .saturating_sub(last_reposition_count);
+                if new_repositions > 0 {
+                    metrics.repositions += 1;
+                    last_reposition_count = s.total_orders;
+                }
+
+                if s.is_paused {
                     metrics.regime_gate_blocks += 1;
+                }
+
+                let status = if !tick.active {
+                    "🛑 Shutdown"
+                } else if let Some(ref reason) = tick.pause_reason {
+                    metrics.regime_gate_blocks += 1;
+                    let _ = reason;
                     "🚫 Halted"
-                } else if new_repositions > 0 {
+                } else if tick.orders_placed > 0 {
                     "🔄 Repositioned"
                 } else {
                     "✓ Stable"
@@ -447,15 +462,15 @@ async fn run_trading_loop(
 
                 if config.bot.is_live() {
                     println!(
-                        "Cycle {:>6} | SOL ${:>9.4} | Vol {:>8.4}% | Fills {:>3} | Repos {:>3} | {}",
+                        "Cycle {:>6} | SOL ${:>9.4} | Vol {:>8.4}% | Fills {:>3} | Orders {:>3} | P&L ${:>8.2} | {}",
                         cycle, price, volatility,
-                        stats.successful_trades, stats.grid_repositions, status,
+                        tick.fills, tick.orders_placed, s.current_pnl, status,
                     );
                 } else {
                     println!(
-                        "Cycle {:>4}/{:<4} | SOL ${:>9.4} | Vol {:>8.4}% | Fills {:>3} | Repos {:>3} | {}",
+                        "Cycle {:>4}/{:<4} | SOL ${:>9.4} | Vol {:>8.4}% | Fills {:>3} | Orders {:>3} | P&L ${:>8.2} | {}",
                         cycle, total_cycles, price, volatility,
-                        stats.successful_trades, stats.grid_repositions, status,
+                        tick.fills, tick.orders_placed, s.current_pnl, status,
                     );
                 }
 
@@ -473,9 +488,11 @@ async fn run_trading_loop(
         }
 
         if config.metrics.enable_metrics && cycle % stats_interval == 0 {
-            info!("📊 Cycle {:>5} | Avg: {:.1}ms | Repos: {} | Blocks: {} | Errors: {}",
+            let s = bot.stats();
+            info!("📊 Cycle {:>5} | Avg: {:.1}ms | Orders: {} | Fills: {} | PnL: ${:.2} | Blocks: {} | Errors: {}",
                   cycle, metrics.avg_cycle_time(),
-                  metrics.repositions, metrics.regime_gate_blocks, metrics.errors);
+                  s.total_orders, s.total_fills, s.current_pnl,
+                  metrics.regime_gate_blocks, metrics.errors);
         }
 
         let cycle_time = cycle_start.elapsed().as_millis() as u64;
@@ -494,15 +511,14 @@ async fn run_trading_loop(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// SHUTDOWN
+// SHUTDOWN — V5.7: delegates to Bot::shutdown() trait method
 // ═══════════════════════════════════════════════════════════════════════════
 
-async fn shutdown_components(bot: &mut GridBot, feed: &Arc<PriceFeed>) -> Result<()> {
-    info!("🧹 Cleaning up components...");
-    let final_price = feed.latest_price().await;
-    bot.display_status(final_price).await;
-    bot.display_strategy_performance().await;
-    info!("✅ Cleanup complete");
+async fn shutdown_components(bot: &mut dyn Bot, _feed: &Arc<PriceFeed>) -> Result<()> {
+    info!("🧹 Initiating graceful shutdown via Bot::shutdown()...");
+    bot.shutdown().await
+        .context("Bot::shutdown failed")?;
+    info!("✅ Shutdown complete");
     Ok(())
 }
 
@@ -526,7 +542,7 @@ fn setup_logging(args: &Args) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// MAIN ENTRY POINT — V5.6 🤖
+// MAIN ENTRY POINT — V5.7 🤖
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[tokio::main]
@@ -540,6 +556,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     print_banner(&config);
     config.display_summary();
 
+    // V5.7: initialize_components returns Box<dyn Bot> — type-agnostic from here
     let (mut bot, feed) = initialize_components(&config).await?;
 
     let shutdown       = Arc::new(AtomicBool::new(false));
@@ -555,9 +572,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
         }
     });
 
-    let result = run_trading_loop(&config, &mut bot, &feed, shutdown).await;
+    // V5.7: run_trading_loop takes &mut dyn Bot — GridBot detail is gone
+    let result = run_trading_loop(&config, bot.as_mut(), &feed, shutdown).await;
 
-    shutdown_components(&mut bot, &feed).await?;
+    // V5.7: shutdown_components delegates to Bot::shutdown() trait method
+    shutdown_components(bot.as_mut(), &feed).await?;
 
     match result {
         Ok(metrics) => {
