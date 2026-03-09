@@ -385,12 +385,12 @@ mod tests {
     async fn test_realistic_mainnet_distribution() {
         // Simulates real mainnet fee distribution:
         // Many low fees, some medium, few high (long tail)
-        let mut samples = Vec::new();
-        for _ in 0..50 { samples.push(1_000); }    // 50% at 1K
-        for _ in 0..25 { samples.push(5_000); }    // 25% at 5K
-        for _ in 0..15 { samples.push(20_000); }   // 15% at 20K
-        for _ in 0..8  { samples.push(100_000); }  // 8% at 100K
-        for _ in 0..2  { samples.push(500_000); }  // 2% at 500K (spam)
+        let mut samples = vec![1_000u64; 50];        // 50% at 1K
+        samples.extend(vec![5_000u64; 25]);           // 25% at 5K
+        samples.extend(vec![20_000u64; 15]);          // 15% at 20K
+        samples.extend(vec![100_000u64; 8]);          // 8% at 100K
+        samples.extend(vec![500_000u64; 2]);          // 2% at 500K (spam)
+
 
         let mut config = test_config();
         config.percentile = 50;

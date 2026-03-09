@@ -462,7 +462,7 @@ mod tests {
     #[test]
     fn test_levels_calculated_correctly() {
         let grid = make_grid();
-        let expected = vec![60.0, 70.0, 80.0, 90.0, 100.0, 110.0, 120.0];
+        let expected = [60.0, 70.0, 80.0, 90.0, 100.0, 110.0, 120.0];
         for (a, b) in grid.level_prices.iter().zip(expected.iter()) {
             assert!((a - b).abs() < 0.001, "level mismatch: {} != {}", a, b);
         }
