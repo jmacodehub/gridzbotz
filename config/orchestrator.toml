@@ -1,0 +1,24 @@
+# ════════════════════════════════════════════════════════════
+# GRIDZBOTZ ORCHESTRATOR CONFIG V1.0
+# Multi-bot fleet management — PR #86 / GAP-3
+#
+# Usage: cargo run -- --orchestrate config/orchestrator.toml
+#
+# Each entry in bot_configs is an independent bot TOML.
+# New pair = new config file, never new code.
+# ════════════════════════════════════════════════════════════
+
+# Bot config files to load — each runs as an independent instance
+bot_configs = [
+    "config/bots/sol-usdc-grid-01.toml",
+    "config/bots/sol-usdc-grid-02.toml",
+]
+
+# Tick interval in milliseconds (applied to all bots)
+cycle_interval_ms = 1000
+
+# Emit aggregated fleet stats every N cycles
+stats_interval = 30
+
+# mpsc channel buffer per bot (total = N * this)
+channel_buffer_per_bot = 10

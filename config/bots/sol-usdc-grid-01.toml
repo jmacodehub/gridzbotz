@@ -1,0 +1,100 @@
+# ════════════════════════════════════════════════════════════
+# GRIDZBOTZ BOT CONFIG — sol-usdc-grid-01
+# Tight grid: 0.30% spacing, 10 levels
+# Captures high-frequency oscillations in normal vol regimes
+# Paper mode — promote to live after canary validation
+# ════════════════════════════════════════════════════════════
+
+[bot]
+instance_name    = "sol-usdc-grid-01"
+version          = "5.8.0"
+environment      = "paper"
+execution_mode   = "paper"
+
+[network]
+cluster          = "mainnet-beta"
+rpc_url          = "https://api.mainnet-beta.solana.com"
+
+[trading]
+trading_pair              = "SOL/USDC"
+grid_levels               = 10
+grid_spacing_percent      = 0.30
+min_order_size            = 0.1
+min_usdc_reserve          = 10.0
+min_sol_reserve           = 0.05
+reposition_threshold      = 0.40
+rebalance_cooldown_secs   = 120
+volatility_window         = 20
+enable_dynamic_grid       = true
+enable_fee_optimization   = true
+enable_regime_gate        = true
+min_volatility_to_trade   = 0.05
+pause_in_very_low_vol     = true
+enable_order_lifecycle    = true
+order_max_age_minutes     = 30
+order_refresh_interval_minutes = 15
+min_orders_to_maintain    = 4
+
+[paper_trading]
+initial_usdc_balance      = 500.0
+initial_sol_balance       = 2.0
+test_duration_hours       = 24
+fill_probability          = 0.85
+slippage_bps              = 10
+
+[strategies]
+[strategies.grid]
+enabled = true
+weight  = 0.50
+
+[strategies.rsi]
+enabled              = true
+weight               = 0.20
+period               = 14
+oversold_threshold   = 30.0
+overbought_threshold = 70.0
+extreme_oversold     = 20.0
+extreme_overbought   = 80.0
+
+[strategies.momentum]
+enabled         = true
+weight          = 0.15
+lookback_period = 10
+
+[strategies.mean_reversion]
+enabled    = true
+weight     = 0.15
+sma_period = 20
+
+[strategies.momentum_macd]
+enabled                     = false
+weight                      = 0.0
+strong_histogram_threshold  = 0.001
+min_warmup_periods          = 26
+
+[strategies.wma_consensus]
+enabled = false
+weight  = 0.0
+
+[risk]
+max_drawdown_percent      = 15.0
+daily_loss_limit_usdc     = 50.0
+max_position_size_usdc    = 200.0
+circuit_breaker_threshold = 10.0
+consecutive_loss_limit    = 5
+
+[performance]
+cycle_interval_ms   = 1000
+startup_delay_ms    = 3000
+
+[metrics]
+stats_interval      = 50
+
+[security]
+wallet_path         = "~/.config/solana/id.json"
+keypair_path        = "~/.config/solana/id.json"
+
+[pyth]
+hermes_url          = "https://hermes.pyth.network"
+sol_usd_feed_id     = "0xef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d"
+price_staleness_secs = 10
