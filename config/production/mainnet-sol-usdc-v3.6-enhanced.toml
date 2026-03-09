@@ -195,13 +195,14 @@ enable_price_bounds = false
 lower_price_bound   = 50.0             # Reference only
 upper_price_bound   = 150.0            # Reference only
 
-# ─── 🔥 Enhanced Regime Gate (V3.6) ────────────────────────────────────────
-# Dual thresholds: LOW (0.05%) and HIGH (8%)
-# Blocks trading when vol <0.05% (dead market) OR >8% (extreme chaos)
+# ─── 🔥 Enhanced Regime Gate (V3.6 + PR #80 fix) ──────────────────────────
+# min_volatility_to_trade = single source of truth for vol-floor gating.
+# PR #80: pause_in_very_low_vol disabled — was redundant with min_vol
+# and caused permanent pause before GATE-1 fix (sticky flag, never cleared).
 enable_regime_gate       = true        # ✅ ENABLED
 min_volatility_to_trade  = 0.05        # 0.05% floor (battle-tested)
 #max_volatility_to_trade  = 8.0         # 🆕 8% ceiling (from R&D multi-strategy)
-pause_in_very_low_vol    = true        # Auto-pause when vol <0.05%
+pause_in_very_low_vol    = false       # 🔧 PR #80: disabled — min_vol handles this
 
 # ─── Advanced Features ─────────────────────────────────────────────────────
 enable_smart_position_sizing = true    # Dynamic position sizing based on vol
