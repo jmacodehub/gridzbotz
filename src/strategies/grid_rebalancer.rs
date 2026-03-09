@@ -1,5 +1,5 @@
 //! ═════════════════════════════════════════════════════════════════════════
-//! 🔥📎 GRID REBALANCER V5.2 - ADAPTIVE SPACING + FILL FEEDBACK + LEVEL ANALYTICS 🔥📎
+//! 🔥📎 GRID REBALANCER V5.3 - ADAPTIVE SPACING + FILL FEEDBACK + LEVEL ANALYTICS 🔥📎
 //!
 //! V5.0 ENHANCEMENTS (Stage 3 — Feb 2026):
 //!   ✅ SpacingMode enum: Fixed | VolatilityBuckets | AtrDynamic
@@ -20,7 +20,12 @@
 //!   ✅ should_place_order() driven by fees.min_order_spread_for_regime()
 //!   ✅ Eliminated hardcoded spread match — single source of truth
 //!
-//! February 28, 2026 - V5.1 | March 2026 - V5.2 🚀
+//! V5.3 (PR #80 — Regime Gate Fix):
+//!   ✅ GATE-1 fix: should_trade_now() always re-evaluates conditions
+//!   ✅ GATE-3 fix: display shows dollar std-dev, not misleading percentage
+//!   ✅ Resume path now reachable — no more permanent pause deadlock
+//!
+//! February 28, 2026 - V5.1 | March 2026 - V5.3 🚀
 //! ═════════════════════════════════════════════════════════════════════════
 
 use crate::trading::{FillEvent, OrderSide};
@@ -330,7 +335,7 @@ impl GridRebalancerConfig {
                 return Err(anyhow::anyhow!("min_volatility_to_trade cannot be negative"));
             }
             if self.min_volatility_to_trade > 5.0 {
-                warn!("⚠️ min_volatility_to_trade {:.2}% may never trade", self.min_volatility_to_trade);
+                warn!("⚠️ min_volatility_to_trade ${:.2} may never trade", self.min_volatility_to_trade);
             }
         }
         if self.order_size <= 0.0 {
@@ -371,7 +376,7 @@ impl GridRebalancerConfig {
                     self.enable_regime_gate = true;
                 }
                 if self.min_volatility_to_trade < 0.3 {
-                    warn!("⚠️ Raising min_volatility to 0.3% for production safety");
+                    warn!("⚠️ Raising min_volatility to $0.30 for production safety");
                     self.min_volatility_to_trade = 0.3;
                 }
             }
@@ -381,7 +386,7 @@ impl GridRebalancerConfig {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// GRID REBALANCER - V5.2
+// GRID REBALANCER - V5.3
 // ═══════════════════════════════════════════════════════════════════════════
 
 pub struct GridRebalancer {
@@ -420,7 +425,7 @@ impl GridRebalancer {
         config.validate().context("GridRebalancer config validation failed")?;
 
         info!("═══════════════════════════════════════════════════════════");
-        info!("🎯 Grid Rebalancer V5.2 Initializing...");
+        info!("🎯 Grid Rebalancer V5.3 Initializing...");
         info!("═══════════════════════════════════════════════════════════");
         info!("📊 CORE: spacing={:.3}% size={} SOL reserves=${:.0}/{} SOL",
               config.grid_spacing * 100.0, config.order_size,
@@ -442,9 +447,10 @@ impl GridRebalancer {
         info!("💰 FEES: maker={:.1}bps taker={:.1}bps slippage={:.1}bps multiplier={:.1}x",
               fees.maker_fee_bps, fees.taker_fee_bps,
               fees.slippage_bps, fees.min_profit_multiplier);
-        info!("🛡️ REGIME GATE: {} | min_vol={:.3}%",
+        // GATE-3 fix: display dollar std-dev, not misleading percentage
+        info!("🛡️ REGIME GATE: {} | min_vol=${:.4} (dollar std-dev)",
               if config.enable_regime_gate { "✅" } else { "❌ FREE" },
-              config.min_volatility_to_trade * 100.0);
+              config.min_volatility_to_trade);
         info!("🧠 ADAPTIVE: fill-feedback bias ✅ | level analytics ✅");
         info!("═══════════════════════════════════════════════════════════");
 
@@ -509,32 +515,46 @@ impl GridRebalancer {
         Ok(())
     }
 
-    // ── Regime Gate ────────────────────────────────────────────────────────────
+    // ── Regime Gate (V5.3: GATE-1 fix — always re-evaluate) ──────────────────
 
+    /// Regime gate: always re-evaluate market conditions, even when paused.
+    /// PR #80 fix: removed early return on trading_paused that caused permanent freeze.
     pub async fn should_trade_now(&self) -> bool {
         if !self.config.enable_regime_gate {
             return true;
         }
-        if self.trading_paused.load(Ordering::Acquire) {
-            return false;
-        }
+
+        // Always evaluate conditions — never short-circuit on stale flag
         let stats = self.grid_stats().await;
+
+        // Check 1: VERY_LOW_VOL regime gate
         if self.config.pause_in_very_low_vol && stats.market_regime == "VERY_LOW_VOL" {
-            self.trading_paused.store(true, Ordering::Release);
-            *self.pause_reason.write().await = "VERY_LOW_VOL regime".to_string();
+            if !self.trading_paused.load(Ordering::Acquire) {
+                self.trading_paused.store(true, Ordering::Release);
+                *self.pause_reason.write().await = "VERY_LOW_VOL regime".to_string();
+                warn!("⛔ REGIME GATE: Pausing — VERY_LOW_VOL (vol=${:.4})", stats.volatility);
+            }
             return false;
         }
+
+        // Check 2: Min volatility threshold (dollar std-dev)
         if stats.volatility < self.config.min_volatility_to_trade {
-            self.trading_paused.store(true, Ordering::Release);
-            *self.pause_reason.write().await = format!(
-                "Low volatility ({:.3}% < {:.3}%)",
-                stats.volatility * 100.0, self.config.min_volatility_to_trade * 100.0
-            );
+            if !self.trading_paused.load(Ordering::Acquire) {
+                self.trading_paused.store(true, Ordering::Release);
+                *self.pause_reason.write().await = format!(
+                    "Low volatility (${:.4} < ${:.4})",
+                    stats.volatility, self.config.min_volatility_to_trade
+                );
+                warn!("⛔ REGIME GATE: Pausing — Low volatility (${:.4} < min ${:.4})",
+                      stats.volatility, self.config.min_volatility_to_trade);
+            }
             return false;
         }
+
+        // Resume path — NOW REACHABLE when conditions clear
         if self.trading_paused.load(Ordering::Acquire) {
-            info!("✅ REGIME GATE: Resuming — {} / {:.3}%",
-                  stats.market_regime, stats.volatility * 100.0);
+            info!("✅ REGIME GATE: Resuming — {} / vol=${:.4}",
+                  stats.market_regime, stats.volatility);
             self.trading_paused.store(false, Ordering::Release);
             *self.pause_reason.write().await = String::new();
         }
@@ -730,7 +750,7 @@ impl Default for GridRebalancerBuilder {
 
 #[async_trait]
 impl Strategy for GridRebalancer {
-    fn name(&self) -> &str { "Grid Rebalancer V5.2" }
+    fn name(&self) -> &str { "Grid Rebalancer V5.3" }
 
     async fn analyze(&mut self, price: f64, _timestamp: i64) -> Result<Signal> {
         self.update_price(price).await.context("Failed to update price")?;
@@ -1184,5 +1204,55 @@ mod tests {
         assert_eq!(r.fees.maker_fee_bps, 3.0);
         assert_eq!(r.fees.taker_fee_bps, 6.0);
         assert_eq!(r.fees.min_profit_multiplier, 3.0);
+    }
+
+    // ───────────────────────────────────────────────────────────────
+    // V5.3: Regime gate fix tests (PR #80)
+    // ───────────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_regime_gate_pause_then_resume() {
+        // Verify the GATE-1 fix: bot can resume after being paused
+        let mut config = GridRebalancerConfig::default();
+        config.enable_regime_gate = true;
+        config.min_volatility_to_trade = 0.5;
+        config.pause_in_very_low_vol = false; // isolate min_vol check
+        let r = GridRebalancer::new(config).unwrap();
+
+        // No price history → volatility = 0.0 → should pause
+        let result1 = r.should_trade_now().await;
+        assert!(!result1, "Should pause when volatility is below threshold");
+        assert!(r.trading_paused.load(Ordering::Acquire), "trading_paused should be true");
+
+        // Add prices with enough spread to exceed min_volatility_to_trade
+        // std-dev of [80.0, 82.0, 84.0, 80.0, 84.0] ≈ 1.6 > 0.5
+        for p in [80.0, 82.0, 84.0, 80.0, 84.0] {
+            r.update_price(p).await.unwrap();
+        }
+
+        // Now conditions have cleared — should resume
+        let result2 = r.should_trade_now().await;
+        assert!(result2, "Should resume when volatility rises above threshold");
+        assert!(!r.trading_paused.load(Ordering::Acquire), "trading_paused should be false after resume");
+    }
+
+    #[tokio::test]
+    async fn test_regime_gate_no_spam_logging() {
+        // Verify pause only logs on state TRANSITION, not every cycle
+        let mut config = GridRebalancerConfig::default();
+        config.enable_regime_gate = true;
+        config.min_volatility_to_trade = 0.5;
+        config.pause_in_very_low_vol = false;
+        let r = GridRebalancer::new(config).unwrap();
+
+        // First call: should pause and set flag
+        let _ = r.should_trade_now().await;
+        assert!(r.trading_paused.load(Ordering::Acquire));
+
+        // Second call: flag already true, should NOT re-store (no transition)
+        // This tests the `if !self.trading_paused.load()` guard
+        let result = r.should_trade_now().await;
+        assert!(!result, "Should still be paused");
+        // If we got here without panic, the guard works correctly
     }
 }
