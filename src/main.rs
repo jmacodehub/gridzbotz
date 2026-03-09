@@ -1,22 +1,28 @@
 //! ═══════════════════════════════════════════════════════════════════════════
-//! 🚀 PROJECT FLASH V5.8 — FLEET COMMANDER
+//! 🚀 PROJECT FLASH V5.8 – Production Grid Trading Bot
 //!
 //! V5.8 CHANGES (PR #86 — Multi-Bot Orchestrator):
-//! ✅ --orchestrate <toml> CLI flag — PATH A fleet mode
-//! ✅ Orchestrator::from_config() + run() wired into main()
-//! ✅ fetch_wallet_balances() delegates to trading::fetch_wallet_balances_for_orchestrator
-//! ✅ PATH B (single-bot) byte-for-byte identical to V5.7 — zero regression
+//! ✅ --orchestrate <PATH> flag — PATH A fleet mode via Orchestrator V1.0
+//! ✅ PATH B (single-bot) is zero-regression — identical to V5.7
+//! ✅ fetch_wallet_balances() delegates to trading::wallet_utils
+//!    (single source of truth, shared with orchestrator.rs)
 //!
 //! V5.7 CHANGES (PR #85 — process_tick dispatch + Box<dyn Bot>):
 //! ✅ run_trading_loop takes &mut dyn Bot — type-agnostic, orchestrator-ready
 //! ✅ loop body uses bot.process_tick() — concrete process_price_update() retired
 //! ✅ shutdown_components calls bot.shutdown() — trait method
+//! ✅ initialize_components: Bot::initialize() covers grid placement
+//! ✅ local type GridBot → Box<dyn Bot> in main()
 //!
 //! V5.6 CHANGES (PR #84 — impl Bot for GridBot + PriceFeed ownership):
-//! ✅ GridBot::new() now takes Arc<PriceFeed> — bot owns its price source
+//! ✅ GridBot::new() now takes Arc<PriceFeed>
+//! ✅ initialize_components(): feed wrapped in Arc, clone injected into bot
+//! ✅ shutdown_components() delegates to Bot::shutdown() trait method
 //!
 //! V5.5 CHANGES (PR #73 — Engine Factory Wiring):
 //! ✅ 60-line match block → 15-line create_engine() call
+//! ✅ All engine construction logic lives in src/trading/engine.rs
+//! ✅ main.rs only passes EngineParams (wallet balances for live)
 //!
 //! March 2026 — V5.8 FLEET COMMANDER 🤖
 //! ═══════════════════════════════════════════════════════════════════════════
@@ -42,16 +48,16 @@ use clap::Parser;
 
 #[derive(Parser, Debug)]
 #[clap(name = "gridzbotz", version = "5.8.0")]
-#[clap(about = "Production-grade Solana grid trading bot | V5.8 Fleet Commander", long_about = None)]
+#[clap(about = "Production-grade Solana grid trading bot — single-bot or fleet", long_about = None)]
 struct Args {
     /// Configuration file path (single-bot mode)
     #[clap(short, long, default_value = "config/master.toml")]
     config: PathBuf,
 
-    /// PATH A: Fleet orchestrator mode.
-    /// Provide path to orchestrator.toml — bypasses all single-bot flags.
-    /// Example: --orchestrate config/orchestrator.toml
-    #[clap(long, value_name = "ORCHESTRATOR_TOML")]
+    /// Fleet mode: path to orchestrator.toml
+    /// When set, launches multi-bot Orchestrator V1.0 (PATH A).
+    /// When omitted, runs the standard single-bot loop (PATH B).
+    #[clap(long, value_name = "ORCH_TOML", conflicts_with_all = &["mode", "paper", "cycles", "duration_minutes", "duration_hours"])]
     orchestrate: Option<PathBuf>,
 
     /// Execution mode: paper | live  (single-bot PATH B only)
@@ -70,7 +76,7 @@ struct Args {
     #[clap(long)]
     duration_hours: Option<usize>,
 
-    /// Override test cycles  (single-bot PATH B only)
+    /// Override test cycles (expert mode, PATH B only)
     #[clap(long)]
     cycles: Option<usize>,
 
@@ -91,7 +97,7 @@ impl Args {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// SESSION METRICS  (PATH B only)
+// SESSION METRICS
 // ═══════════════════════════════════════════════════════════════════════════
 
 struct SessionMetrics {
@@ -141,7 +147,7 @@ impl SessionMetrics {
 
     fn min_cycle_time(&self) -> u64 { *self.cycle_times.iter().min().unwrap_or(&0) }
     fn max_cycle_time(&self) -> u64 { *self.cycle_times.iter().max().unwrap_or(&0) }
-    fn elapsed_secs(&self) -> f64   { self.start_time.elapsed().as_secs_f64() }
+    fn elapsed_secs(&self)   -> f64 { self.start_time.elapsed().as_secs_f64() }
 
     fn success_rate(&self) -> f64 {
         let total = self.successful_cycles + self.failed_cycles;
@@ -186,37 +192,31 @@ impl SessionMetrics {
 // BANNER
 // ═══════════════════════════════════════════════════════════════════════════
 
-fn print_banner_single(config: &Config) {
+fn print_banner(config: &Config, fleet_mode: bool) {
     let border = "═".repeat(75);
-    let mode_label = if config.bot.is_live() {
+    let mode_label = if fleet_mode {
+        "🟠 FLEET — multi-bot Orchestrator V1.0"
+    } else if config.bot.is_live() {
         "🔴 LIVE — real Jupiter swaps on-chain"
     } else {
         "🟡 PAPER — simulation, fills logged to CSV"
     };
     println!("\n{}", border);
-    println!("     🚀 GRIDZBOTZ V5.8 — FLEET COMMANDER");
-    println!("     🤖 Single-Bot PATH B · Box<dyn Bot> · GAP-1+GAP-3 Complete");
+    println!("     🚀 GRIDZBOTZ V5.8 — PRODUCTION GRID TRADING BOT");
+    println!("     🤖 Multi-Bot Orchestrator V1.0 · GAP-3 Complete · Fleet Ready");
     println!("{}", border);
-    println!("\n   Mode:        {}", mode_label);
-    println!("   Instance:    {} | v{} | {}",
-             config.bot.instance_name(),
-             config.bot.version,
-             config.bot.environment.to_uppercase());
-    println!("   Cluster:     {} | {}",
-             config.network.cluster,
-             config.network.rpc_url
-                 .get(..42.min(config.network.rpc_url.len()))
-                 .unwrap_or(&config.network.rpc_url));
-    println!("{}\n", border);
-}
-
-fn print_banner_fleet(path: &std::path::Path) {
-    let border = "═".repeat(75);
-    println!("\n{}", border);
-    println!("     🚀 GRIDZBOTZ V5.8 — FLEET COMMANDER");
-    println!("     🤖 PATH A: Multi-Bot Orchestrator · GAP-3 Complete");
-    println!("{}", border);
-    println!("\n   Orchestrator config: {}", path.display());
+    println!("\n   Mode:     {}", mode_label);
+    if !fleet_mode {
+        println!("   Instance: {} | v{} | {}",
+                 config.bot.instance_name(),
+                 config.bot.version,
+                 config.bot.environment.to_uppercase());
+        println!("   Cluster:  {} | {}",
+                 config.network.cluster,
+                 config.network.rpc_url
+                     .get(..42.min(config.network.rpc_url.len()))
+                     .unwrap_or(&config.network.rpc_url));
+    }
     println!("{}\n", border);
 }
 
@@ -238,14 +238,17 @@ fn load_configuration(args: &Args) -> Result<Config> {
     }
 
     if let Some(cycles) = args.cycles {
+        info!("🔄 CLI Override: cycles = {}", cycles);
         config.paper_trading.test_cycles = Some(cycles);
         config.paper_trading.test_duration_minutes = None;
         config.paper_trading.test_duration_hours = None;
     } else if let Some(minutes) = args.duration_minutes {
+        info!("⏱️  CLI Override: duration = {} minutes", minutes);
         config.paper_trading.test_duration_minutes = Some(minutes);
         config.paper_trading.test_duration_hours = None;
         config.paper_trading.test_cycles = None;
     } else if let Some(hours) = args.duration_hours {
+        info!("⏱️  CLI Override: duration = {} hours", hours);
         config.paper_trading.test_duration_hours = Some(hours);
         config.paper_trading.test_duration_minutes = None;
         config.paper_trading.test_cycles = None;
@@ -256,8 +259,9 @@ fn load_configuration(args: &Args) -> Result<Config> {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// WALLET BALANCE QUERY
-// Delegates to trading::fetch_wallet_balances_for_orchestrator — shared impl.
+// WALLET BALANCE QUERY  (live mode, PATH B only)
+// Delegates to trading::wallet_utils — single source of truth shared with
+// orchestrator.rs so the RPC logic never diverges between the two paths.
 // ═══════════════════════════════════════════════════════════════════════════
 
 async fn fetch_wallet_balances(rpc_url: &str, wallet_path: &str) -> Result<(f64, f64)> {
@@ -265,12 +269,13 @@ async fn fetch_wallet_balances(rpc_url: &str, wallet_path: &str) -> Result<(f64,
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// COMPONENT INITIALIZATION  (PATH B only)
+// COMPONENT INITIALIZATION  (PATH B — single-bot)
 // ═══════════════════════════════════════════════════════════════════════════
 
 async fn initialize_components(config: &Config) -> Result<(Box<dyn Bot>, Arc<PriceFeed>)> {
     info!("🔧 Initializing core components V5.8...");
 
+    info!("🚀 Starting V3.5 Hybrid Price Feed (Pyth/Hermes)...");
     let price_history_size = config.trading.volatility_window as usize;
     let feed = Arc::new(PriceFeed::new(price_history_size));
     feed.start().await
@@ -283,7 +288,8 @@ async fn initialize_components(config: &Config) -> Result<(Box<dyn Bot>, Arc<Pri
     let initial_price = feed.latest_price().await;
     if initial_price <= 0.0 {
         anyhow::bail!(
-            "Price feed returned invalid price after warm-up: {}. Check Pyth/Hermes.",
+            "Price feed returned invalid price after warm-up: {}. \
+             Check Pyth/Hermes connectivity.",
             initial_price
         );
     }
@@ -301,6 +307,7 @@ async fn initialize_components(config: &Config) -> Result<(Box<dyn Bot>, Arc<Pri
         EngineParams::default()
     };
     let engine = create_engine(config, params).await?;
+    info!("✅ TradingEngine constructed via engine factory");
 
     info!("🤖 Initializing GridBot V5.8 → Box<dyn Bot>...");
     let mut bot: Box<dyn Bot> = Box::new(
@@ -313,7 +320,7 @@ async fn initialize_components(config: &Config) -> Result<(Box<dyn Bot>, Arc<Pri
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// TRADING LOOP  (PATH B only) — V5.7 Box<dyn Bot> + process_tick()
+// TRADING LOOP  (PATH B — single-bot, V5.7 unchanged)
 // ═══════════════════════════════════════════════════════════════════════════
 
 async fn run_trading_loop(
@@ -335,7 +342,7 @@ async fn run_trading_loop(
     let stats_interval       = config.metrics.stats_interval as u32;
     let slow_cycle_threshold = cycle_interval * 3;
 
-    info!("🔥 STARTING TRADING LOOP — V5.8 FLEET COMMANDER / PATH B");
+    info!("🔥 STARTING TRADING LOOP — V5.8 Box<dyn Bot> DISPATCH");
     if config.bot.is_live() {
         info!("   Total Cycles:     ∞ (live mode — Ctrl+C to stop)");
     } else {
@@ -377,18 +384,15 @@ async fn run_trading_loop(
                 }
 
                 let s = bot.stats();
-                let new_repos = s.total_orders.saturating_sub(last_reposition_count);
-                if new_repos > 0 {
+                let new_repositions = s.total_orders.saturating_sub(last_reposition_count);
+                if new_repositions > 0 {
                     metrics.repositions += 1;
                     last_reposition_count = s.total_orders;
                 }
                 if s.is_paused { metrics.regime_gate_blocks += 1; }
 
-                let status = if !tick.active {
-                    "🛑 Shutdown"
-                } else if let Some(ref reason) = tick.pause_reason {
+                let status = if let Some(ref _reason) = tick.pause_reason {
                     metrics.regime_gate_blocks += 1;
-                    let _ = reason;
                     "🚫 Halted"
                 } else if tick.orders_placed > 0 {
                     "🔄 Repositioned"
@@ -399,12 +403,14 @@ async fn run_trading_loop(
                 if config.bot.is_live() {
                     println!(
                         "Cycle {:>6} | SOL ${:>9.4} | Vol {:>8.4}% | Fills {:>3} | Orders {:>3} | P&L ${:>8.2} | {}",
-                        cycle, price, volatility, tick.fills, tick.orders_placed, s.current_pnl, status,
+                        cycle, price, volatility,
+                        tick.fills, tick.orders_placed, s.current_pnl, status,
                     );
                 } else {
                     println!(
                         "Cycle {:>4}/{:<4} | SOL ${:>9.4} | Vol {:>8.4}% | Fills {:>3} | Orders {:>3} | P&L ${:>8.2} | {}",
-                        cycle, total_cycles, price, volatility, tick.fills, tick.orders_placed, s.current_pnl, status,
+                        cycle, total_cycles, price, volatility,
+                        tick.fills, tick.orders_placed, s.current_pnl, status,
                     );
                 }
 
@@ -475,24 +481,26 @@ fn setup_logging(args: &Args) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// MAIN ENTRY POINT V5.8 — DUAL-MODE DISPATCH 🤖
+// MAIN ENTRY POINT V5.8 — Dual-Mode Dispatch
 //
-// PATH A: --orchestrate <toml>  →  Orchestrator::from_config().run()
-// PATH B: (default)             →  V5.7 single-bot loop (zero regression)
+// PATH A (──orchestrate):  Orchestrator::from_config() → run() — N bots
+// PATH B (default):         initialize_components() → run_trading_loop() — 1 bot
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     let args = Args::parse();
     setup_logging(&args);
-
     init().map_err(|e| anyhow::anyhow!("Core initialization failed: {:?}", e))?;
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // PATH A — Fleet orchestrator mode
-    // ─────────────────────────────────────────────────────────────────────────
+    // ── PATH A: Fleet mode (──orchestrate <orch.toml>) ───────────────────────
     if let Some(ref orch_path) = args.orchestrate {
-        print_banner_fleet(orch_path);
+        // Minimal single-bot config for banner (uses --config default)
+        // The orchestrator owns its own per-bot configs; we only need this
+        // for the version/env metadata line in the banner.
+        let banner_config = Config::from_file(&args.config)
+            .unwrap_or_else(|_| Config::default_config());
+        print_banner(&banner_config, /*fleet_mode=*/ true);
 
         let shutdown       = Arc::new(AtomicBool::new(false));
         let shutdown_clone = Arc::clone(&shutdown);
@@ -500,30 +508,26 @@ async fn main() -> Result<(), Box<dyn Error>> {
         tokio::spawn(async move {
             match tokio::signal::ctrl_c().await {
                 Ok(()) => {
-                    warn!("🛑 Ctrl+C — signalling fleet shutdown");
+                    warn!("🛑 Ctrl+C — fleet shutdown initiated");
                     shutdown_clone.store(true, Ordering::Relaxed);
                 }
                 Err(e) => error!("Shutdown signal listener failed: {}", e),
             }
         });
 
-        info!("🤖 [ORCH] Building fleet from: {}", orch_path.display());
-        let orchestrator = Orchestrator::from_config(orch_path, Arc::clone(&shutdown))
-            .await
-            .context("Orchestrator::from_config failed")?;
-
+        info!("🤖 Launching Orchestrator from: {}", orch_path.display());
+        let orchestrator = Orchestrator::from_config(orch_path, shutdown).await
+            .context("Orchestrator initialisation failed")?;
         orchestrator.run().await
-            .context("Orchestrator::run failed")?;
+            .context("Orchestrator run failed")?;
 
         println!("\n✅ Fleet session complete!\n");
         return Ok(());
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // PATH B — Single-bot mode (V5.7 loop, zero regression)
-    // ─────────────────────────────────────────────────────────────────────────
+    // ── PATH B: Single-bot mode (default, V5.7 unchanged) ──────────────
     let config = load_configuration(&args)?;
-    print_banner_single(&config);
+    print_banner(&config, /*fleet_mode=*/ false);
     config.display_summary();
 
     let (mut bot, feed) = initialize_components(&config).await?;
@@ -626,8 +630,7 @@ mod tests {
     }
 
     #[test]
-    fn test_args_orchestrate_flag_parsed() {
-        // Verify the orchestrate field compiles and holds a PathBuf
+    fn test_args_orchestrate_flag_present() {
         let args = Args {
             config: PathBuf::from("config/master.toml"),
             orchestrate: Some(PathBuf::from("config/orchestrator.toml")),
@@ -640,14 +643,18 @@ mod tests {
             args.orchestrate.unwrap(),
             PathBuf::from("config/orchestrator.toml")
         );
-        // PATH A detected: orchestrate is Some
-        assert!(Args {
+    }
+
+    #[test]
+    fn test_args_orchestrate_default_is_none() {
+        let args = Args {
             config: PathBuf::from("config/master.toml"),
             orchestrate: None,
             mode: None, paper: false,
             duration_minutes: None, duration_hours: None, cycles: None,
             debug: false, trace: false,
-        }.orchestrate.is_none(), "Default should be PATH B");
+        };
+        assert!(args.orchestrate.is_none(), "Default must be PATH B (single-bot)");
     }
 
     #[test]
