@@ -3,13 +3,48 @@
 //! Resolves GAP-1 (P0) from V1/V2/V3 audits: "No Bot trait — GridBot
 //! hardcoded as only bot type."
 //!
+//! V5.8 CHANGES (PR #86 — Multi-Bot Orchestrator):
+//! ✅ IntentRegistry type alias — Arc<DashMap<(String, u64), String>>
+//!    (pair_name + level_id) → owner instance_id for conflict detection
+//! ✅ set_intent_registry() — default no-op on Bot trait (backward-compatible)
+//!    Solo bots ignore it entirely; orchestrator calls it after construction.
+//!
 //! Every bot type (Grid, Momentum, Arbitrage, DCA) implements the `Bot`
-//! trait for uniform lifecycle management and future orchestrator dispatch.
+//! trait for uniform lifecycle management and orchestrator dispatch.
 
 use anyhow::Result;
 use async_trait::async_trait;
+use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use std::fmt;
+use std::sync::Arc;
+
+// ══════════════════════════════════════════════════════════════════════
+// INTENT REGISTRY
+// ══════════════════════════════════════════════════════════════════════
+
+/// Shared intent registry for multi-bot conflict detection.
+///
+/// Key:   `(trading_pair, grid_level_id)` — identifies a specific price level
+///         on a specific pair that a bot intends to place an order on.
+/// Value: `instance_id` — the bot that registered its intent first.
+///
+/// `DashMap` gives lock-free concurrent reads and atomic shard-level writes,
+/// which is critical for N bots racing to register intents each tick.
+///
+/// Lifecycle:
+///   1. Orchestrator creates ONE registry and clones the Arc into each bot.
+///   2. Before placing an order, each bot calls `registry.entry(key)`:
+///      - `Vacant`   → insert self.instance_id(), proceed with order.
+///      - `Occupied` → another bot owns this level — skip + warn.
+///   3. On grid reposition / shutdown, bot removes its own keys.
+///      (Stale keys are harmless — they are overwritten on next placement.)
+pub type IntentRegistry = Arc<DashMap<(String, u64), String>>;
+
+/// Construct a new empty IntentRegistry.
+pub fn new_intent_registry() -> IntentRegistry {
+    Arc::new(DashMap::new())
+}
 
 // ══════════════════════════════════════════════════════════════════════
 // TICK RESULT
@@ -95,17 +130,19 @@ pub struct BotStats {
 
 /// Core lifecycle trait for all bot types.
 ///
-/// The orchestrator (future GAP-3) calls these methods in order:
+/// The orchestrator calls these methods in order:
 ///
-/// 1. `initialize()` — one-time setup (price feed warmup, grid placement)
-/// 2. `process_tick()` — called each cycle; bot owns its own timing + feeds
-/// 3. `shutdown()`    — graceful teardown (cancel orders, dump state)
+/// 1. `set_intent_registry()` — optional; wires conflict detection registry.
+///    Default no-op so solo bots need zero changes.
+/// 2. `initialize()`          — one-time setup (price feed warmup, grid placement)
+/// 3. `process_tick()`        — called each cycle; bot owns its own timing + feeds
+/// 4. `shutdown()`            — graceful teardown (cancel orders, dump state)
 ///
 /// # Design note
 ///
 /// `process_tick(&mut self)` — the bot owns its price feed and loop.
-/// When the multi-bot orchestrator (GAP-3) lands, this may evolve to
-/// `process_tick(&mut self, ctx: &TickContext)` with shared resources.
+/// Future `TickContext` injection (Alpenglow slot awareness, shared MEV tips)
+/// will be additive — existing impls remain valid.
 #[async_trait]
 pub trait Bot: Send + Sync {
     /// Human-readable bot type (e.g., `"GridBot"`, `"MomentumBot"`).
@@ -113,6 +150,17 @@ pub trait Bot: Send + Sync {
 
     /// Unique instance identifier from config (e.g., `"sol-usdc-grid-01"`).
     fn instance_id(&self) -> &str;
+
+    /// Wire the shared intent registry for conflict detection in orchestrated mode.
+    ///
+    /// **Default no-op** — solo bots ignore this entirely (backward compatible).
+    /// Called by the orchestrator after construction, before `initialize()`.
+    ///
+    /// Implementors that support multi-bot conflict detection override this
+    /// to store the registry and consult it in `place_grid_orders()`.
+    fn set_intent_registry(&mut self, _registry: IntentRegistry) {
+        // Solo mode: no-op. Orchestrator mode: overridden by GridBot (and future bots).
+    }
 
     /// One-time initialization before the trading loop begins.
     async fn initialize(&mut self) -> Result<()>;
@@ -201,5 +249,49 @@ mod tests {
         assert_eq!(de.instance_id, "sol-usdc-grid-01");
         assert_eq!(de.total_fills, 42);
         assert_eq!(de.current_pnl, 12.50);
+    }
+
+    #[test]
+    fn test_new_intent_registry_is_empty() {
+        let registry = new_intent_registry();
+        assert!(registry.is_empty());
+    }
+
+    #[test]
+    fn test_intent_registry_conflict_detection() {
+        let registry = new_intent_registry();
+        let key = ("SOL/USDC".to_string(), 42u64);
+
+        // First bot claims the level — Vacant entry.
+        match registry.entry(key.clone()) {
+            dashmap::Entry::Vacant(e)   => { e.insert("sol-usdc-grid-01".to_string()); }
+            dashmap::Entry::Occupied(_) => panic!("Should have been vacant"),
+        }
+        assert_eq!(registry.get(&key).unwrap().value(), "sol-usdc-grid-01");
+
+        // Second bot sees Occupied — conflict detected.
+        match registry.entry(key.clone()) {
+            dashmap::Entry::Vacant(_)   => panic!("Should have been occupied"),
+            dashmap::Entry::Occupied(e) => {
+                assert_eq!(e.get(), "sol-usdc-grid-01");
+            }
+        }
+    }
+
+    #[test]
+    fn test_intent_registry_different_pairs_no_conflict() {
+        let registry = new_intent_registry();
+        let key_a = ("SOL/USDC".to_string(), 1u64);
+        let key_b = ("SOL/USDC".to_string(), 2u64); // same pair, different level
+        let key_c = ("ETH/USDC".to_string(), 1u64); // different pair
+
+        registry.insert(key_a.clone(), "bot-01".to_string());
+        registry.insert(key_b.clone(), "bot-02".to_string());
+        registry.insert(key_c.clone(), "bot-01".to_string());
+
+        assert_eq!(registry.len(), 3);
+        assert_eq!(registry.get(&key_a).unwrap().value(), "bot-01");
+        assert_eq!(registry.get(&key_b).unwrap().value(), "bot-02");
+        assert_eq!(registry.get(&key_c).unwrap().value(), "bot-01");
     }
 }
