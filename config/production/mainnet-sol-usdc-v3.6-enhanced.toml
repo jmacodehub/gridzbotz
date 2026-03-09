@@ -75,8 +75,8 @@ wallet_path      = "~/.config/solana/id.json"  # ← DEFAULT (override via GRIDZ
 require_password = false
 
 # 🛡️ Daily safety caps (reset at 00:00 UTC)
-max_daily_trades      = 100            # Max 100 trades/day
-max_daily_volume_usdc = 500.0          # Max $500 volume/day
+#max_daily_trades      = 100            # Max 100 trades/day
+#max_daily_volume_usdc = 500.0          # Max $500 volume/day
 
 # ═══════════════════════════════════════════════════════════════════════════
 #  ⚡ EXECUTION — Live Trading Knobs
@@ -97,7 +97,7 @@ confirmation_timeout_secs  = 60
 
 # 🆕 V3.6: Tighter retry logic (from PR #65)
 max_retries                = 4         # ↑ from 3 (extra attempt for stale quotes)
-retry_delay_ms             = 500       # ↓ from 2000ms (faster fresh quote)
+#retry_delay_ms             = 500       # ↓ from 2000ms (faster fresh quote)
 
 # 🛡️ Jito MEV Protection — DISABLED for initial live run
 # Enable when scaling above $500 capital (tips $0.01-0.10 per tx)
@@ -200,7 +200,7 @@ upper_price_bound   = 150.0            # Reference only
 # Blocks trading when vol <0.05% (dead market) OR >8% (extreme chaos)
 enable_regime_gate       = true        # ✅ ENABLED
 min_volatility_to_trade  = 0.05        # 0.05% floor (battle-tested)
-max_volatility_to_trade  = 8.0         # 🆕 8% ceiling (from R&D multi-strategy)
+#max_volatility_to_trade  = 8.0         # 🆕 8% ceiling (from R&D multi-strategy)
 pause_in_very_low_vol    = true        # Auto-pause when vol <0.05%
 
 # ─── Advanced Features ─────────────────────────────────────────────────────
@@ -221,7 +221,7 @@ require_timeframe_alignment  = false
 enabled                  = true
 weight                   = 1.0
 min_confidence           = 0.5
-reposition_threshold_pct = 0.30        # Match trading.reposition_threshold
+#reposition_threshold_pct = 0.30        # Match trading.reposition_threshold
 
 # ─── Strategy 2-5: Disabled (Enable After Grid-Only Validation) ────────────
 [strategies.momentum]
@@ -272,27 +272,26 @@ circuit_breaker_threshold_pct = 4.0    # Trip at -4% (tighter than v1's 8%)
 circuit_breaker_cooldown_secs = 300    # 5min cooldown after trip
 max_consecutive_losses        = 5      # 🆕 PR #79: Trip breaker after 5 straight losses
 
+[fees]
+maker_fee_bps = 2.0
+taker_fee_bps = 4.0
+slippage_bps  = 5.0
+min_profit_multiplier = 2.0
+enable_smart_filter = false
+market_impact_coefficient = 0.01
+
 # ═══════════════════════════════════════════════════════════════════════════
-#  🪐 JUPITER API — V6 Compatible
-#
-#  🔐 SECURITY: API key loaded from env var GRIDZBOTZ_JUPITER_API_KEY
-#     The value below is a SAFE PLACEHOLDER — override via .env
+#  🪐 JUPITER API — V6 Compatible (NOT YET IN CONFIG STRUCT)
+#  JupiterClient reads these from env vars / hardcoded defaults today.
+#  Wire into Config as JupiterConfig in a future PR.
 # ═══════════════════════════════════════════════════════════════════════════
-[jupiter]
-# Jupiter API Key (REQUIRED for mainnet)
-# Get free at: https://portal.jup.ag
-# 🔐 Override via GRIDZBOTZ_JUPITER_API_KEY env var
-api_key = ""                           # ← EMPTY (set via GRIDZBOTZ_JUPITER_API_KEY in .env)
+# [jupiter]
+# api_key = ""
+# api_endpoint = "https://api.jup.ag"
+# default_slippage_bps = 50
+# priority_fee_max_lamports = 100000
+# priority_level = "high"
 
-# API endpoint (V6 production)
-api_endpoint = "https://api.jup.ag"
-
-# Slippage tolerance (50 bps = 0.5%)
-default_slippage_bps = 50
-
-# Priority fee (matches execution.priority_fee_microlamports)
-priority_fee_max_lamports = 100000     # 0.0001 SOL max
-priority_level = "high"                # none | low | medium | high | veryHigh
 
 # ═══════════════════════════════════════════════════════════════════════════
 #  📡 PYTH PRICE FEED — Hermes V2 HTTP
