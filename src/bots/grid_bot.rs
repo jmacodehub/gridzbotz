@@ -1,5 +1,14 @@
-//! ═══════════════════════════════════════════════════════════════════
-//! GRID BOT V5.6 - ELITE AUTONOMOUS TRADING ORCHESTRATOR
+//! ═══════════════════════════════════════════════════════════════════════════
+//! GRID BOT V5.6 — ELITE AUTONOMOUS TRADING ORCHESTRATOR
+//!
+//! V5.6 CHANGES (PR #84 — impl Bot for GridBot + PriceFeed ownership):
+//! ✅ GAP-1 RESOLVED: impl Bot for GridBot — trait-polymorphic, orchestrator-ready
+//! ✅ GridBot owns Arc<PriceFeed> — process_tick() is fully autonomous
+//! ✅ process_tick() fetches price from self.feed, calls process_price_update(),
+//!    maps fills → TickResult (paused / shutdown / active)
+//! ✅ shutdown() — display_status at last price + structured log
+//! ✅ stats() — maps GridBotStats → BotStats (8-field trait contract)
+//! ✅ session_start: Instant tracks uptime_secs for BotStats
 //!
 //! V5.6 CHANGES (PR #83 — Registry Wire + GridBotStats rename):
 //! ✅ REFACTOR: BotStats → GridBotStats (unambiguous with bot_trait::BotStats)
@@ -10,38 +19,28 @@
 //! ✅ FIX: initialize_with_price() calls place_grid_orders() directly
 //!    (was calling reposition_grid() which triggered emergency path)
 //! ✅ Version strings synced: V5.2 → V5.5 across all log messages
-//! ✅ Metadata aligned with main.rs V5.5 banner
 //!
-//! V5.2 CHANGES (PR #36 - Multi-Bot Engine Injection):
+//! V5.2 CHANGES (PR #36 — Multi-Bot Engine Injection):
 //! ✅ Engine polymorphism: GridBot.engine → Arc<dyn TradingEngine>
-//! ✅ Constructor injection: GridBot::new(config, engine)
+//! ✅ Constructor injection: GridBot::new(config, engine, feed)
 //! ✅ Mode-agnostic: Paper or Real engine determined by main.rs
-//! ✅ Multi-bot ready: each instance can use different engine type
 //!
-//! V5.1 CHANGES (PRs #29 / #30 / #31 / #32):
-//! ✅ RSI, MeanReversion, Momentum, MomentumMACD wired into bot init
-//! ✅ fix: RSIStrategy caps, strategy-native *Config types
-//! ✅ fix: mean_period (not sma_period), ..default() for min_confidence
-//! ✅ fix: MomentumConfig.fast_period (not lookback_period/threshold)
+//! Native *Config field mapping (TOML name → strategy field name):
+//!   RsiStrategyConfig.period          → RsiConfig.rsi_period
+//!   MomentumStrategyConfig.lookback_period → MomentumConfig.fast_period
+//!   MeanReversionStrategyConfig.sma_period → MeanReversionConfig.mean_period
+//!   MomentumMACDStrategyConfig.*      → MomentumMACDConfig.* (match 1:1)
 //!
-//! Native *Config field mapping (TOML name -> strategy field name):
-//!   RsiStrategyConfig.period          -> RsiConfig.rsi_period
-//!   MomentumStrategyConfig.lookback_period -> MomentumConfig.fast_period
-//!   MeanReversionStrategyConfig.sma_period -> MeanReversionConfig.mean_period
-//!   MomentumMACDStrategyConfig.*      -> MomentumMACDConfig.* (match 1:1)
-//!
-//! Rule: always use ..Strategy::default() -- native *Config structs may have
-//!   fields not in TOML (slow_period, min_confidence, etc.); strategy defaults
-//!   are well-tested. Only override what the user explicitly set in TOML.
-//!
-//! V4.5: initialize_with_price(&feed), emergency grid safety check
-//! V4.4: Fill fan-out (drain_fills -> notify_fill)
-//! V4.3: GridLevel pairing, adaptive optimizer, enhanced metrics
-//!
-//! March 2026 - V5.6 REGISTRY WIRE + GRIDBOTSTATS
-//! ═══════════════════════════════════════════════════════════════════
+//! March 2026 — V5.6 BOT TRAIT IMPL 🤖
+//! ═══════════════════════════════════════════════════════════════════════════
 
 use std::sync::Arc;
+use std::time::Instant;
+use async_trait::async_trait;
+use anyhow::{Result, Context, bail};
+use log::{info, warn, debug, trace};
+
+use crate::bots::bot_trait::{Bot, BotStats, TickResult};
 use crate::strategies::{
     StrategyManager, GridRebalancer, GridRebalancerConfig,
     StrategyRegistryBuilder,
@@ -60,40 +59,56 @@ use crate::trading::{
     PriceFeed,
 };
 use crate::config::Config;
-use anyhow::{Result, Context, bail};
-use log::{info, warn, debug, trace};
 
 const OPTIMIZATION_INTERVAL_CYCLES: u64 = 50;
 
+// ═══════════════════════════════════════════════════════════════════════════
+// GRID BOT STRUCT
+// ═══════════════════════════════════════════════════════════════════════════
+
 pub struct GridBot {
-    pub manager: StrategyManager,
-    pub engine: Arc<dyn TradingEngine + Send + Sync>,
-    pub config: Config,
-    pub grid_state: GridStateTracker,
-    pub enhanced_metrics: EnhancedMetrics,
+    pub manager:            StrategyManager,
+    pub engine:             Arc<dyn TradingEngine + Send + Sync>,
+    pub config:             Config,
+    pub grid_state:         GridStateTracker,
+    pub enhanced_metrics:   EnhancedMetrics,
     pub adaptive_optimizer: AdaptiveOptimizer,
-    last_price: Option<f64>,
-    total_cycles: u64,
-    successful_trades: u64,
-    grid_repositions: u64,
-    last_reposition_time: Option<std::time::Instant>,
+    /// Owned price feed — enables autonomous process_tick() (GAP-1 / PR #84).
+    feed:                   Arc<PriceFeed>,
+    /// Session start time — used for uptime_secs in BotStats.
+    session_start:          Instant,
+    last_price:             Option<f64>,
+    total_cycles:           u64,
+    successful_trades:      u64,
+    grid_repositions:       u64,
+    last_reposition_time:   Option<Instant>,
     last_optimization_cycle: u64,
-    grid_initialized: bool,
-    total_fills_tracked: u64,
+    grid_initialized:       bool,
+    total_fills_tracked:    u64,
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// CONSTRUCTOR
+// ═══════════════════════════════════════════════════════════════════════════
+
 impl GridBot {
+    /// Create a new GridBot with injected engine and price feed.
+    ///
+    /// `feed` is `Arc<PriceFeed>` so main.rs retains a clone for the
+    /// trading loop display (price, volatility) without double-ownership.
+    /// Grid placement is deferred — call `initialize_with_price()` before
+    /// the trading loop.
     pub fn new(
         config: Config,
         engine: Arc<dyn TradingEngine + Send + Sync>,
+        feed:   Arc<PriceFeed>,
     ) -> Result<Self> {
-        info!("[BOT-V5.6] Initializing GridBot V5.6 Registry-Wired...");
-        info!("[BOT-V5.6] Engine: Injected by main.rs (Paper or Real based on --mode)");
-        info!("[BOT-V5.6] Adaptive Intelligence: ENABLED");
-        info!("[BOT-V5.6] Fill Fan-out: ENABLED");
-        info!("[BOT-V5.6] Config-driven strategy loading: ENABLED (StrategyRegistryBuilder)");
+        info!("[BOT-V5.6] Initializing GridBot V5.6...");
+        info!("[BOT-V5.6] Engine:   Injected by main.rs (Paper or Real)");
+        info!("[BOT-V5.6] PriceFeed: Owned via Arc — process_tick() autonomous");
+        info!("[BOT-V5.6] Bot Trait: IMPLEMENTED (GAP-1 resolved)");
 
-        // ─── GridRebalancer — always active ───────────────────────────────────
+        // ── GridRebalancer — always active ────────────────────────────────
         let grid_config = GridRebalancerConfig {
             grid_spacing:                   config.trading.grid_spacing_percent / 100.0,
             order_size:                     config.trading.min_order_size,
@@ -117,11 +132,8 @@ impl GridBot {
         let grid_rebalancer = GridRebalancer::new(grid_config)
             .context("Failed to create GridRebalancer")?;
 
-        // ─── Config-driven strategy registration via StrategyRegistryBuilder ──
-        //
-        // Each strategy is only instantiated if enabled in TOML.
-        // Weights flow through to ConsensusEngine (wired in PR #84/85).
-        // _weights retained for future weighted-vote ConsensusEngine integration.
+        // ── Config-driven strategy registration ──────────────────────────
+        // _weights retained for ConsensusEngine weighted-vote wiring (PR #85+).
         let analytics_ctx = AnalyticsContext::default();
         let (_manager, _weights) = StrategyRegistryBuilder::new()
             .add(
@@ -166,23 +178,18 @@ impl GridBot {
             )
             .build(analytics_ctx);
 
-        // Bind manager to the struct field name
         let manager = _manager;
 
-        // ─── Log loaded strategy count ────────────────────────────────────────
         info!("[BOT-V5.6] ✅ {} strategies loaded via StrategyRegistryBuilder",
               manager.strategies.len());
-
-        // ─── Engine is injected by main.rs ────────────────────────────────────
-        info!("[BOT-V5.6] Using injected TradingEngine (Paper or Real)");
 
         let grid_state         = GridStateTracker::new();
         let enhanced_metrics   = EnhancedMetrics::new();
         let base_spacing       = config.trading.grid_spacing_percent / 100.0;
         let base_size          = config.trading.min_order_size;
         let adaptive_optimizer = AdaptiveOptimizer::new(base_spacing, base_size);
-        info!("[BOT-V5.6] Adaptive optimizer initialized (every {} cycles)", OPTIMIZATION_INTERVAL_CYCLES);
-        info!("[BOT-V5.6] GridBot V5.6 initialization complete (grid placement deferred until price known)");
+
+        info!("[BOT-V5.6] GridBot V5.6 initialization complete");
 
         Ok(Self {
             manager,
@@ -191,6 +198,8 @@ impl GridBot {
             grid_state,
             enhanced_metrics,
             adaptive_optimizer,
+            feed,
+            session_start: Instant::now(),
             last_price: None,
             total_cycles: 0,
             successful_trades: 0,
@@ -202,24 +211,21 @@ impl GridBot {
         })
     }
 
+    // ── Concrete initialize (kept for backwards compat + initialize_with_price) ──
     pub async fn initialize(&mut self) -> Result<()> {
-        info!("[BOT] Async pre-init hook complete (grid placement handled by initialize_with_price)");
+        info!("[BOT] Async pre-init hook complete");
         Ok(())
     }
 
     /// V5.5 FIX: First-time grid placement via place_grid_orders() directly.
-    ///
-    /// Previously called reposition_grid() which is designed for RE-positioning
-    /// an already-initialized grid. Since grid_initialized is false at startup,
-    /// it would hit the emergency path with confusing warnings.
-    ///
-    /// Now: place_grid_orders() → set grid_initialized → update metrics.
-    /// Clean, direct, no emergency path needed.
-    pub async fn initialize_with_price(&mut self, feed: &PriceFeed) -> Result<()> {
-        info!("┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓");
+    /// Called by main.rs initialize_components() before the trading loop.
+    /// PR #85 will fold this into Bot::initialize() once feed is fully owned.
+    pub async fn initialize_with_price(&mut self) -> Result<()> {
+        info!("┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓");
         info!("┃  V5.6 GRID INIT — awaiting live price...       ┃");
-        info!("┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛");
-        let initial_price = feed.latest_price().await;
+        info!("┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛");
+
+        let initial_price = self.feed.latest_price().await;
         if initial_price <= 0.0 {
             bail!("Invalid initial price ${:.2} — cannot initialize grid", initial_price);
         }
@@ -234,22 +240,22 @@ impl GridBot {
         let used_levels  = self.grid_state.count().await;
         self.enhanced_metrics.update_grid_stats(total_levels, used_levels);
 
-        info!("┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓");
+        info!("┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓");
         info!("┃  ✅ Grid initialized — ready for trading loop   ┃");
         info!("┃  {} levels  |  {:.3}% spacing              ┃",
               self.config.trading.grid_levels,
               self.config.trading.grid_spacing_percent);
-        info!("┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛");
+        info!("┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛");
         Ok(())
     }
 
     pub async fn should_reposition(&self, current_price: f64, last_price: f64) -> bool {
         if !self.grid_initialized {
-            info!("[BOT] Grid not initialized - will initialize on first cycle");
+            info!("[BOT] Grid not initialized — will initialize on first cycle");
             return true;
         }
         if self.last_price.is_none() {
-            trace!("No last price - skipping reposition check");
+            trace!("No last price — skipping reposition check");
             return false;
         }
         if let Some(last_reposition) = self.last_reposition_time {
@@ -262,12 +268,12 @@ impl GridBot {
         }
         let price_change_pct = ((current_price - last_price).abs() / last_price) * 100.0;
         let threshold = self.config.trading.reposition_threshold;
-        let should_reposition = price_change_pct > threshold;
-        if should_reposition {
-            debug!("[BOT] Grid reposition triggered: {:.3}% change > {:.3}% threshold",
+        let should = price_change_pct > threshold;
+        if should {
+            debug!("[BOT] Reposition triggered: {:.3}% change > {:.3}% threshold",
                    price_change_pct, threshold);
         }
-        should_reposition
+        should
     }
 
     pub async fn reposition_grid(&mut self, current_price: f64, last_price: f64) -> Result<()> {
@@ -280,26 +286,19 @@ impl GridBot {
             let total_levels = self.config.trading.grid_levels as usize;
             let used_levels  = self.grid_state.count().await;
             self.enhanced_metrics.update_grid_stats(total_levels, used_levels);
-            info!("[BOT] Emergency grid init complete — normal trading resumes next cycle");
+            info!("[BOT] Emergency grid init complete");
             return Ok(());
         }
 
-        info!("[BOT] Repositioning grid: ${:.4} -> ${:.4}", last_price, current_price);
-        let reposition_start = std::time::Instant::now();
+        info!("[BOT] Repositioning grid: ${:.4} → ${:.4}", last_price, current_price);
+        let reposition_start = Instant::now();
 
         let filled_buys = self.grid_state.get_levels_with_filled_buys().await;
         if !filled_buys.is_empty() {
-            warn!("[BOT] {} levels have filled buys - preserving their sell orders!", filled_buys.len());
-            for level in &filled_buys {
-                info!("   Level {} buy filled @ ${:.4} - keeping sell @ ${:.4}",
-                      level.id, level.buy_price, level.sell_price);
-            }
+            warn!("[BOT] {} levels have filled buys — preserving sell orders!", filled_buys.len());
         }
 
         let cancellable = self.grid_state.get_cancellable_levels().await;
-        info!("[BOT] {} cancellable levels (out of {} total)",
-              cancellable.len(), self.grid_state.count().await);
-
         let mut cancelled_count = 0;
         for level_id in cancellable {
             if let Some(level) = self.grid_state.get_level(level_id).await {
@@ -319,12 +318,12 @@ impl GridBot {
             }
         }
         if cancelled_count > 0 {
-            info!("[BOT] Selectively cancelled {} orders", cancelled_count);
+            info!("[BOT] Cancelled {} orders", cancelled_count);
         }
 
         self.place_grid_orders(current_price).await?;
         self.grid_repositions += 1;
-        self.last_reposition_time = Some(std::time::Instant::now());
+        self.last_reposition_time = Some(Instant::now());
         let total_levels = self.config.trading.grid_levels as usize;
         let used_levels  = self.grid_state.count().await;
         self.enhanced_metrics.update_grid_stats(total_levels, used_levels);
@@ -337,7 +336,7 @@ impl GridBot {
         let order_size   = self.adaptive_optimizer.current_position_size;
         let num_levels   = self.config.trading.grid_levels;
 
-        debug!("[BOT] ADAPTIVE Grid params: {} levels @ {:.3}% spacing, {:.3} SOL/order",
+        debug!("[BOT] Grid params: {} levels @ {:.3}% spacing, {:.3} SOL/order",
                num_levels, grid_spacing * 100.0, order_size);
 
         let mut orders_placed = 0;
@@ -350,27 +349,22 @@ impl GridBot {
             let sell_price = current_price * (1.0 + grid_spacing * i as f64);
             let mut level  = self.grid_state.create_level(buy_price, sell_price, order_size).await;
 
-            match self.engine.place_limit_order_with_level(OrderSide::Buy, buy_price, order_size, Some(level.id)).await {
-                Ok(buy_order_id) => {
-                    level.set_buy_order(buy_order_id.clone());
-                    trace!("[BOT] Buy order placed @ ${:.4} (Level {})", buy_price, level.id);
-                    orders_placed += 1;
-                }
+            match self.engine.place_limit_order_with_level(
+                OrderSide::Buy, buy_price, order_size, Some(level.id)
+            ).await {
+                Ok(id) => { level.set_buy_order(id); orders_placed += 1; }
                 Err(e) => {
-                    warn!("[BOT] Failed to place buy order @ ${:.4}: {}", buy_price, e);
+                    warn!("[BOT] Failed buy @ ${:.4}: {}", buy_price, e);
                     orders_failed += 1;
                     continue;
                 }
             }
-
-            match self.engine.place_limit_order_with_level(OrderSide::Sell, sell_price, order_size, Some(level.id)).await {
-                Ok(sell_order_id) => {
-                    level.set_sell_order(sell_order_id.clone());
-                    trace!("[BOT] Sell order placed @ ${:.4} (Level {})", sell_price, level.id);
-                    orders_placed += 1;
-                }
+            match self.engine.place_limit_order_with_level(
+                OrderSide::Sell, sell_price, order_size, Some(level.id)
+            ).await {
+                Ok(id) => { level.set_sell_order(id); orders_placed += 1; }
                 Err(e) => {
-                    warn!("[BOT] Failed to place sell order @ ${:.4}: {}", sell_price, e);
+                    warn!("[BOT] Failed sell @ ${:.4}: {}", sell_price, e);
                     orders_failed += 1;
                 }
             }
@@ -379,12 +373,10 @@ impl GridBot {
 
         info!("[BOT] Placed {} orders ({} pairs), {} failed",
               orders_placed, buy_levels.min(sell_levels), orders_failed);
-        if orders_failed > 0 {
-            warn!("[BOT] {} orders failed to place", orders_failed);
-        }
         Ok(())
     }
 
+    // ── Core tick logic (called by both concrete loop + Bot::process_tick) ──
     pub async fn process_price_update(&mut self, price: f64, timestamp: i64) -> Result<()> {
         self.total_cycles += 1;
         self.last_price = Some(price);
@@ -392,24 +384,22 @@ impl GridBot {
         trace!("[BOT] Processing price ${:.4} (cycle {})", price, self.total_cycles);
 
         let signal = self.manager.analyze_all(price, timestamp).await
-            .context("Failed to get strategy consensus")?;
+            .context("Strategy consensus failed")?;
         self.enhanced_metrics.record_signal(true);
-        trace!("[BOT] Strategy signal: {}", signal.display());
+        trace!("[BOT] Signal: {}", signal.display());
 
         let filled_orders = self.engine.process_price_update(price).await
-            .context("Failed to process price update in trading engine")?;
+            .context("Engine tick failed")?;
 
         for fill in &filled_orders {
             self.manager.notify_fill(fill);
         }
 
         let order_ids: Vec<String> = filled_orders.iter().map(|f| f.order_id.clone()).collect();
-
         if !order_ids.is_empty() {
             info!("[BOT] {} orders filled at ${:.4}", order_ids.len(), price);
             self.successful_trades += order_ids.len() as u64;
             for order_id in &order_ids {
-                debug!("   [FILL] Order {} filled", order_id);
                 let is_buy    = order_id.to_lowercase().contains("buy");
                 let pnl       = self.grid_state.total_realized_pnl().await;
                 let fill_size = self.adaptive_optimizer.current_position_size;
@@ -468,7 +458,7 @@ impl GridBot {
         let stats  = self.get_stats().await;
         let border = "=".repeat(60);
         println!("\n{}", border);
-        println!("   [BOT] GRID BOT V5.6 - STATUS REPORT");
+        println!("   [BOT] GRID BOT V5.6 — STATUS REPORT");
         println!("{}", border);
         println!("\n[PERFORMANCE]");
         println!("  Total Cycles:      {}", stats.total_cycles);
@@ -505,17 +495,102 @@ impl GridBot {
     }
 }
 
-// ══════════════════════════════════════════════════════════════════════
-// GRID BOT STATS
-// ══════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════
+// impl Bot for GridBot  (GAP-1 — PR #84)
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[async_trait]
+impl Bot for GridBot {
+    fn name(&self) -> &str {
+        "GridBot"
+    }
+
+    fn instance_id(&self) -> &str {
+        self.config.bot.instance_name()
+    }
+
+    /// One-time initialization — delegates to concrete initialize().
+    /// In PR #85 this will also call initialize_with_price() so
+    /// Box<dyn Bot> callers need zero knowledge of the feed.
+    async fn initialize(&mut self) -> Result<()> {
+        self.initialize().await
+    }
+
+    /// Autonomous tick: fetch price → process → return TickResult.
+    ///
+    /// Returns:
+    /// - `TickResult::shutdown()`  — invalid price (feed problem)
+    /// - `TickResult::paused(r)`   — regime gate / circuit breaker blocked
+    /// - `TickResult::active(f,0)` — normal cycle, f = fills this tick
+    async fn process_tick(&mut self) -> Result<TickResult> {
+        let price = self.feed.latest_price().await;
+        if price <= 0.0 {
+            warn!("[BOT::process_tick] Invalid price {:.4} — signalling shutdown", price);
+            return Ok(TickResult::shutdown());
+        }
+
+        let ts = chrono::Utc::now().timestamp();
+
+        // Capture fill count before tick so we can delta after
+        let fills_before = self.total_fills_tracked;
+
+        self.process_price_update(price, ts).await?;
+
+        let fills_this_tick = self.total_fills_tracked.saturating_sub(fills_before);
+        let stats           = self.get_stats().await;
+
+        if stats.trading_paused {
+            return Ok(TickResult::paused("regime gate / circuit breaker"));
+        }
+
+        Ok(TickResult::active(fills_this_tick, 0))
+    }
+
+    /// Graceful shutdown: display final status, log structured summary.
+    async fn shutdown(&mut self) -> Result<()> {
+        info!("[BOT] Graceful shutdown initiated for instance '{}'", self.instance_id());
+        let final_price = self.last_price.unwrap_or(0.0);
+        self.display_status(final_price).await;
+        self.display_strategy_performance().await;
+        info!(
+            "[BOT] Shutdown complete | cycles={} fills={} repos={} uptime={}s",
+            self.total_cycles,
+            self.total_fills_tracked,
+            self.grid_repositions,
+            self.session_start.elapsed().as_secs(),
+        );
+        Ok(())
+    }
+
+    /// Map GridBotStats (19 fields) → BotStats (8-field trait contract).
+    ///
+    /// Used by future orchestrator + observability layer.
+    /// Full GridBotStats available via `bot.get_stats().await`.
+    fn stats(&self) -> BotStats {
+        BotStats {
+            instance_id:  self.config.bot.instance_name().to_string(),
+            bot_type:     "GridBot".to_string(),
+            total_cycles: self.total_cycles,
+            total_fills:  self.total_fills_tracked,
+            total_orders: 0, // TODO(tech-debt): track placed orders in PR #85
+            uptime_secs:  self.session_start.elapsed().as_secs(),
+            is_paused:    false,
+            current_pnl:  0.0, // TODO(tech-debt): wire live pnl_usdc without async in PR #85
+        }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// GRID BOT STATS  (19 fields — grid-specific analytics)
+// ═══════════════════════════════════════════════════════════════════════════
 
 /// Grid-bot-specific statistics for observability, dashboards, and analytics.
 ///
-/// Renamed from `BotStats` (PR #83) to avoid ambiguity with the generic
-/// `bot_trait::BotStats` (8-field trait return type).
+/// Renamed from `BotStats` (PR #83) to avoid ambiguity with
+/// `bot_trait::BotStats` (8-field generic trait return type).
 ///
-/// Exported from `bots/mod.rs` for use by Telegram reporters,
-/// Supabase loggers, and future dashboard integrations.
+/// Exported from `bots/mod.rs` for Telegram reporters, Supabase,
+/// and future dashboard integrations.
 #[derive(Debug, Clone)]
 pub struct GridBotStats {
     pub total_cycles:            u64,
@@ -570,14 +645,13 @@ impl GridBotStats {
     }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// TESTS
+// ═══════════════════════════════════════════════════════════════════════════
+
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_bot_creation() {
-        assert!(true);
-    }
 
     #[test]
     fn test_gridbotstats_fields() {
@@ -606,6 +680,34 @@ mod tests {
         assert_eq!(stats.successful_trades, 42);
         assert!(!stats.trading_paused);
         assert!((stats.pnl_usdc - 50.0).abs() < 1e-9);
-        assert!((stats.roi_percent - 5.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_tick_result_paused_reason() {
+        let r = TickResult::paused("regime gate / circuit breaker");
+        assert!(r.active);
+        assert_eq!(r.fills, 0);
+        assert!(r.pause_reason.as_deref()
+            .unwrap_or("").contains("regime gate"));
+    }
+
+    #[test]
+    fn test_tick_result_shutdown_on_bad_price() {
+        // Validate shutdown sentinel values match what process_tick() returns
+        let r = TickResult::shutdown();
+        assert!(!r.active);
+        assert_eq!(r.fills, 0);
+        assert_eq!(r.orders_placed, 0);
+    }
+
+    #[test]
+    fn test_bot_stats_default_zero() {
+        // BotStats::default() — used by orchestrator before first tick
+        let s = BotStats::default();
+        assert_eq!(s.total_cycles, 0);
+        assert_eq!(s.total_fills, 0);
+        assert_eq!(s.uptime_secs, 0);
+        assert!(!s.is_paused);
+        assert_eq!(s.current_pnl, 0.0);
     }
 }

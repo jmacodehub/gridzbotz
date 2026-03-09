@@ -1,55 +1,32 @@
 //! ═══════════════════════════════════════════════════════════════════════════
-//! 🚀 PROJECT FLASH V5.5 – Production Grid Trading Bot
+//! 🚀 PROJECT FLASH V5.6 – Production Grid Trading Bot
+//!
+//! V5.6 CHANGES (PR #84 — impl Bot for GridBot + PriceFeed ownership):
+//! ✅ GridBot::new() now takes Arc<PriceFeed> — bot owns its price source
+//! ✅ initialize_components(): feed wrapped in Arc, clone injected into bot
+//! ✅ initialize_with_price() called on bot directly (no feed arg needed)
+//! ✅ shutdown_components() delegates to Bot::shutdown() trait method
+//! ✅ run_trading_loop still uses concrete GridBot + process_price_update()
+//!    Box<dyn Bot> dispatch promoted in PR #85 after paper smoke test
 //!
 //! V5.5 CHANGES (PR #73 — Engine Factory Wiring):
-//! ✅ 60-line match block in initialize_components() → 15-line create_engine() call
-//! ✅ All engine construction logic now lives in src/trading/engine.rs
-//! ✅ main.rs only passes EngineParams (wallet balances for live, defaults for paper)
-//! ✅ PaperTradingEngine no longer imported directly — factory handles everything
-//! ✅ Zero behavior change — factory produces identical engines
+//! ✅ 60-line match block → 15-line create_engine() call
+//! ✅ All engine construction logic lives in src/trading/engine.rs
+//! ✅ main.rs only passes EngineParams (wallet balances for live)
 //!
 //! V5.4 CHANGES (PR #51 - Live Mode Real Balances):
 //! ✅ fetch_wallet_balances(): queries on-chain SOL + USDC at live startup
-//! ✅ RealTradingEngine boots with real wallet balance (not paper_trading config)
-//! ✅ Live mode runs indefinitely until Ctrl+C — no paper duration cap
-//! ✅ Cycle display: live shows absolute count; paper shows n/total
-//! ✅ Capital safety check now validates actual on-chain funds
-//! ✅ ROOT CAUSE FIX: wrong initial_usdc was why mainnet launch failed
+//! ✅ RealTradingEngine boots with real wallet balance
+//! ✅ Live mode runs indefinitely until Ctrl+C
 //!
 //! V5.3 CHANGES (PR #39 - Security Config Wiring):
 //! ✅ config.security.keypair_path now passed to RealTradingEngine
-//! ✅ Each bot instance uses its configured keypair (not hardcoded default)
-//! ✅ Keypair path error messages show configured path for debugging
-//!
-//! V5.3 CHANGES (PR #38 - Real Execution Wiring):
-//! ✅ RealTradingEngine construction enabled for --mode live
-//! ✅ Capital safety validation (min $10 for live trading)
-//! ✅ Live SOL price passed to RealEngine for accurate NAV tracking
-//! ✅ Paper mode remains default, live is explicit opt-in
 //!
 //! V5.2 CHANGES (PR #36 - Multi-Bot Engine Injection):
 //! ✅ Engine builder in initialize_components() creates Paper or Real engine
-//! ✅ GridBot::new(config, engine) receives injected engine
-//! ✅ Runtime --mode paper|live switching without recompilation
-//! ✅ Centralized engine lifecycle management in main.rs
+//! ✅ GridBot::new(config, engine, feed) receives injected engine + feed
 //!
-//! V3.8 ENHANCEMENTS (fix/grid-init-with-live-price):
-//! ✅ initialize_with_price() called between feed warm-up and trading loop
-//! ✅ Resolves Active Levels: 0 — grid now always placed before cycle 1
-//!
-//! V3.7 ENHANCEMENTS (Step 5C, Feb 2026):
-//! ✅ Single unified tick: process_price_update() owns signal gate,
-//!    circuit breaker, crossing detection, fills, metrics, optimizer
-//! ✅ Removed duplicate should_reposition() + reposition_grid() from
-//!    run_trading_loop -- was causing double repositioning every cycle
-//! ✅ record_failure() now called on tick errors (was missing before)
-//! ✅ Cycle status line: Halted / Repositioned / Stable + fills + vol
-//!
-//! fix/volatility-4dp (Mar 2026):
-//! ✅ Vol display: {:>5.2}% → {:>8.4}% — 4 decimal places
-//! ✅ volatility() in price_feed.rs now returns true % (×100)
-//!
-//! March 2026 — V5.5 Engine Factory Wiring 🏭
+//! March 2026 — V5.6 BOT TRAIT IMPL 🤖
 //! ═══════════════════════════════════════════════════════════════════════════
 
 use solana_grid_bot::init;
@@ -69,7 +46,7 @@ use clap::Parser;
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[derive(Parser, Debug)]
-#[clap(name = "gridzbotz", version = "5.5.0")]
+#[clap(name = "gridzbotz", version = "5.6.0")]
 #[clap(about = "Production-grade Solana grid trading bot", long_about = None)]
 struct Args {
     /// Configuration file path
@@ -77,12 +54,10 @@ struct Args {
     config: PathBuf,
 
     /// Execution mode: paper | live
-    /// Overrides bot.execution_mode in TOML when provided.
-    /// --paper is shorthand for --mode paper.
     #[clap(long, value_name = "MODE")]
     mode: Option<String>,
 
-    /// Shorthand for --mode paper (takes no value)
+    /// Shorthand for --mode paper
     #[clap(long, conflicts_with = "mode")]
     paper: bool,
 
@@ -108,31 +83,27 @@ struct Args {
 }
 
 impl Args {
-    /// Resolve the effective execution mode from CLI flags.
-    /// Priority: --paper > --mode <value> > TOML bot.execution_mode.
     fn resolved_mode(&self) -> Option<String> {
-        if self.paper {
-            return Some("paper".to_string());
-        }
+        if self.paper { return Some("paper".to_string()); }
         self.mode.clone()
     }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// SESSION METRICS - Comprehensive Performance Tracking
+// SESSION METRICS
 // ═══════════════════════════════════════════════════════════════════════════
 
 struct SessionMetrics {
-    start_time: Instant,
-    cycle_times: Vec<u64>,
-    repositions: u32,
-    errors: u32,
-    price_updates: u64,
-    successful_cycles: u32,
-    failed_cycles: u32,
+    start_time:          Instant,
+    cycle_times:         Vec<u64>,
+    repositions:         u32,
+    errors:              u32,
+    price_updates:       u64,
+    successful_cycles:   u32,
+    failed_cycles:       u32,
     failed_price_fetches: u32,
-    slow_cycles: u32,
-    regime_gate_blocks: u32,
+    slow_cycles:         u32,
+    regime_gate_blocks:  u32,
 }
 
 impl SessionMetrics {
@@ -154,9 +125,7 @@ impl SessionMetrics {
     fn record_cycle(&mut self, duration_ms: u64, slow_threshold: u64) {
         self.cycle_times.push(duration_ms);
         self.successful_cycles += 1;
-        if duration_ms > slow_threshold {
-            self.slow_cycles += 1;
-        }
+        if duration_ms > slow_threshold { self.slow_cycles += 1; }
     }
 
     fn record_failure(&mut self) {
@@ -165,22 +134,13 @@ impl SessionMetrics {
     }
 
     fn avg_cycle_time(&self) -> f64 {
-        if self.cycle_times.is_empty() { 0.0 } else {
-            self.cycle_times.iter().sum::<u64>() as f64 / self.cycle_times.len() as f64
-        }
+        if self.cycle_times.is_empty() { 0.0 }
+        else { self.cycle_times.iter().sum::<u64>() as f64 / self.cycle_times.len() as f64 }
     }
 
-    fn min_cycle_time(&self) -> u64 {
-        *self.cycle_times.iter().min().unwrap_or(&0)
-    }
-
-    fn max_cycle_time(&self) -> u64 {
-        *self.cycle_times.iter().max().unwrap_or(&0)
-    }
-
-    fn elapsed_secs(&self) -> f64 {
-        self.start_time.elapsed().as_secs_f64()
-    }
+    fn min_cycle_time(&self) -> u64 { *self.cycle_times.iter().min().unwrap_or(&0) }
+    fn max_cycle_time(&self) -> u64 { *self.cycle_times.iter().max().unwrap_or(&0) }
+    fn elapsed_secs(&self) -> f64   { self.start_time.elapsed().as_secs_f64() }
 
     fn success_rate(&self) -> f64 {
         let total = self.successful_cycles + self.failed_cycles;
@@ -196,39 +156,33 @@ impl SessionMetrics {
 
     fn display_summary(&self, total_cycles: u32) {
         let border = "═".repeat(60);
-
         println!("\n{}", border);
         println!("  📊 SESSION PERFORMANCE SUMMARY");
         println!("{}", border);
         println!("\n⏱️  TIMING:");
         println!("   Runtime:          {:.2}s", self.elapsed_secs());
         println!("   Total Cycles:     {}", total_cycles);
-        println!("   Successful:       {} ({:.1}%)",
-                 self.successful_cycles, self.success_rate());
+        println!("   Successful:       {} ({:.1}%)", self.successful_cycles, self.success_rate());
         println!("   Failed:           {}", self.failed_cycles);
-
         println!("\n⚡ CYCLE PERFORMANCE:");
         println!("   Average:          {:.2}ms", self.avg_cycle_time());
         println!("   Min:              {}ms", self.min_cycle_time());
         println!("   Max:              {}ms", self.max_cycle_time());
         println!("   Slow Cycles:      {}", self.slow_cycles);
         println!("   Throughput:       {:.1} cycles/sec", self.cycles_per_second());
-
         println!("\n🎯 TRADING ACTIVITY:");
         println!("   Grid Repositions: {}", self.repositions);
         println!("   Price Updates:    {}", self.price_updates);
         println!("   Regime Blocks:    {}", self.regime_gate_blocks);
-
         println!("\n⚠️  ERRORS:");
         println!("   Total Errors:     {}", self.errors);
         println!("   Failed Fetches:   {}", self.failed_price_fetches);
-
         println!("\n{}\n", border);
     }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// BANNER & DISPLAY
+// BANNER
 // ═══════════════════════════════════════════════════════════════════════════
 
 fn print_banner(config: &Config) {
@@ -238,10 +192,9 @@ fn print_banner(config: &Config) {
     } else {
         "🟡 PAPER — simulation, fills logged to CSV"
     };
-
     println!("\n{}", border);
-    println!("     🚀 GRIDZBOTZ V5.5 — PRODUCTION GRID TRADING BOT");
-    println!("     ⚡ Hybrid Feeds • 10Hz Cycles • Engine Factory Wired");
+    println!("     🚀 GRIDZBOTZ V5.6 — PRODUCTION GRID TRADING BOT");
+    println!("     🤖 Bot Trait Impl · Arc<PriceFeed> · GAP-1 Resolved");
     println!("{}", border);
     println!("\n   Mode:        {}", mode_label);
     println!("   Instance:    {} | v{} | {}",
@@ -257,15 +210,13 @@ fn print_banner(config: &Config) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// CONFIGURATION LOADING WITH CLI OVERRIDES
+// CONFIGURATION
 // ═══════════════════════════════════════════════════════════════════════════
 
 fn load_configuration(args: &Args) -> Result<Config> {
     info!("🔧 Loading configuration from: {}", args.config.display());
-
     let mut config = Config::from_file(&args.config)?;
 
-    // ── Mode override (--paper or --mode <value>) ──────────────────────────────
     if let Some(mode) = args.resolved_mode() {
         let valid = ["paper", "live"];
         if !valid.contains(&mode.as_str()) {
@@ -275,9 +226,7 @@ fn load_configuration(args: &Args) -> Result<Config> {
         config.bot.execution_mode = mode;
     }
 
-    // ── Duration overrides (paper mode only — ignored in live) ─────────────────
     let mut override_count = 0usize;
-
     if let Some(cycles) = args.cycles {
         info!("🔄 CLI Override: cycles = {}", cycles);
         config.paper_trading.test_cycles = Some(cycles);
@@ -297,11 +246,8 @@ fn load_configuration(args: &Args) -> Result<Config> {
         config.paper_trading.test_cycles = None;
         override_count += 1;
     }
-
     if override_count == 0 {
         info!("✅ No duration overrides — using config file settings");
-    } else {
-        info!("✅ Applied {} duration CLI override(s)", override_count);
     }
 
     config.validate()?;
@@ -309,27 +255,20 @@ fn load_configuration(args: &Args) -> Result<Config> {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// 🆕 V5.4: ON-CHAIN WALLET BALANCE QUERY
-// Fetches real SOL + USDC balances for live mode initialization.
-// Paper mode continues to use paper_trading.initial_usdc / initial_sol.
+// WALLET BALANCE QUERY (live mode only)
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Query on-chain SOL and USDC balances for the configured wallet.
-/// Returns (usdc_balance, sol_balance) in human-readable units.
-/// Called exclusively in live mode — never in paper mode.
 async fn fetch_wallet_balances(rpc_url: &str, wallet_path: &str) -> Result<(f64, f64)> {
     use solana_client::nonblocking::rpc_client::RpcClient;
     use solana_client::rpc_request::TokenAccountsFilter;
     use solana_sdk::pubkey::Pubkey;
-    // CommitmentConfig removed from solana_sdk in v3.0 — RpcClient::new() defaults to confirmed
     use solana_sdk::signature::{read_keypair_file, Signer};
     use std::str::FromStr;
 
-    // Expand ~ to home directory
     let expanded = if wallet_path.starts_with('~') {
         let home = std::env::var("HOME")
             .or_else(|_| std::env::var("USERPROFILE"))
-            .context("Cannot expand ~ in wallet_path — HOME env var not set")?;
+            .context("Cannot expand ~ in wallet_path")?;
         wallet_path.replacen('~', &home, 1)
     } else {
         wallet_path.to_string()
@@ -340,37 +279,22 @@ async fn fetch_wallet_balances(rpc_url: &str, wallet_path: &str) -> Result<(f64,
     let pubkey = keypair.pubkey();
     info!("💰 Querying on-chain balances for wallet: {}", pubkey);
 
-    // RpcClient::new() uses CommitmentConfig::confirmed() by default in solana-client 3.0
-    let client = RpcClient::new(rpc_url.to_string());
-
-    // ── SOL balance (lamports → SOL) ──────────────────────────────────────────
-    let lamports = client
-        .get_balance(&pubkey)
-        .await
+    let client   = RpcClient::new(rpc_url.to_string());
+    let lamports = client.get_balance(&pubkey).await
         .with_context(|| format!("RPC get_balance failed for {}", pubkey))?;
     let sol = lamports as f64 / 1_000_000_000.0;
 
-    // ── USDC balance — mainnet mint EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v
-    // Uses serde_json pointer to avoid solana_account_decoder direct import.
     let usdc_mint = Pubkey::from_str("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v")
-        .expect("static USDC mint address is valid");
-
+        .expect("static USDC mint");
     let usdc = match client
         .get_token_accounts_by_owner(&pubkey, TokenAccountsFilter::Mint(usdc_mint))
         .await
     {
-        Ok(accounts) => accounts
-            .first()
+        Ok(accounts) => accounts.first()
             .and_then(|a| serde_json::to_value(&a.account.data).ok())
-            .and_then(|v| {
-                v.pointer("/parsed/info/tokenAmount/uiAmount")
-                    .and_then(|x| x.as_f64())
-            })
+            .and_then(|v| v.pointer("/parsed/info/tokenAmount/uiAmount").and_then(|x| x.as_f64()))
             .unwrap_or(0.0),
-        Err(e) => {
-            warn!("USDC balance query failed: {} — defaulting to $0.00", e);
-            0.0
-        }
+        Err(e) => { warn!("USDC balance query failed: {} — defaulting to $0.00", e); 0.0 }
     };
 
     info!("   ✅ SOL balance:  {:.6} SOL", sol);
@@ -379,19 +303,18 @@ async fn fetch_wallet_balances(rpc_url: &str, wallet_path: &str) -> Result<(f64,
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// COMPONENT INITIALIZATION (Modular & Robust)
+// COMPONENT INITIALIZATION
+// V5.6: feed wrapped in Arc — clone injected into GridBot::new().
+//       Bot owns its price source; main.rs retains Arc for loop display.
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// V5.5: Engine factory replaces the 60-line match block.
-/// create_engine() in src/trading/engine.rs handles all Paper/Real construction.
-/// main.rs only prepares EngineParams (wallet balances for live, defaults for paper).
-async fn initialize_components(config: &Config) -> Result<(GridBot, PriceFeed)> {
-    info!("🔧 Initializing core components...");
+async fn initialize_components(config: &Config) -> Result<(GridBot, Arc<PriceFeed>)> {
+    info!("🔧 Initializing core components V5.6...");
 
-    // ── 1. Price Feed — start before GridBot for banner display ────────────────
+    // ── 1. Price Feed ────────────────────────────────────────────────────
     info!("🚀 Starting V3.5 Hybrid Price Feed (Pyth/Hermes)...");
     let price_history_size = config.trading.volatility_window as usize;
-    let feed = PriceFeed::new(price_history_size);
+    let feed = Arc::new(PriceFeed::new(price_history_size));
 
     feed.start().await
         .map_err(|e| anyhow::anyhow!("Failed to start price feed: {:?}", e))?;
@@ -408,77 +331,66 @@ async fn initialize_components(config: &Config) -> Result<(GridBot, PriceFeed)> 
             initial_price
         );
     }
-
     let mode = feed.get_mode().await;
     info!("💰 Initial SOL/USD: ${:.4}  (feed mode: {:?})", initial_price, mode);
 
-    // ── 2. Engine Factory — create_engine() handles all Paper/Real wiring ──
+    // ── 2. Engine Factory ────────────────────────────────────────────────
     info!("🛠️  Building TradingEngine via factory: {}", engine_mode_label(config));
-
     let params = if config.bot.is_live() {
-        // Live mode: query real on-chain balances — never use paper_trading config
         let (usdc, sol) = fetch_wallet_balances(
             &config.network.rpc_url,
             &config.security.wallet_path,
-        ).await.context(
-            "Failed to query on-chain wallet balances — check RPC connectivity and keypair path"
-        )?;
-        EngineParams {
-            live_price: Some(initial_price),
-            wallet_balances: Some((usdc, sol)),
-        }
+        ).await.context("Failed to query on-chain wallet balances")?;
+        EngineParams { live_price: Some(initial_price), wallet_balances: Some((usdc, sol)) }
     } else {
-        // Paper mode: factory reads paper_trading.initial_usdc/sol from config
         EngineParams::default()
     };
-
     let engine = create_engine(config, params).await?;
     info!("✅ TradingEngine constructed via engine factory");
 
-    // ── 3. GridBot with injected engine ──────────────────────────────────
-    info!("🤖 Initializing GridBot V5.5 with injected engine...");
-    let mut bot = GridBot::new(config.clone(), engine)?;
+    // ── 3. GridBot — inject engine + Arc<PriceFeed> clone ────────────────
+    // main.rs retains the outer Arc for feed.latest_price() / feed.volatility()
+    // in the trading loop display. Bot owns an independent clone.
+    info!("🤖 Initializing GridBot V5.6 with injected engine + Arc<PriceFeed>...");
+    let mut bot = GridBot::new(config.clone(), engine, Arc::clone(&feed))?;
     bot.initialize().await?;
-    info!("✅ GridBot built (grid placement deferred until price known)");
+    info!("✅ GridBot built — grid placement deferred until price known");
 
-    // ── 4. Initialize grid with live price ──────────────────────────────
+    // ── 4. Grid initialization with live price ───────────────────────────
     info!("⚙️  Initializing grid with live price data...");
-    bot.initialize_with_price(&feed).await
-        .context("Failed to initialize bot grid with price feed")?;
-    info!("✅ Bot initialization sequence complete — grid ready for trading!");
+    bot.initialize_with_price().await
+        .context("Failed to initialize bot grid")?;
+    info!("✅ Bot initialization complete — grid ready for trading!");
 
     Ok((bot, feed))
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// MAIN TRADING LOOP (Production-Grade)
+// TRADING LOOP
+// Concrete GridBot + process_price_update() preserved.
+// Box<dyn Bot> dispatch promoted in PR #85 after paper smoke test.
 // ═══════════════════════════════════════════════════════════════════════════
 
 async fn run_trading_loop(
-    config: &Config,
-    bot: &mut GridBot,
-    feed: &PriceFeed,
+    config:   &Config,
+    bot:      &mut GridBot,
+    feed:     &Arc<PriceFeed>,
     shutdown: Arc<AtomicBool>,
 ) -> Result<SessionMetrics> {
     let mut metrics = SessionMetrics::new();
 
-    // V5.4: Live mode runs indefinitely until Ctrl+C.
-    // u32::MAX cycles @ 100ms = ~13.6 years — effectively infinite.
-    // Paper mode respects the configured test duration/cycles.
     let total_cycles = if config.bot.is_live() {
         info!("🔴 Live mode: trading indefinitely until Ctrl+C");
         u32::MAX
     } else {
-        config.paper_trading.calculate_cycles(
-            config.performance.cycle_interval_ms
-        ) as u32
+        config.paper_trading.calculate_cycles(config.performance.cycle_interval_ms) as u32
     };
 
     let cycle_interval       = config.performance.cycle_interval_ms;
     let stats_interval       = config.metrics.stats_interval as u32;
     let slow_cycle_threshold = cycle_interval * 3;
 
-    info!("🔥 STARTING TRADING LOOP — V5.5 ENGINE FACTORY WIRED");
+    info!("🔥 STARTING TRADING LOOP — V5.6 BOT TRAIT IMPL");
     if config.bot.is_live() {
         info!("   Total Cycles:     ∞ (live mode — Ctrl+C to stop)");
     } else {
@@ -500,7 +412,6 @@ async fn run_trading_loop(
 
         let cycle_start = Instant::now();
 
-        // ── Price fetch ────────────────────────────────────────────────────
         let price = feed.latest_price().await;
         if price <= 0.0 {
             error!("Invalid price at cycle {}: {}", cycle, price);
@@ -512,9 +423,8 @@ async fn run_trading_loop(
         metrics.price_updates += 1;
 
         let volatility = feed.volatility().await;
+        let ts         = chrono::Utc::now().timestamp();
 
-        // ── Single unified tick ─────────────────────────────────────────────
-        let ts = chrono::Utc::now().timestamp();
         match bot.process_price_update(price, ts).await {
             Ok(_) => {
                 let stats = bot.get_stats().await;
@@ -535,28 +445,17 @@ async fn run_trading_loop(
                     "✓ Stable"
                 };
 
-                // V5.4: Live mode — show absolute cycle count (no /total).
-                // Paper mode — show cycle/total as before.
                 if config.bot.is_live() {
                     println!(
                         "Cycle {:>6} | SOL ${:>9.4} | Vol {:>8.4}% | Fills {:>3} | Repos {:>3} | {}",
-                        cycle,
-                        price,
-                        volatility,
-                        stats.successful_trades,
-                        stats.grid_repositions,
-                        status,
+                        cycle, price, volatility,
+                        stats.successful_trades, stats.grid_repositions, status,
                     );
                 } else {
                     println!(
                         "Cycle {:>4}/{:<4} | SOL ${:>9.4} | Vol {:>8.4}% | Fills {:>3} | Repos {:>3} | {}",
-                        cycle,
-                        total_cycles,
-                        price,
-                        volatility,
-                        stats.successful_trades,
-                        stats.grid_repositions,
-                        status,
+                        cycle, total_cycles, price, volatility,
+                        stats.successful_trades, stats.grid_repositions, status,
                     );
                 }
 
@@ -568,8 +467,7 @@ async fn run_trading_loop(
             Err(e) => {
                 metrics.errors += 1;
                 metrics.record_failure();
-                println!("Cycle {:>4} | SOL ${:>9.4} | ⚠️  Tick error: {}",
-                         cycle, price, e);
+                println!("Cycle {:>4} | SOL ${:>9.4} | ⚠️  Tick error: {}", cycle, price, e);
                 error!("[Main] Tick failed at cycle {}: {}", cycle, e);
             }
         }
@@ -586,9 +484,7 @@ async fn run_trading_loop(
                   cycle, cycle_time, slow_cycle_threshold);
         }
         if cycle_time < cycle_interval {
-            let sleep_ms = cycle_interval - cycle_time;
-            trace!("Sleeping {}ms", sleep_ms);
-            sleep(Duration::from_millis(sleep_ms)).await;
+            sleep(Duration::from_millis(cycle_interval - cycle_time)).await;
         } else {
             debug!("Cycle #{} overran by {}ms", cycle, cycle_time - cycle_interval);
         }
@@ -598,10 +494,10 @@ async fn run_trading_loop(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// SHUTDOWN & CLEANUP (Graceful)
+// SHUTDOWN
 // ═══════════════════════════════════════════════════════════════════════════
 
-async fn shutdown_components(bot: &mut GridBot, feed: &PriceFeed) -> Result<()> {
+async fn shutdown_components(bot: &mut GridBot, feed: &Arc<PriceFeed>) -> Result<()> {
     info!("🧹 Cleaning up components...");
     let final_price = feed.latest_price().await;
     bot.display_status(final_price).await;
@@ -622,17 +518,15 @@ fn setup_logging(args: &Args) {
     } else {
         log::LevelFilter::Info
     };
-
     env_logger::Builder::from_default_env()
         .filter_level(log_level)
         .format_timestamp_millis()
         .init();
-
     info!("🔊 Logging initialized at {:?} level", log_level);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// MAIN ENTRY POINT — V5.5 🏭
+// MAIN ENTRY POINT — V5.6 🤖
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[tokio::main]
@@ -643,7 +537,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
     init().map_err(|e| anyhow::anyhow!("Core initialization failed: {:?}", e))?;
 
     let config = load_configuration(&args)?;
-
     print_banner(&config);
     config.display_summary();
 
@@ -668,26 +561,21 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     match result {
         Ok(metrics) => {
-            // V5.4: In live mode, show actual cycles run (not a paper config cap).
             let display_cycles = if config.bot.is_live() {
                 metrics.successful_cycles + metrics.failed_cycles
             } else {
-                config.paper_trading.calculate_cycles(
-                    config.performance.cycle_interval_ms
-                ) as u32
+                config.paper_trading.calculate_cycles(config.performance.cycle_interval_ms) as u32
             };
             metrics.display_summary(display_cycles);
 
-            let feed_metrics = feed.get_metrics().await;
+            let feed_metrics   = feed.get_metrics().await;
             info!("📡 Feed Statistics:");
             info!("   Mode:          {:?}", feed_metrics.mode);
             info!("   Total Updates: {}", feed_metrics.total_updates);
             let total_failures = feed_metrics.http_failures + feed_metrics.ws_failures;
             let success_rate   = if feed_metrics.total_requests > 0 {
                 100.0 - (total_failures as f64 / feed_metrics.total_requests as f64) * 100.0
-            } else {
-                100.0
-            };
+            } else { 100.0 };
             info!("   Success Rate:  {:.1}%", success_rate);
             info!("🌙 Session complete | Runtime: {:.2}s | Avg cycle: {:.2}ms",
                   metrics.elapsed_secs(), metrics.avg_cycle_time());
@@ -733,13 +621,9 @@ mod tests {
     fn test_args_resolved_mode_paper_flag() {
         let args = Args {
             config: PathBuf::from("config/master.toml"),
-            mode: None,
-            paper: true,
-            duration_minutes: None,
-            duration_hours: None,
-            cycles: None,
-            debug: false,
-            trace: false,
+            mode: None, paper: true,
+            duration_minutes: None, duration_hours: None, cycles: None,
+            debug: false, trace: false,
         };
         assert_eq!(args.resolved_mode(), Some("paper".to_string()));
     }
@@ -748,13 +632,9 @@ mod tests {
     fn test_args_resolved_mode_explicit() {
         let args = Args {
             config: PathBuf::from("config/master.toml"),
-            mode: Some("live".to_string()),
-            paper: false,
-            duration_minutes: None,
-            duration_hours: None,
-            cycles: None,
-            debug: false,
-            trace: false,
+            mode: Some("live".to_string()), paper: false,
+            duration_minutes: None, duration_hours: None, cycles: None,
+            debug: false, trace: false,
         };
         assert_eq!(args.resolved_mode(), Some("live".to_string()));
     }
@@ -763,13 +643,9 @@ mod tests {
     fn test_args_resolved_mode_none() {
         let args = Args {
             config: PathBuf::from("config/master.toml"),
-            mode: None,
-            paper: false,
-            duration_minutes: None,
-            duration_hours: None,
-            cycles: None,
-            debug: false,
-            trace: false,
+            mode: None, paper: false,
+            duration_minutes: None, duration_hours: None, cycles: None,
+            debug: false, trace: false,
         };
         assert_eq!(args.resolved_mode(), None);
     }
