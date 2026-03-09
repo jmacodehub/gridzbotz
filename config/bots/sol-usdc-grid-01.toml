@@ -1,0 +1,135 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# BOT 01 — TIGHT GRID (SOL/USDC)
+# Instance: sol-usdc-grid-01
+# Strategy: High-frequency fills via tight 0.20% spacing
+# Role in fleet: Captures small price oscillations within the spread
+#
+# Intent registry key: ("sol-usdc-grid-01", level_id)
+# This bot claims levels 1-N below the base; bot-02 claims wider bands.
+# ═══════════════════════════════════════════════════════════════════════════
+
+# ─── Bot Identity ──────────────────────────────────────────────────────────
+[bot]
+instance_id       = "sol-usdc-grid-01"
+name              = "SOL/USDC Tight Grid"
+version           = "5.8.0"
+environment       = "paper"
+execution_mode    = "paper"
+
+# ─── Network ───────────────────────────────────────────────────────────────
+[network]
+cluster           = "mainnet-beta"
+rpc_url           = "https://api.mainnet-beta.solana.com"
+ws_url            = "wss://api.mainnet-beta.solana.com"
+
+# ─── Trading Parameters ────────────────────────────────────────────────────
+[trading]
+trading_pair              = "SOL/USDC"
+grid_levels               = 10
+grid_spacing_percent      = 0.20
+min_order_size            = 0.10
+min_usdc_reserve          = 50.0
+min_sol_reserve           = 0.05
+reposition_threshold      = 0.30
+rebalance_cooldown_secs   = 30
+volatility_window         = 20
+enable_dynamic_grid       = true
+enable_fee_optimization   = true
+enable_regime_gate        = true
+min_volatility_to_trade   = 0.05
+pause_in_very_low_vol     = false
+enable_order_lifecycle    = true
+order_max_age_minutes     = 15
+order_refresh_interval_minutes = 5
+min_orders_to_maintain    = 4
+
+# ─── Paper Trading ─────────────────────────────────────────────────────────
+[paper_trading]
+initial_usdc_balance      = 500.0
+initial_sol_balance       = 2.0
+test_duration_minutes     = 30
+simulate_fills            = true
+fill_probability          = 0.15
+slippage_bps              = 10
+
+# ─── Risk ──────────────────────────────────────────────────────────────────
+[risk]
+max_drawdown_percent      = 5.0
+daily_loss_limit_usdc     = 25.0
+max_position_size_sol     = 1.0
+circuit_breaker_enabled   = true
+consecutive_loss_limit    = 5
+
+# ─── Strategies ────────────────────────────────────────────────────────────
+[strategies.grid]
+enabled   = true
+weight    = 0.60
+
+[strategies.rsi]
+enabled              = true
+weight               = 0.20
+period               = 14
+oversold_threshold   = 35.0
+overbought_threshold = 65.0
+extreme_oversold     = 20.0
+extreme_overbought   = 80.0
+
+[strategies.momentum]
+enabled         = true
+weight          = 0.10
+lookback_period = 10
+
+[strategies.mean_reversion]
+enabled    = true
+weight     = 0.10
+sma_period = 20
+
+[strategies.momentum_macd]
+enabled                    = false
+weight                     = 0.0
+strong_histogram_threshold = 0.5
+min_warmup_periods         = 26
+
+[strategies.wma_consensus]
+enabled = false
+weight  = 0.0
+
+[strategies.rsi_enhanced]
+enabled = false
+weight  = 0.0
+
+# ─── Performance ───────────────────────────────────────────────────────────
+[performance]
+cycle_interval_ms    = 500
+startup_delay_ms     = 2000
+max_concurrent_orders = 10
+
+# ─── Metrics ───────────────────────────────────────────────────────────────
+[metrics]
+enable_metrics   = true
+stats_interval   = 20
+log_trades       = true
+csv_output       = false
+
+# ─── Pyth Price Feed ───────────────────────────────────────────────────────
+[pyth]
+sol_usd_feed_id = "0xef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d"
+hermes_url      = "https://hermes.pyth.network"
+staleness_threshold_secs = 30
+confidence_ratio_max     = 0.02
+
+# ─── Security ──────────────────────────────────────────────────────────────
+[security]
+wallet_path       = "~/.config/solana/id.json"
+keypair_path      = "~/.config/solana/id.json"
+max_slippage_bps  = 50
+require_simulation = true
+
+# ─── Fees ──────────────────────────────────────────────────────────────────
+[fees]
+taker_fee_bps          = 4
+maker_fee_bps          = 0
+min_profit_after_fees  = 0.001
+priority_fee_lamports  = 5000
+compute_unit_limit     = 200000
+compute_unit_price     = 1000

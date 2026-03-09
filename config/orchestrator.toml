@@ -1,0 +1,38 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# ORCHESTRATOR CONFIG — MULTI-BOT FLEET V1.0
+#
+# Usage:
+#   cargo run -- --orchestrate config/orchestrator.toml
+#
+# Fleet: 2 GridBots on SOL/USDC
+#   Bot 01: tight grid (0.20% spacing) — high-frequency fills
+#   Bot 02: wide grid  (0.40% spacing) — momentum/swing captures
+#
+# Intent registry (Arc<DashMap>) is created once and shared across all bots.
+# Conflict detection prevents overlapping orders on the same pair+level.
+#
+# March 2026 — V5.8 MULTI-BOT ORCHESTRATOR
+# ═══════════════════════════════════════════════════════════════════════════
+
+# Human-readable fleet label (appears in logs + FleetStats display)
+fleet_name = "SOL/USDC Dual-Grid Fleet v1"
+
+# Per-bot TOML paths (relative to working directory)
+# Add more entries to scale to N bots — no code changes needed.
+bot_configs = [
+    "config/bots/sol-usdc-grid-01.toml",
+    "config/bots/sol-usdc-grid-02.toml",
+]
+
+# Tick interval in milliseconds — applied uniformly to all bot tasks.
+# 500ms = 2Hz per bot. Each bot runs on its own Tokio task.
+cycle_interval_ms = 500
+
+# Log aggregated fleet stats every N updates received by the aggregation loop.
+# With 2 bots at 2Hz: stats_interval=20 ≈ every 5 seconds.
+stats_interval = 20
+
+# Bounded mpsc channel capacity = bot_count * channel_multiplier.
+# 2 bots * 10 = 20 slots. Prevents slow aggregation from blocking bot tasks.
+# Default: 10. Increase for larger fleets or high cycle rates.
+channel_multiplier = 10

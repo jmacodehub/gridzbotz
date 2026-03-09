@@ -1,11 +1,11 @@
 [package]
 name = "solana-grid-bot"
-version = "0.2.5"  # 🔥 V2.5 - Regime Gate + Smart Fees + Order Lifecycle!
+version = "0.3.0"  # 🔥 V5.8 - Multi-Bot Orchestrator + IntentRegistry + GAP-3!
 edition = "2021"
-rust-version = "1.75"
-default-run = "solana-grid-bot"  # 🎯 NEW: Default binary for cargo run
+rust-version = "1.85"  # Aligned with BUILD_INFO.rust_version (was 1.75 — MSRV fix)
+default-run = "solana-grid-bot"  # 🎯 Default binary for cargo run
 authors = ["J-MC <jmc@solana-trading.com>"]
-description = "⚡ Production-grade Solana grid trading bot with V2.5 enhancements: Market Regime Gate, Smart Fee Filtering, Dynamic Order Lifecycle, and AI-powered optimization"
+description = "⚡ Production-grade Solana grid trading bot fleet: Multi-Bot Orchestrator, IntentRegistry, parallel tick dispatch, circuit breakers, Jupiter V6 DEX"
 documentation = "https://docs.rs/solana-grid-bot"
 homepage = "https://github.com/j-mc/solana-grid-bot"
 repository = "https://github.com/j-mc/solana-grid-bot"
@@ -26,7 +26,7 @@ exclude = [
 ]
 
 # ═══════════════════════════════════════════════════════════════════════════
-# DEPENDENCIES - V5.0 Jupiter-Powered Real Trading
+# DEPENDENCIES - V5.8 Multi-Bot Orchestrator
 # ═══════════════════════════════════════════════════════════════════════════
 
 [dependencies]
@@ -50,14 +50,14 @@ crossterm = "0.28"
 # ───────────────────────────────────────────────────────────────────────────
 solana-client = "3.0"
 solana-sdk = "3.0"
-solana-message = "3.0"    # ✅ NEW: Required for CompiledInstruction in SDK v3
+solana-message = "3.0"    # ✅ Required for CompiledInstruction in SDK v3
 
 # ⚠️ CRITICAL: Force compatible versions to resolve dependency conflicts
 ahash = "0.8.11"
 hashbrown = "0.14"
 
 # ───────────────────────────────────────────────────────────────────────────
-# 🪐 JUPITER DEX INTEGRATION - V5.0 HTTP API (No SDK conflicts!)
+# 🪐 JUPITER DEX INTEGRATION - V5.8 HTTP API (No SDK conflicts!)
 # ───────────────────────────────────────────────────────────────────────────
 # We use Jupiter HTTP API v6 directly - no SDK needed!
 # Our custom JupiterClient handles quote fetching and swap instruction building
@@ -95,7 +95,7 @@ validator = { version = "0.18", features = ["derive"] }
 shellexpand = "3.1"       # Path expansion for keystore files (~/path support)
 
 # ───────────────────────────────────────────────────────────────────────────
-# CLI & User Interface - V2.5 GIGA MODE! 🔥💎🚀
+# CLI & User Interface
 # ───────────────────────────────────────────────────────────────────────────
 clap = { version = "4.5", features = ["derive", "color", "suggestions", "env"] }
 colored = "2.1"
@@ -105,7 +105,7 @@ indicatif = "0.17"
 # ───────────────────────────────────────────────────────────────────────────
 # High-Performance Data Structures (Lock-Free Concurrency!)
 # ───────────────────────────────────────────────────────────────────────────
-dashmap = "6.1"          # Lock-free HashMap - CRITICAL for real-time pricing
+dashmap = "6.1"          # Lock-free HashMap — IntentRegistry + real-time pricing
 crossbeam = "0.8"        # Lock-free channels and utilities
 parking_lot = "0.12"     # Fast mutex replacement (~3x faster than std)
 arc-swap = "1.7"         # Lock-free atomic Arc swaps
@@ -151,11 +151,14 @@ proptest = "1.5"
 pretty_assertions = "1.4"
 
 # ═══════════════════════════════════════════════════════════════════════════
-# FEATURE FLAGS - V5.0 Jupiter-Powered Real Trading
+# FEATURE FLAGS - V5.8 Multi-Bot Orchestrator
 # ═══════════════════════════════════════════════════════════════════════════
 
 [features]
 default = ["simulation", "v25-enhancements"]
+
+# ── V5.8 Features ────────────────────────────────────────────────────────────
+orchestrator = []         # 🤖 Multi-bot fleet orchestrator (always available, gated for future options)
 
 # ── V5.0 Features ────────────────────────────────────────────────────────────
 jupiter-dex = []          # 🪐 Jupiter DEX integration for real swaps
@@ -168,7 +171,7 @@ order-lifecycle = []      # 🔄 Auto-refresh & staleness detection
 dynamic-spacing = []      # 📊 Volatility-based grid spacing
 
 # ── V4.0 Features ────────────────────────────────────────────────────────────
-grid-state-machine = []   # 🎯 Grid level tracking with buy/sell pairing (always enabled in v4.0)
+grid-state-machine = []   # 🎯 Grid level tracking with buy/sell pairing
 
 # ── Trading Modes (mutually exclusive) ─────────────────────────────────────────────────
 simulation = []           # ✅ Safe simulation mode (no real orders) - DEFAULT
@@ -184,8 +187,8 @@ tracing-full = ["tracing", "tracing-subscriber"]
 caching = ["redis"]
 
 # ── Feature Bundles ────────────────────────────────────────────────────────────
-full = ["v25-enhancements", "jupiter-dex", "websockets", "database", "metrics", "tracing-full", "caching"]
-production = ["live-trading", "security", "jupiter-dex", "v25-enhancements", "database", "metrics", "tracing-full"]
+full = ["v25-enhancements", "jupiter-dex", "websockets", "database", "metrics", "tracing-full", "caching", "orchestrator"]
+production = ["live-trading", "security", "jupiter-dex", "v25-enhancements", "database", "metrics", "tracing-full", "orchestrator"]
 development = ["simulation", "v25-enhancements", "tracing-full"]
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -225,36 +228,13 @@ path = "src/main.rs"
 required-features = []
 
 # ═══════════════════════════════════════════════════════════════════════════
-# EXAMPLES - V2.5 Testing & Analysis Suite
+# EXAMPLES - V5.8 Testing & Analysis Suite
 # ═══════════════════════════════════════════════════════════════════════════
 
 # TODO: Fix examples to use updated APIs
 # The following examples need to be updated:
 # - giga_test.rs: Uses old PaperTradingEngine API
 # - paper_trading_demo.rs: Uses old feed_ids import path
-# - Files missing: auto_optimizer.rs, profile_test.rs, extended_test.rs, live_dashboard.rs
-
-# ── Working Examples ─────────────────────────────────────────────────────────────
-# [[example]]
-# name = "master_giga"
-# path = "examples/master_giga.rs"
-# required-features = []
-
-# ── WebSocket Examples (Optional) ────────────────────────────────────────────────────
-# [[example]]
-# name = "debug_websocket"
-# path = "examples/debug_websocket.rs"
-# required-features = ["websockets"]
-
-# [[example]]
-# name = "test_websocket"
-# path = "examples/test_websocket.rs"
-# required-features = ["websockets"]
-
-# [[example]]
-# name = "debug_pyth"
-# path = "examples/debug_pyth.rs"
-# required-features = ["websockets"]
 
 # ═══════════════════════════════════════════════════════════════════════════
 # BENCHMARKS - Performance Testing

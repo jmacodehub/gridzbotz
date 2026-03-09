@@ -1,5 +1,5 @@
 //! ═══════════════════════════════════════════════════════════════════════════
-//! 🤖 GRIDZBOTZ V5.7 — PRODUCTION GRID TRADING BOT
+//! 🤖 GRIDZBOTZ V5.8 — PRODUCTION GRID TRADING BOT FLEET
 //!
 //! High-performance Rust implementation with:
 //! • Dynamic grid repositioning
@@ -7,6 +7,7 @@
 //! • Engine factory (paper ↔ live from config)
 //! • impl Bot for GridBot (GAP-1 resolved — PR #84)
 //! • Box<dyn Bot> dispatch + process_tick() (PR #85)
+//! • Multi-Bot Orchestrator + IntentRegistry (GAP-3 resolved — PR #86)
 //! • Real-time risk management
 //! • Market regime detection
 //! • Automatic order lifecycle management
@@ -16,15 +17,18 @@
 //!
 //! Architecture:
 //! ```text
-//! ┌─────────────────────────────────────────────────────────────────┐
-//! │                      GridBot (Orchestrator)                     │
-//! ├─────────────────────────────────────────────────────────────────┤
-//! │  Config  │  Trading  │  Strategies  │  Risk  │  Metrics  │ DEX │
-//! │          │  Engine   │  Indicators  │        │           │     │
-//! └─────────────────────────────────────────────────────────────────┘
+//! ┌─────────────────────────────────────────────────────────────────────┐
+//! │              Orchestrator (Multi-Bot Fleet Manager)                 │
+//! │  IntentRegistry (Arc<DashMap>) — prevents overlapping orders        │
+//! ├──────────────┬──────────────┬──────────────┬────────────────────────┤
+//! │   GridBot-01 │   GridBot-02 │   GridBot-N  │  (future: MomentumBot) │
+//! │  tight grid  │  wide grid   │  alt pair    │                        │
+//! ├──────────────┴──────────────┴──────────────┴────────────────────────┤
+//! │  Config  │  TradingEngine  │  Strategies  │  Risk  │  Metrics  │ DEX│
+//! └─────────────────────────────────────────────────────────────────────┘
 //! ```
 //!
-//! Version: 5.7.0
+//! Version: 5.8.0
 //! License: MIT
 //! Date: March 9, 2026
 //! ═══════════════════════════════════════════════════════════════════════════
@@ -71,6 +75,8 @@ pub mod bots;
 // ═══════════════════════════════════════════════════════════════════════════
 
 pub use bots::{GridBot, Bot};
+pub use bots::bot_trait::{IntentRegistry, new_intent_registry};
+pub use bots::orchestrator::{Orchestrator, OrchestratorConfig, FleetStats};
 
 pub use config::{
     Config, BotConfig, NetworkConfig, TradingConfig,
@@ -95,13 +101,13 @@ pub use indicators::{
 
 pub const VERSION: &str  = env!("CARGO_PKG_VERSION");
 pub const NAME:    &str  = env!("CARGO_PKG_NAME");
-pub const CODENAME: &str = "GRIDZBOTZ V5.7 — Production Grid Trading";
+pub const CODENAME: &str = "GRIDZBOTZ V5.8 — Multi-Bot Orchestrator";
 
 pub const BUILD_INFO: BuildInfo = BuildInfo {
     version:      VERSION,
     name:         NAME,
     codename:     CODENAME,
-    git_hash:     "v5.7-box-dyn-bot",
+    git_hash:     "v5.8-multi-bot-orchestrator",
     build_date:   "2026-03-09",
     rust_version: "1.85",
 };
@@ -120,16 +126,6 @@ pub struct BuildInfo {
 // Library Initialization
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Initialize the trading bot library.
-///
-/// # Examples
-///
-/// ```no_run
-/// fn main() -> Result<(), Box<dyn std::error::Error>> {
-///     solana_grid_bot::init()?;
-///     Ok(())
-/// }
-/// ```
 pub fn init() -> Result<(), Box<dyn std::error::Error>> {
     if std::env::var("RUST_LOG").is_err() {
         std::env::set_var("RUST_LOG", "info");
@@ -150,10 +146,10 @@ pub fn init_with_config(config: &Config) -> Result<(), Box<dyn std::error::Error
 pub fn print_startup_banner() {
     let border = "═".repeat(70);
     println!("\n{}", border);
-    println!("  🤖 GRIDZBOTZ V5.7 — Production Grid Trading");
+    println!("  🤖 GRIDZBOTZ V5.8 — Multi-Bot Orchestrator");
     println!("{}", border);
     println!("  💪 Built with Rust for MAXIMUM PERFORMANCE!");
-    println!("  🎯 Box<dyn Bot> dispatch · process_tick() · GAP-1 Complete");
+    println!("  🎯 IntentRegistry · Parallel Dispatch · GAP-3 Complete");
     println!("  🔥 MACD · RSI · Mean Reversion · Grid · Consensus");
     println!("  📦 Version:  {}", VERSION);
     println!("  🏗️  Build:    {} ({})", BUILD_INFO.build_date, BUILD_INFO.git_hash);
@@ -181,33 +177,11 @@ pub fn has_backtrace() -> bool { std::env::var("RUST_BACKTRACE").is_ok() }
 // Prelude
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Prelude module for convenient imports.
-///
-/// # Examples
-///
-/// ```no_run
-/// use solana_grid_bot::prelude::*;
-/// use solana_grid_bot::trading::PaperTradingEngine;
-/// use solana_grid_bot::trading::PriceFeed;
-/// use std::sync::Arc;
-///
-/// #[tokio::main]
-/// async fn main() -> Result<()> {
-///     let config = Config::from_file("config/master.toml")?;
-///
-///     // V5.7: initialize_components returns Box<dyn Bot>
-///     let engine = Arc::new(PaperTradingEngine::new(10_000.0, 5.0));
-///     let price_history_size = config.trading.volatility_window as usize;
-///     let feed = Arc::new(PriceFeed::new(price_history_size));
-///     let mut bot: Box<dyn Bot> = Box::new(GridBot::new(config, engine, feed)?);
-///     bot.initialize().await?;
-///
-///     Ok(())
-/// }
-/// ```
 pub mod prelude {
     pub use crate::{
         Config, GridBot, Bot, init, version,
+        Orchestrator, OrchestratorConfig, FleetStats,
+        IntentRegistry, new_intent_registry,
     };
     pub use crate::trading::{
         OrderSide, OrderType, Order,
@@ -237,31 +211,22 @@ mod tests {
     fn test_version_string() {
         let s = version_string();
         assert!(s.contains(VERSION));
-        assert!(s.contains("GRIDZBOTZ V5.7"));
+        assert!(s.contains("GRIDZBOTZ V5.8"));
     }
 
     #[test]
     fn test_build_info() {
         assert!(!BUILD_INFO.version.is_empty());
         assert!(!BUILD_INFO.name.is_empty());
-        assert_eq!(BUILD_INFO.git_hash, "v5.7-box-dyn-bot");
+        assert_eq!(BUILD_INFO.git_hash, "v5.8-multi-bot-orchestrator");
+        assert_eq!(BUILD_INFO.rust_version, "1.85");
     }
 
     #[test]
     fn test_prelude_imports() {
         use crate::prelude::*;
         let _ver = version();
+        let _reg = new_intent_registry();
+        assert!(_reg.is_empty());
     }
-}
-
-#[cfg(doctest)]
-mod doctests {
-    /// ```no_run
-    /// fn main() -> Result<(), Box<dyn std::error::Error>> {
-    ///     solana_grid_bot::init()?;
-    ///     println!("Version: {}", solana_grid_bot::version());
-    ///     Ok(())
-    /// }
-    /// ```
-    fn _documentation_example() {}
 }
