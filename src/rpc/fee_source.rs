@@ -5,7 +5,7 @@
 //! Samples recent priority fees from the Solana RPC (up to 150 slots).
 //!
 //! Design:
-//! - Owns a lightweight RpcClient (not shared with HornetProductionRpc)
+//! - Owns a lightweight RpcClient (decoupled from main RPC pipeline)
 //! - Sync call — matches FeeSource trait contract
 //! - Empty account list = global network fees (correct for grid bot)
 //! - Called infrequently (cache_ttl_secs in PriorityFeeEstimator)
@@ -90,7 +90,7 @@ impl FeeSource for RpcFeeSource {
             let max_fee = fees.iter().max().copied().unwrap_or(0);
             let non_zero = fees.iter().filter(|&&f| f > 0).count();
             debug!(
-                "RpcFeeSource: {} slots sampled, {} non-zero, range {}-{} µL",
+                "RpcFeeSource: {} slots sampled, {} non-zero, range {}-{} \u{00b5}L",
                 fees.len(),
                 non_zero,
                 min_fee,
