@@ -60,12 +60,12 @@ impl CircuitBreaker {
         info!("   Max drawdown:          -{:.1}%", config.risk.max_drawdown_pct);
         info!("   Circuit threshold:     -{:.1}%", config.risk.circuit_breaker_threshold_pct);
         info!("   Cooldown period:       {}s", config.risk.circuit_breaker_cooldown_secs);
-        info!("   Max consecutive loss:  5 trades");
+        info!("   Max consecutive loss:  {} trades", config.risk.max_consecutive_losses);
 
         Self {
             max_daily_loss_pct: config.risk.max_drawdown_pct,
             max_drawdown_pct: config.risk.circuit_breaker_threshold_pct,
-            max_consecutive_losses: 5,
+            max_consecutive_losses: config.risk.max_consecutive_losses,
             cooldown_duration: Duration::from_secs(config.risk.circuit_breaker_cooldown_secs),
 
             consecutive_losses: 0,
@@ -333,8 +333,10 @@ mod tests {
                 enable_circuit_breaker: true,
                 circuit_breaker_threshold_pct: 15.0,
                 circuit_breaker_cooldown_secs: 60,
+                max_consecutive_losses: 5,
             },
             fees: FeesConfig::default(),
+            priority_fees: PriorityFeeConfig::default(),
             pyth: PythConfig::default(),
             performance: PerformanceConfig::default(),
             logging: LoggingConfig::default(),

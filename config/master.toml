@@ -78,7 +78,7 @@
 # ═══════════════════════════════════════════════════════════════════════════
 [bot]
 name    = "GridzBot-Master"
-version = "5.4.2"
+version = "5.5.0"    # was 5.4.2 — PR #79 adds priority fees + consecutive loss config
 environment = "testing"              # testing | development | production
 
 # 🔑 EXECUTION MODE — The single most important knob:
@@ -177,6 +177,30 @@ max_slippage_bps = 100
 
 confirmation_timeout_secs = 60
 max_retries = 3
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  ⚡ PRIORITY FEES — Dynamic Compute-Unit Priority Fee Estimation
+#
+#  Controls Solana priority fee calculation per transaction.
+#  When enable_dynamic = false (default), uses static
+#  execution.priority_fee_microlamports value.
+#
+#  Enable for production: copies the section to your pair config and
+#  set enable_dynamic = true. See production TOML for tuning guide.
+#
+#  Unit: microlamports per compute unit (µL/CU).
+#  Conversion: max_lamports = µL/CU × estimated_CU (300K) / 1_000_000
+# ═══════════════════════════════════════════════════════════════════════════
+[priority_fees]
+enable_dynamic         = false         # Safe default — uses static fee from [execution]
+strategy               = "percentile"  # "percentile" | "fixed"
+percentile             = 50            # P50 = median of recent blocks
+multiplier             = 1.2           # 20% headroom
+min_microlamports      = 1_000         # µL/CU floor
+max_microlamports      = 500_000       # µL/CU ceiling
+fallback_microlamports = 100_000       # On RPC failure (matches production static)
+cache_ttl_secs         = 10            # Re-sample interval
+sample_blocks          = 150           # Blocks to sample (max 150 on Solana)
 
 # ═══════════════════════════════════════════════════════════════════════════
 #  💰 PAPER TRADING
@@ -391,6 +415,10 @@ take_profit_pct               = 10.0
 enable_circuit_breaker        = true
 circuit_breaker_threshold_pct = 8.0
 circuit_breaker_cooldown_secs = 300
+# 🆕 PR #79: Max consecutive losing trades before circuit breaker trips.
+# Complements drawdown-based tripping — catches slow-bleed scenarios.
+max_consecutive_losses = 5
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 #  💰 FEE CONFIGURATION — Single Source of Truth (V1.0)

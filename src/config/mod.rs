@@ -57,6 +57,8 @@ use log::{info, warn};
 pub mod secrets;
 pub mod fees;
 pub use fees::FeesConfig;
+pub mod priority_fees;
+pub use priority_fees::PriorityFeeConfig;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // MAIN CONFIGURATION - The Heart of GridzBotz
@@ -91,6 +93,10 @@ pub struct Config {
     /// Fees configuration (trading fees, priority fees, Jito tips)
     #[serde(default)]
     pub fees: FeesConfig,
+
+    /// Dynamic priority fee configuration
+    #[serde(default)]
+    pub priority_fees: PriorityFeeConfig,
 
     /// Live execution settings (Jupiter, priority fees, slippage)
     /// Active when bot.execution_mode = "live"
@@ -1263,6 +1269,10 @@ pub struct RiskConfig {
 
     /// Circuit breaker cooldown (seconds)
     pub circuit_breaker_cooldown_secs: u64,
+
+    /// Maximum consecutive losing trades before circuit breaker trips
+    #[serde(default = "default_max_consecutive_losses")]
+    pub max_consecutive_losses: u32,
 }
 
 impl RiskConfig {
@@ -1273,6 +1283,10 @@ impl RiskConfig {
 
         if self.max_drawdown_pct <= 0.0 || self.max_drawdown_pct > 100.0 {
             bail!("max_drawdown_pct must be between 0-100%");
+        }
+
+                if self.max_consecutive_losses == 0 {
+            bail!("max_consecutive_losses must be > 0");
         }
 
         if self.enable_circuit_breaker {
@@ -1576,6 +1590,7 @@ fn default_macd_histogram_threshold() -> f64 { 0.5 }
 fn default_macd_warmup_periods() -> usize { 26 }
 fn default_wallet_path() -> String { "~/.config/solana/id.json".to_string() }
 fn default_max_trade_size_usdc() -> f64 { 250.0 }
+fn default_max_consecutive_losses() -> u32 { 5 }
 
 // ═══════════════════════════════════════════════════════════════════════════
 // MAIN CONFIG IMPLEMENTATION - V5.1 PRODUCTION GRADE! 🚀
@@ -1658,6 +1673,10 @@ impl Config {
         self.fees.validate()
             .map_err(|e| anyhow::anyhow!(e))
             .context("Fees config validation failed")?;
+
+          // Priority fees validation
+        self.priority_fees.validate()
+            .context("Priority fees config validation failed")?;
 
         // Execution validation — only required when mode = "live"
         if self.bot.is_live() {
@@ -1783,6 +1802,18 @@ impl Config {
         println!("   Circuit Breaker:  {} ({:.1}%)",
             if self.risk.enable_circuit_breaker { "✅" } else { "❌" },
             self.risk.circuit_breaker_threshold_pct);
+        if self.risk.enable_circuit_breaker {
+            println!("   Max Consec Loss:  {} trades", self.risk.max_consecutive_losses);
+        }
+                if self.priority_fees.enable_dynamic {
+            println!("   Priority Fees:    ⚡ dynamic (P{}, {:.1}x, {}-{} µL)",
+                self.priority_fees.percentile,
+                self.priority_fees.multiplier,
+                self.priority_fees.min_microlamports,
+                self.priority_fees.max_microlamports);
+        } else {
+            println!("   Priority Fees:    static");
+        }
 
         println!("\n{}\n", border);
     }
@@ -1857,8 +1888,10 @@ impl ConfigBuilder {
                     enable_circuit_breaker: true,
                     circuit_breaker_threshold_pct: 8.0,
                     circuit_breaker_cooldown_secs: 300,
+                    max_consecutive_losses: default_max_consecutive_losses(),
                 },
                 fees: FeesConfig::default(),
+                priority_fees: PriorityFeeConfig::default(),
                 execution: ExecutionConfig::default(),
                 pyth: PythConfig::default(),
                 performance: PerformanceConfig::default(),

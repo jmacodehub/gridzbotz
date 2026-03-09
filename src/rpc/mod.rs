@@ -9,3 +9,8 @@ pub mod hornet_production;
 
 // Re-export the main production RPC for convenience
 pub use hornet_production::HornetProductionRpc;
+
+// Additional RPC implementations can be added here as needed
+pub mod fee_source;
+pub use fee_source::RpcFeeSource;
+

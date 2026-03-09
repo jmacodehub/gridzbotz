@@ -1,46 +1,69 @@
 //! =============================================================================
-//! REAL TRADER ENGINE V2.5 - MODULAR & BULLETPROOF
+//! REAL TRADER ENGINE V2.7 - MODULAR & BULLETPROOF
 //!
-//! V2.2 CHANGES (fix/live-mode-circuit-breaker-wallet-noise):
-//! ✅ CircuitBreaker::with_balance() now receives full portfolio NAV
-//!    (USDC + SOL*price) instead of only initial_usdc (was 0.0 for SOL wallets).
-//!    Peak-balance drawdown and daily-loss maths are now correct.
-//! ✅ process_price_update() ticks is_trading_allowed() before reconcile
-//!    so the cooldown reset fires even when fills == 0 (i.e. no execute_trade
-//!    calls are made).  Previously the breaker could stay tripped forever.
-//! ✅ get_wallet() uses VirtualWallet::new_silent() — stops the double
-//!    "[WALLET] Initialized" log line firing on every price cycle.
+//! V2.7 CHANGES (feat/dynamic-priority-fees — PR #79 Commit 8):
+//! ✅ AsyncRpcFeeSource: async FeeDataSource impl using nonblocking RpcClient.
+//!    Proper Tokio citizen — no sync-in-async blocking. Dedicated 5s timeout.
+//! ✅ PriorityFeeEstimator wired into RealTradingEngine (new fields).
+//!    enable_dynamic=true  → RPC sampling → percentile → cached → injected
+//!    enable_dynamic=false → static fallback (fallback_microlamports)
+//! ✅ build_jupiter_swap(): hardcoded 10K REMOVED — dynamic fee injected.
+//!    Unit conversion: µL/CU × 300K estimated CU → total max_lamports.
+//!    Floor at MIN_MAX_LAMPORTS (5K) for tx landing safety.
+//!    Jupiter priorityLevel='high' handles actual fee; we set the cap.
 //!
-//! V2.3 CHANGES (fix/jupiter-client-wiring — Mar 2026):
-//! ✅ Import path changed: super::jupiter_client → crate::dex::jupiter_client
-//!    Now uses production JupiterClient V4.0 with full API key support.
-//!    Old stub that caused all swap failures has been obliterated.
+//! V2.6 CHANGES (fix/real-trader-fee-shadow-rpc-wiring — PR #79 Commit 1):
+//! ✅ Removed shadow fields: maker_fee_bps + taker_fee_bps from RealTradingConfig.
+//!    FeesConfig is the single source of truth (PR #75-77).
+//!    These fields were never read in the execution path — engine.rs always
+//!    used config.fees directly. Keeping them created a confusing dual source.
+//! ✅ Added #[serde(deny_unknown_fields)] to RealTradingConfig (parity PR #76).
+//! ✅ rpc_url Default changed: Some(public_rpc) → None.
+//!    build_jupiter_swap() now fails loudly (ok_or_else) if rpc_url is None,
+//!    rather than silently falling back to rate-limited public RPC on mainnet.
+//! ✅ from_execution_config() renamed → from_config(global: &Config).
+//!    Now correctly wires: slippage, max_trade_size, rpc_url, jupiter_api_key.
+//!    rpc_url  → global.network.rpc_url (Chainstack, not public endpoint).
+//!    api_key  → GRIDZBOTZ_JUPITER_API_KEY env var (not None).
+//!    Emits a startup warn if GRIDZBOTZ_JUPITER_API_KEY is unset.
 //!
-//! V2.4 CHANGES (fix/real-trader-api-mismatch):
-//! ✅ build_jupiter_swap() now uses JupiterClient::simple_swap() API.
-//!    Constructor changed from JupiterConfig struct to 6 explicit args.
-//!    with_priority_fee() now takes (lamports, level) instead of just lamports.
-//!    Stub that prevented real swaps from compiling has been eradicated.
+//! V2.5.1 CHANGES (hotfix: clone pubkey for type system):
+//! ✅ keystore.pubkey() returns &Pubkey, clone() for owned copy.
 //!
 //! V2.5 CHANGES (fix/dex-module-exports — Mar 2026 SECURITY):
 //! ✅ JupiterClient::new() now accepts Pubkey instead of Keypair (security!).
 //!    Removed broken line: Keypair::from_bytes(keystore.export_keypair()).
 //!    Signing remains in keystore — keypair never leaves SecureKeystore.
-//!    Root cause: export_keypair() doesn't exist and SHOULD NOT exist.
 //!
-//! V2.5.1 CHANGES (hotfix: clone pubkey for type system):
-//! ✅ Line 372: keystore.pubkey() returns &Pubkey, clone() for owned copy.
+//! V2.4 CHANGES (fix/real-trader-api-mismatch):
+//! ✅ build_jupiter_swap() now uses JupiterClient::simple_swap() API.
+//!    Constructor changed from JupiterConfig struct to 6 explicit args.
+//!    with_priority_fee() now takes (lamports, level) instead of just lamports.
+//!
+//! V2.3 CHANGES (fix/jupiter-client-wiring — Mar 2026):
+//! ✅ Import path changed: super::jupiter_client → crate::dex::jupiter_client
+//!    Now uses production JupiterClient V4.0 with full API key support.
+//!
+//! V2.2 CHANGES (fix/live-mode-circuit-breaker-wallet-noise):
+//! ✅ CircuitBreaker::with_balance() now receives full portfolio NAV
+//!    (USDC + SOL*price) instead of only initial_usdc.
+//! ✅ process_price_update() ticks is_trading_allowed() before reconcile
+//!    so the cooldown reset fires even when fills == 0.
+//! ✅ get_wallet() uses VirtualWallet::new_silent() — no double log on cycles.
 //! =============================================================================
 
 use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
-use log::{error, info};
+use log::{debug, error, info};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::str::FromStr;
+use std::time::Duration;
 use tokio::sync::RwLock;
+use solana_client::nonblocking::rpc_client::RpcClient as AsyncRpcClient;
+use super::priority_fee_estimator::{PriorityFeeEstimator, FeeDataSource};
 
 // -----------------------------------------------------------------------------
 // MODULAR IMPORTS
@@ -58,42 +81,120 @@ use solana_sdk::{
     pubkey::Pubkey,
 };
 
+// ═══════════════════════════════════════════════════════════════════════════
+// ⚡ ASYNC RPC FEE SOURCE — FeeDataSource impl for PriorityFeeEstimator
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Uses the async Solana RPC client (proper Tokio citizen — no sync blocking).
+// Dedicated client with its own timeout, decoupled from trading pipeline.
+//
+// Note: src/rpc/fee_source.rs provides the sync equivalent (RpcFeeSource)
+// for CLI/diagnostic use. This async version is for the live trading loop.
+// TODO(tech-debt): consolidate FeeSource + FeeDataSource traits in one location.
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Estimated CU budget for Jupiter swaps (used to convert µL/CU → total lamports).
+/// Jupiter's `dynamicComputeUnitLimit: true` handles actual CU; this is only
+/// for our max_lamports cap calculation. Typical range: 200K-400K CU.
+const JUPITER_ESTIMATED_CU: u64 = 300_000;
+
+/// Minimum max_lamports floor — ensures txs can land even if estimator
+/// returns very low values during unusually calm periods.
+const MIN_MAX_LAMPORTS: u64 = 5_000;
+
+struct AsyncRpcFeeSource {
+    client: AsyncRpcClient,
+    rpc_url: String, // diagnostics only
+}
+
+impl AsyncRpcFeeSource {
+    fn new(rpc_url: &str, timeout: Duration) -> Self {
+        debug!("AsyncRpcFeeSource: targeting {} (timeout {:?})", rpc_url, timeout);
+        Self {
+            client: AsyncRpcClient::new_with_timeout(rpc_url.to_string(), timeout),
+            rpc_url: rpc_url.to_string(),
+        }
+    }
+}
+
+#[async_trait]
+impl FeeDataSource for AsyncRpcFeeSource {
+    async fn fetch_recent_fees(&self) -> Vec<u64> {
+        match self.client.get_recent_prioritization_fees(&[]).await {
+            Ok(entries) => {
+                let fees: Vec<u64> = entries
+                    .iter()
+                    .map(|e| e.prioritization_fee)
+                    .collect();
+
+                if fees.is_empty() {
+                    log::warn!(
+                        "RPC {} returned 0 fee samples — estimator will use fallback",
+                        self.rpc_url
+                    );
+                } else {
+                    let non_zero = fees.iter().filter(|&&f| f > 0).count();
+                    debug!(
+                        "Fee source: {} slots, {} non-zero, range {}-{} µL ({})",
+                        fees.len(),
+                        non_zero,
+                        fees.iter().min().copied().unwrap_or(0),
+                        fees.iter().max().copied().unwrap_or(0),
+                        self.rpc_url,
+                    );
+                }
+                fees
+            }
+            Err(e) => {
+                log::warn!(
+                    "RPC fee sampling failed ({}): {e} — estimator will use fallback",
+                    self.rpc_url
+                );
+                vec![]
+            }
+        }
+    }
+}
+
 // -----------------------------------------------------------------------------
 // CONFIGURATION
 // -----------------------------------------------------------------------------
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]  // ✅ V2.6: PR #76 parity — fail fast on unknown TOML fields
 pub struct RealTradingConfig {
-    pub keystore: KeystoreConfig,
-    pub executor: ExecutorConfig,
-    pub slippage_bps: Option<u16>,
-    pub max_trade_size_usdc: Option<f64>,  // 🆕 V5.4 (PR #44): Dual safety cap
-    pub circuit_breaker_loss_pct: Option<f64>,
-    pub stop_loss_pct: Option<f64>,
-    pub profit_take_threshold: Option<f64>,
-    pub profit_take_ratio: Option<f64>,
-    pub maker_fee_bps: Option<f64>,
-    pub taker_fee_bps: Option<f64>,
+    pub keystore:                          KeystoreConfig,
+    pub executor:                          ExecutorConfig,
+    pub slippage_bps:                      Option<u16>,
+    pub max_trade_size_usdc:               Option<f64>,
+    pub circuit_breaker_loss_pct:          Option<f64>,
+    pub stop_loss_pct:                     Option<f64>,
+    pub profit_take_threshold:             Option<f64>,
+    pub profit_take_ratio:                 Option<f64>,
+    // ✅ V2.6: maker_fee_bps + taker_fee_bps REMOVED — were shadow fields.
+    //    FeesConfig (config.fees) is the single source of truth (PR #75-77).
+    //    engine.rs correctly uses config.fees.maker_fee_bps for P&L accounting.
     pub reconcile_balances_every_n_trades: Option<u32>,
-    pub jupiter_api_key: Option<String>,  // 🆕 V2.4: Jupiter API key
-    pub rpc_url: Option<String>,           // 🆕 V2.4: RPC URL
+    pub jupiter_api_key:                   Option<String>,
+    pub rpc_url:                           Option<String>,
 }
 
 impl Default for RealTradingConfig {
     fn default() -> Self {
         Self {
-            keystore: KeystoreConfig::default(),
-            executor: ExecutorConfig::default(),
-            slippage_bps: Some(50),
-            max_trade_size_usdc: Some(250.0),  // 🆕 V5.4 (PR #44)
-            circuit_breaker_loss_pct: Some(5.0),
-            stop_loss_pct: Some(10.0),
-            profit_take_threshold: Some(3.0),
-            profit_take_ratio: Some(0.4),
-            maker_fee_bps: Some(2.0),
-            taker_fee_bps: Some(4.0),
+            keystore:                          KeystoreConfig::default(),
+            executor:                          ExecutorConfig::default(),
+            slippage_bps:                      Some(50),
+            max_trade_size_usdc:               Some(250.0),
+            circuit_breaker_loss_pct:          Some(5.0),
+            stop_loss_pct:                     Some(10.0),
+            profit_take_threshold:             Some(3.0),
+            profit_take_ratio:                 Some(0.4),
             reconcile_balances_every_n_trades: Some(10),
-            jupiter_api_key: None,
-            rpc_url: Some("https://api.mainnet-beta.solana.com".to_string()),
+            jupiter_api_key:                   None,
+            // ✅ V2.6: No default RPC — must be wired via from_config().
+            //    If None reaches build_jupiter_swap() it will error loudly
+            //    rather than silently falling through to public mainnet RPC.
+            rpc_url:                           None,
         }
     }
 }
@@ -118,14 +219,40 @@ impl RealTradingConfig {
         Ok(())
     }
 
-    /// Bridge the master TOML [execution] block into this engine config.
-    /// Called by gridz_bot.rs when execution_mode = "live" to ensure the
-    /// master TOML's slippage setting reaches the real trading engine.
-    /// Remaining fields use sensible defaults from Default::default().
-    pub fn from_execution_config(exec: &crate::config::ExecutionConfig) -> Self {
+    /// Bridge the master Config into this engine config.
+    ///
+    /// Wires all live-execution-critical fields from the global Config:
+    /// - `slippage_bps`        → `config.execution.max_slippage_bps`
+    /// - `max_trade_size_usdc` → `config.execution.max_trade_size_usdc`
+    /// - `rpc_url`             → `config.network.rpc_url` (Chainstack, never public RPC)
+    /// - `jupiter_api_key`     → `GRIDZBOTZ_JUPITER_API_KEY` env var
+    ///
+    /// Keystore is NOT set here — `engine.rs` wires it separately from
+    /// `config.security.wallet_path` immediately after calling `from_config()`.
+    ///
+    /// Emits a startup `warn!` if `GRIDZBOTZ_JUPITER_API_KEY` is unset so the
+    /// operator is alerted before the first swap attempt (not mid-trade).
+    ///
+    /// Previously named `from_execution_config()` — renamed in V2.6 because it
+    /// now reads multiple config sections, not just `ExecutionConfig`.
+    pub fn from_config(global: &crate::Config) -> Self {
+        let jupiter_api_key = std::env::var("GRIDZBOTZ_JUPITER_API_KEY")
+            .ok()
+            .filter(|k| !k.is_empty());
+
+        if jupiter_api_key.is_none() {
+            log::warn!(
+                "[RealTradingConfig] GRIDZBOTZ_JUPITER_API_KEY not set — \
+                 build_jupiter_swap() will fail at swap time. \
+                 Set this env var before starting live mode."
+            );
+        }
+
         Self {
-            slippage_bps: Some(exec.max_slippage_bps),
-            max_trade_size_usdc: Some(exec.max_trade_size_usdc),  // 🆕 V5.4 (PR #44)
+            slippage_bps:        Some(global.execution.max_slippage_bps),
+            max_trade_size_usdc: Some(global.execution.max_trade_size_usdc),
+            rpc_url:             Some(global.network.rpc_url.clone()),  // ✅ Chainstack
+            jupiter_api_key,                                             // ✅ from env
             ..Default::default()
         }
     }
@@ -135,8 +262,8 @@ impl RealTradingConfig {
 // BALANCE TRACKER
 // -----------------------------------------------------------------------------
 struct BalanceTracker {
-    expected_usdc: Arc<RwLock<f64>>,
-    expected_sol: Arc<RwLock<f64>>,
+    expected_usdc:       Arc<RwLock<f64>>,
+    expected_sol:        Arc<RwLock<f64>>,
     /// Initial portfolio value in USD, calculated at boot using the live
     /// SOL price from the Pyth feed -- never a hardcoded estimate.
     initial_balance_usd: f64,
@@ -150,8 +277,8 @@ impl BalanceTracker {
     /// Do NOT pass a hardcoded value.
     fn new(initial_usdc: f64, initial_sol: f64, sol_price_usd: f64) -> Self {
         Self {
-            expected_usdc: Arc::new(RwLock::new(initial_usdc)),
-            expected_sol: Arc::new(RwLock::new(initial_sol)),
+            expected_usdc:       Arc::new(RwLock::new(initial_usdc)),
+            expected_sol:        Arc::new(RwLock::new(initial_sol)),
             initial_balance_usd: initial_usdc + (initial_sol * sol_price_usd),
         }
     }
@@ -207,6 +334,10 @@ pub struct RealTradingEngine {
     successful_executions: Arc<AtomicU64>,
     failed_executions:     Arc<AtomicU64>,
     emergency_shutdown:    Arc<AtomicBool>,
+    /// Dynamic priority fee estimator (None = static mode).
+    priority_fee_estimator: Option<Arc<PriorityFeeEstimator>>,
+    /// Static fallback fee in µL/CU (used when estimator is None).
+    static_priority_fee: u64,
 }
 
 impl RealTradingEngine {
@@ -223,7 +354,7 @@ impl RealTradingEngine {
         initial_balance_sol: f64,
         initial_sol_price_usd: f64,
     ) -> Result<Self> {
-        info!("[RealEngine] Initializing V2.5.1");
+        info!("[RealEngine] Initializing V2.7");
 
         config.validate()?;
 
@@ -237,13 +368,43 @@ impl RealTradingEngine {
             CircuitBreaker::with_balance(global_config, initial_nav)
         ));
 
+        // ── Dynamic priority fees (PR #79) ─────────────────────────────
+        let (priority_fee_estimator, static_priority_fee) =
+            if global_config.priority_fees.enable_dynamic {
+                let source = AsyncRpcFeeSource::new(
+                    &global_config.network.rpc_url,
+                    Duration::from_secs(5),
+                );
+                let estimator = PriorityFeeEstimator::new(
+                    global_config.priority_fees.clone(),
+                    Arc::new(source),
+                );
+                info!(
+                    "[RealEngine] Dynamic priority fees ENABLED \
+                     (P{}, ×{}, cache {}s, bounds {}-{} µL/CU)",
+                    global_config.priority_fees.percentile,
+                    global_config.priority_fees.multiplier,
+                    global_config.priority_fees.cache_ttl_secs,
+                    global_config.priority_fees.min_microlamports,
+                    global_config.priority_fees.max_microlamports,
+                );
+                (
+                    Some(Arc::new(estimator)),
+                    global_config.priority_fees.fallback_microlamports,
+                )
+            } else {
+                let fee = global_config.priority_fees.fallback_microlamports;
+                info!("[RealEngine] Priority fees STATIC: {} µL/CU", fee);
+                (None, fee)
+            };
+
         let balance_tracker = Arc::new(BalanceTracker::new(
             initial_balance_usdc,
             initial_balance_sol,
             initial_sol_price_usd,
         ));
 
-        info!("[RealEngine] Initialized V2.5.1");
+        info!("[RealEngine] Initialized V2.7");
         info!("  Wallet : {}",        keystore.pubkey());
         info!("  NAV    : ${:.2} (SOL @ ${:.4})",
             balance_tracker.initial_balance_usd(), initial_sol_price_usd);
@@ -261,6 +422,8 @@ impl RealTradingEngine {
             successful_executions: Arc::new(AtomicU64::new(0)),
             failed_executions:     Arc::new(AtomicU64::new(0)),
             emergency_shutdown:    Arc::new(AtomicBool::new(false)),
+            priority_fee_estimator,
+            static_priority_fee,
         })
     }
 
@@ -282,8 +445,8 @@ impl RealTradingEngine {
         }
 
         let amount_usdc = price * size;
-        
-        // 🆕 V5.4 (PR #44): DUAL CAP ENFORCEMENT
+
+        // DUAL CAP ENFORCEMENT
         // Check max_trade_size_usdc before keystore validation.
         // Whichever cap hits first (max_trade_sol or max_trade_size_usdc) blocks the trade.
         if let Some(max_usdc) = self.config.max_trade_size_usdc {
@@ -294,7 +457,7 @@ impl RealTradingEngine {
                 );
             }
         }
-        
+
         self.keystore.validate_transaction(amount_usdc).await?;
 
         let order_id = format!("REAL-{:06}", self.next_id.fetch_add(1, Ordering::SeqCst));
@@ -351,7 +514,7 @@ impl RealTradingEngine {
         info!("[Jupiter] Building VersionedTransaction V4.1 (secure)...");
 
         // Parse mint addresses
-        let sol_mint_pubkey = Pubkey::from_str(SOL_MINT)
+        let sol_mint_pubkey  = Pubkey::from_str(SOL_MINT)
             .context("Failed to parse SOL_MINT")?;
         let usdc_mint_pubkey = Pubkey::from_str(USDC_MINT)
             .context("Failed to parse USDC_MINT")?;
@@ -363,11 +526,46 @@ impl RealTradingEngine {
         let (usdc_balance, sol_balance) = self.balance_tracker.get_balances().await;
         let initial_capital = usdc_balance + (sol_balance * price);
 
-        // Get RPC URL and API key from config
+        // ✅ V2.6: rpc_url wired via from_config() — fail loudly if absent.
+        //    Never silently fall through to public mainnet RPC.
         let rpc_url = self.config.rpc_url.clone()
-            .unwrap_or_else(|| "https://api.mainnet-beta.solana.com".to_string());
+            .ok_or_else(|| anyhow::anyhow!(
+                "[RealEngine] rpc_url not configured. \
+                 Use RealTradingConfig::from_config() at engine startup. \
+                 RealTradingConfig::default() must never be used for live trading."
+            ))?;
+
         let jupiter_api_key = self.config.jupiter_api_key.clone()
-            .ok_or_else(|| anyhow::anyhow!("jupiter_api_key not configured"))?;
+            .ok_or_else(|| anyhow::anyhow!(
+                "jupiter_api_key not configured — set GRIDZBOTZ_JUPITER_API_KEY env var"
+            ))?;
+
+        // ── Dynamic priority fee (PR #79 V2.7) ─────────────────────────
+        // Estimator returns µL/CU. Jupiter expects total max_lamports cap.
+        // Conversion: max_lamports = (µL_per_CU × estimated_CU) / 1_000_000
+        // Jupiter's priorityLevel handles actual fee selection; max_lamports
+        // is our safety ceiling that adapts to network conditions.
+        let per_cu_microlamports = match &self.priority_fee_estimator {
+            Some(estimator) => {
+                let fee = estimator.get_priority_fee().await;
+                debug!("[Jupiter] Dynamic fee: {} µL/CU", fee);
+                fee
+            }
+            None => {
+                debug!("[Jupiter] Static fee: {} µL/CU", self.static_priority_fee);
+                self.static_priority_fee
+            }
+        };
+
+        let max_lamports = per_cu_microlamports
+            .saturating_mul(JUPITER_ESTIMATED_CU)
+            / 1_000_000;
+        let max_lamports = max_lamports.max(MIN_MAX_LAMPORTS);
+
+        debug!(
+            "[Jupiter] Priority cap: {} µL/CU × {}CU = {} max lamports",
+            per_cu_microlamports, JUPITER_ESTIMATED_CU, max_lamports
+        );
 
         // Create Jupiter client with production API V4.1 (secure: accepts Pubkey)
         let jupiter = JupiterClient::new(
@@ -379,7 +577,7 @@ impl RealTradingEngine {
             jupiter_api_key,
         )?
         .with_slippage(self.config.slippage_bps.unwrap_or(50))
-        .with_priority_fee(10_000, "high".to_string());
+        .with_priority_fee(max_lamports, "high".to_string());
 
         // Determine swap direction and amount
         let (input_mint, output_mint, amount) = match side {
@@ -425,8 +623,8 @@ impl RealTradingEngine {
 
         if roi >= threshold {
             let (_, sol) = self.balance_tracker.get_balances().await;
-            let ratio        = self.config.profit_take_ratio.unwrap_or(0.4);
-            let sell_amount  = sol * ratio;
+            let ratio       = self.config.profit_take_ratio.unwrap_or(0.4);
+            let sell_amount = sol * ratio;
 
             if sell_amount > 0.01 {
                 info!("[ProfitTake] ROI {:.2}% >= {:.2}% -- taking profit", roi, threshold);
@@ -500,7 +698,7 @@ impl RealTradingEngine {
 
         println!();
         println!("=======================================================");
-        println!("  REAL TRADING ENGINE V2.5.1 - STATUS");
+        println!("  REAL TRADING ENGINE V2.7 - STATUS");
         println!("=======================================================");
         println!();
         println!("Balances:");
@@ -523,6 +721,13 @@ impl RealTradingEngine {
         println!("Executor:");
         println!("  Success Rate    : {:.1}%", executor_stats.success_rate);
         println!("  Total Exec      : {}",     executor_stats.total_executions);
+        println!();
+        println!("Priority Fees:");
+        if self.priority_fee_estimator.is_some() {
+            println!("  Mode    : DYNAMIC");
+        } else {
+            println!("  Mode    : STATIC ({} µL/CU)", self.static_priority_fee);
+        }
         println!();
         println!("Circuit Breaker:");
         let breaker = self.circuit_breaker.read().await;
@@ -582,7 +787,6 @@ impl TradingEngine for RealTradingEngine {
     }
 
     /// Jupiter swaps are atomic -- there are no pending orders to cancel.
-    /// Returns Ok(()) and logs a warning for observability.
     async fn cancel_order(&self, order_id: &str) -> TradingResult<()> {
         log::warn!(
             "[RealEngine] cancel_order('{}') -- Jupiter swaps are atomic; nothing to cancel",
@@ -605,20 +809,15 @@ impl TradingEngine for RealTradingEngine {
     /// every cycle, not just when a trade is attempted.  Without this tick
     /// the breaker would stay permanently tripped when fills == 0.
     async fn process_price_update(&self, current_price: f64) -> TradingResult<Vec<FillEvent>> {
-        // Tick the cooldown gate so is_tripped resets after cooldown expires
-        // even when no trades are being placed (fills == 0).
         let _ = self.circuit_breaker.write().await.is_trading_allowed();
         self.reconcile_balances(current_price).await?;
         Ok(vec![])
     }
 
-    /// Jupiter swaps are atomic -- there are never open orders in flight.
     async fn open_order_count(&self) -> usize {
         0
     }
 
-    /// Returns false if either the emergency shutdown flag is set
-    /// or the circuit breaker has tripped.
     async fn is_trading_allowed(&self) -> bool {
         if self.emergency_shutdown.load(Ordering::SeqCst) {
             return false;
@@ -626,35 +825,29 @@ impl TradingEngine for RealTradingEngine {
         self.circuit_breaker.write().await.is_trading_allowed()
     }
 
-    /// Override the trait default to correctly trip the circuit breaker
-    /// and set the atomic halt flag (not just cancel_all_orders).
     async fn emergency_shutdown(&self, reason: &str) -> TradingResult<()> {
         self.trigger_emergency_shutdown(reason).await
     }
 
-    // ── V5.2.2 / V2.5: Wallet and performance queries ────────────────
     async fn get_wallet(&self) -> VirtualWallet {
-        // Use new_silent to avoid logging "[WALLET] Initialized" on every
-        // price cycle.  new() is only appropriate at session start.
         let (usdc, sol) = self.balance_tracker.get_balances().await;
         VirtualWallet::new_silent(usdc, sol)
     }
 
     async fn get_performance_stats(&self) -> PaperPerformanceStats {
-        // Map RealPerformanceStats → PaperPerformanceStats
         let stats = self.get_performance_stats().await;
         PaperPerformanceStats {
-            total_trades: stats.total_trades,
+            total_trades:   stats.total_trades,
             winning_trades: stats.winning_trades,
-            losing_trades: stats.losing_trades,
-            total_pnl: stats.total_pnl,
-            total_fees: stats.total_fees,
-            win_rate: stats.win_rate,
-            avg_win: stats.avg_win,
-            avg_loss: stats.avg_loss,
-            largest_win: stats.largest_win,
-            largest_loss: stats.largest_loss,
-            profit_factor: stats.profit_factor,
+            losing_trades:  stats.losing_trades,
+            total_pnl:      stats.total_pnl,
+            total_fees:     stats.total_fees,
+            win_rate:       stats.win_rate,
+            avg_win:        stats.avg_win,
+            avg_loss:       stats.avg_loss,
+            largest_win:    stats.largest_win,
+            largest_loss:   stats.largest_loss,
+            profit_factor:  stats.profit_factor,
         }
     }
 }
@@ -676,5 +869,28 @@ mod tests {
         assert!(config.validate().is_ok());
         config.slippage_bps = Some(2000);
         assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_no_shadow_fee_fields() {
+        // Ensure maker/taker fee fields are gone — FeesConfig is the only source.
+        // If this test file compiles, the fields are correctly removed.
+        let config = RealTradingConfig::default();
+        // The following would fail to compile if shadow fields still existed:
+        // let _ = config.maker_fee_bps;  // ← must NOT compile
+        // Absence of those fields is guaranteed at compile time.
+        assert!(config.rpc_url.is_none(),       "rpc_url default must be None");
+        assert!(config.jupiter_api_key.is_none(), "api_key default must be None");
+    }
+
+    #[test]
+    fn test_rpc_url_default_is_none() {
+        // Guards against regression: rpc_url must NOT default to public mainnet.
+        // build_jupiter_swap() will error loudly if None is not replaced via from_config().
+        let config = RealTradingConfig::default();
+        assert!(
+            config.rpc_url.is_none(),
+            "rpc_url default must be None — wired via from_config(), never hardcoded"
+        );
     }
 }

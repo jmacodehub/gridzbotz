@@ -105,6 +105,35 @@ retry_delay_ms             = 500       # ↓ from 2000ms (faster fresh quote)
 # jito_tip_lamports = 100000           # 0.0001 SOL tip (~$0.01 at $100/SOL)
 
 # ═══════════════════════════════════════════════════════════════════════════
+#  ⚡ PRIORITY FEES — Dynamic Compute-Unit Priority Fee Estimation (PR #79)
+#
+#  When enable_dynamic = true:
+#    1. Samples getRecentPrioritizationFees from Chainstack (150 blocks)
+#    2. Computes Pth percentile → applies multiplier → clamp(min, max)
+#    3. Caches result for cache_ttl_secs (avoids RPC spam)
+#    4. On RPC failure → falls back to fallback_microlamports (100K)
+#    5. Injected into Jupiter's priorityLevelWithMaxLamports cap
+#
+#  Unit: µL/CU (microlamports per compute unit) — NOT total lamports.
+#  Conversion in real_trader.rs: max_lamports = µL/CU × 300K CU / 1M
+#
+#  Cost at defaults (P50 × 1.2, normal network):
+#    ~50K µL/CU → 50K × 300K / 1M = 15K lamports (0.000015 SOL ≈ $0.002)
+#  Cost at max ceiling:
+#    500K µL/CU → 500K × 300K / 1M = 150K lamports (0.00015 SOL ≈ $0.02)
+# ═══════════════════════════════════════════════════════════════════════════
+[priority_fees]
+enable_dynamic         = true          # ✅ ENABLED for production — adapts to congestion
+strategy               = "percentile"  # "percentile" | "fixed"
+percentile             = 50            # P50 = median (safe starting point)
+multiplier             = 1.2           # 20% headroom above computed fee
+min_microlamports      = 1_000         # Floor — ensures tx always has some priority
+max_microlamports      = 500_000       # Ceiling — cap runaway costs ($0.02 max)
+fallback_microlamports = 100_000       # On RPC failure — matches existing static fee
+cache_ttl_secs         = 10            # Re-estimate every 10s (6 samples/min)
+sample_blocks          = 150           # Full 150-block window (~1 min of Solana slots)
+
+# ═══════════════════════════════════════════════════════════════════════════
 #  💰 PAPER TRADING (Reference Only — Ignored in Live Mode)
 # ═══════════════════════════════════════════════════════════════════════════
 [paper_trading]
@@ -241,6 +270,7 @@ take_profit_pct               = 8.0    # Take-profit at +8%
 enable_circuit_breaker        = true   # ✅ ENABLED
 circuit_breaker_threshold_pct = 4.0    # Trip at -4% (tighter than v1's 8%)
 circuit_breaker_cooldown_secs = 300    # 5min cooldown after trip
+max_consecutive_losses        = 5      # 🆕 PR #79: Trip breaker after 5 straight losses
 
 # ═══════════════════════════════════════════════════════════════════════════
 #  🪐 JUPITER API — V6 Compatible

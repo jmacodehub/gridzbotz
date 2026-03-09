@@ -59,7 +59,7 @@ impl Default for ExecutorConfig {
             rpc_timeout_secs: Some(30),
             max_retries: Some(3),
             confirmation_timeout_secs: Some(60),
-            priority_fee_microlamports: Some(10_000),
+            priority_fee_microlamports: Some(100_000),
             compute_unit_limit: Some(200_000),
         }
     }
