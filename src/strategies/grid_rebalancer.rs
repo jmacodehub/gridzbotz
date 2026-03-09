@@ -1173,7 +1173,7 @@ mod tests {
         let stats = r.grid_stats().await;
 
         // Price at 100.05 → spread = 0.05% — should be filtered with wider fees
-        let result = r.should_place_order(OrderSide::Buy, 100.05, &stats).await;
+        let _result = r.should_place_order(OrderSide::Buy, 100.05, &stats).await;
         // With default FeesConfig the VERY_LOW_VOL min_spread is 0.05%,
         // but with 10/20/15 bps fees the regime spread will be higher.
         // The key assertion: the FeesConfig is actually being consulted.

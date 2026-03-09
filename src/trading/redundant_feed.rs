@@ -357,7 +357,7 @@ impl RedundantPriceFeed {
                             price: hm.price,
                             sources: vec![FeedSource::PythHermes],
                             timestamp: Utc::now(),
-                            confidence: 0.9, // High confidence in HTTP-only mode
+                            confidence: 0.9,
                             latency_ms: hm.latency_us as f64 / 1000.0,
                         }
                     }
@@ -388,7 +388,7 @@ impl RedundantPriceFeed {
                         }
                     }
 
-                    // CASE 7: Mixed fallbacks (websockets enabled)
+                    // CASE 7: Stale Lazer — all other sources down
                     #[cfg(feature = "websockets")]
                     (Some(lz), _, _) => {
                         warn!("⚠️ Lazer stale ({}s), others down → using Lazer", lz.age_secs);
@@ -401,6 +401,7 @@ impl RedundantPriceFeed {
                         }
                     }
 
+                    // CASE 8: HTTP fallback (Lazer + Binance down, or stale HTTP)
                     (None, Some(hm), _) => {
                         warn!("⚠️ Using Pyth HTTP (fallback): ${:.4}", hm.price);
                         ConsensusPrice {
@@ -412,9 +413,14 @@ impl RedundantPriceFeed {
                         }
                     }
 
-                    // 🔥 CRITICAL FIX: Catch-all for any remaining unmatched patterns
+                    // Without websockets: lz_price/bn_price are typed Option but
+                    // always None at runtime. Compiler can't prove this, so the
+                    // catch-all is structurally required for type-level exhaustiveness.
+                    // With websockets: all arms above are provably exhaustive,
+                    // making this unreachable — hence the allow.
+                    #[allow(unreachable_patterns)]
                     _ => {
-                        warn!("⚠️ Unexpected price feed state - no reliable data available");
+                        warn!("⚠️ Unexpected price feed state — no reliable data");
                         consensus_failures.fetch_add(1, Ordering::Relaxed);
                         ConsensusPrice {
                             price: 0.0,
@@ -466,7 +472,7 @@ impl RedundantPriceFeed {
             price,
             source: FeedSource::PythLazer,
             latency_us: fetch_latency_us,
-            age_secs: 0, // Lazer is always fresh (synced every 500ms)
+            age_secs: 0,
         })
     }
 
@@ -520,7 +526,7 @@ impl RedundantPriceFeed {
             price,
             source: FeedSource::BinanceWS,
             latency_us,
-            age_secs: 0, // Binance is always fresh (real-time WS)
+            age_secs: 0,
         })
     }
 
@@ -551,7 +557,7 @@ impl RedundantPriceFeed {
             price: avg_price,
             sources: sources.iter().map(|x| x.source).collect(),
             timestamp: Utc::now(),
-            confidence: (sources.len() as f64) / 3.0, // 0.33 per source, max 1.0
+            confidence: (sources.len() as f64) / 3.0,
             latency_ms: avg_latency,
         }
     }

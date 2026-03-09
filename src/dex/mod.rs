@@ -1,47 +1,35 @@
-//! 🔗 DEX Integration Module
+//! \u{1f517} DEX Integration Module
 //!
 //! Production-grade interfaces for decentralized exchange trading on Solana:
-//! - Unified `Trader` trait for paper, Serum/OpenBook, and Jupiter trading
+//! - Unified `Trader` trait for paper and Jupiter trading
 //! - Order placement and cancellation with retry logic
 //! - Market state monitoring and caching
 //! - Position tracking and real-time P&L calculation
 //! - Order lifecycle management with status tracking
-//! - Cross-DEX support via trait-based architecture
+//! - Extensible trait-based architecture
 //!
 //! # Architecture
 //!
 //! ```text
-//! ┌───────────────────────────────────────────────────┐
-//! │              Trader Trait (Unified API)              │
-//! └─────────────────┤─────────────────────────────┘
-//!                   │
-//!       ┌───────────┤───────────┐
-//!       │           │           │
-//!  ┌────┴────┐ ┌───┴────┐ ┌───┴──────┐
-//!  │  Paper  │ │ Serum  │ │ Jupiter  │
-//!  │ Trader  │ │ Client │ │  Client  │
-//!  └─────────┘ └────────┘ └──────────┘
+//! \u{250c}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2510}
+//! \u{2502}           Trader Trait (Unified API)           \u{2502}
+//! \u{2514}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2524}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2518}
+//!                        \u{2502}
+//!           \u{250c}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2534}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2510}
+//!           \u{2502}                   \u{2502}
+//!      \u{250c}\u{2500}\u{2500}\u{2500}\u{2500}\u{2534}\u{2500}\u{2500}\u{2500}\u{2500}\u{2510}        \u{250c}\u{2500}\u{2500}\u{2500}\u{2500}\u{2534}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2510}
+//!      \u{2502}  Paper  \u{2502}        \u{2502}  Jupiter  \u{2502}
+//!      \u{2502} Trader  \u{2502}        \u{2502}  Client   \u{2502}
+//!      \u{2514}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2518}        \u{2514}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2518}
 //! ```
 //!
 //! # Example
 //!
 //! ```no_run
-//! use solana_grid_bot::dex::{SerumClient, OrderSide, Order, OrderType, Trader};
-//! use solana_sdk::signature::Keypair;
-//! use solana_sdk::pubkey::Pubkey;
+//! use solana_grid_bot::dex::{OrderSide, Order, OrderType, Trader};
 //!
-//! # async fn example() -> anyhow::Result<()> {
-//! let wallet = Keypair::new();
-//! let market = Pubkey::new_unique();
-//!
-//! // Create Serum client
-//! let mut client = SerumClient::new(
-//!     "https://api.mainnet-beta.solana.com".to_string(),
-//!     wallet,
-//!     market,
-//! )?;
-//!
-//! // Place order using Trader trait
+//! # async fn example<T: Trader>(mut trader: T) -> anyhow::Result<()> {
+//! // Works with ANY Trader implementation (Paper, Jupiter)
 //! let order = Order {
 //!     side: OrderSide::Bid,
 //!     price: 193.50,
@@ -50,23 +38,21 @@
 //!     client_order_id: 1,
 //! };
 //!
-//! let placed = client.place_order(order).await?;
+//! let placed = trader.place_order(order).await?;
 //! println!("Order placed: {}", placed.order_id);
 //!
 //! // Get position
-//! let position = client.get_position().await?;
+//! let position = trader.get_position().await?;
 //! position.display(193.50);
 //! # Ok(())
 //! # }
 //! ```
 
-pub mod serum_client;
 pub mod order_manager;
 pub mod market_state;
 pub mod jupiter_client;
 
 // Re-export main types for convenience
-pub use serum_client::{SerumClient, ClientStats, MarketInfo};
 pub use order_manager::{OrderManager, OrderStats};
 pub use market_state::MarketState;
 pub use jupiter_client::{JupiterClient, SOL_MINT, USDC_MINT};
@@ -75,20 +61,19 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use solana_sdk::pubkey::Pubkey;
 
-// ═══════════════════════════════════════════════════════════════════════════
+// \u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}
 // TRADER TRAIT - Unified Trading Interface
-// ═══════════════════════════════════════════════════════════════════════════
+// \u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}
 
 /// Unified trading interface for all backend implementations
 ///
 /// This trait provides a common API for:
 /// - Paper trading (simulation for testing)
-/// - Direct DEX trading (Serum/OpenBook)
 /// - Aggregator trading (Jupiter for best prices)
 ///
 /// # Benefits
 /// - Seamless backend switching
-/// - Easy testing (paper → real)
+/// - Easy testing (paper \u{2192} real)
 /// - Strategy-agnostic code
 /// - Future-proof architecture
 ///
@@ -162,13 +147,13 @@ pub trait Trader: Send + Sync {
     /// Get trader implementation name for logging
     ///
     /// # Returns
-    /// * Human-readable trader type (e.g., "Serum DEX", "Jupiter Aggregator")
+    /// * Human-readable trader type (e.g., "Jupiter Aggregator", "Paper Trader")
     fn trader_type(&self) -> &'static str;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
+// \u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}
 // ORDER TYPES & ENUMS
-// ═══════════════════════════════════════════════════════════════════════════
+// \u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}
 
 /// Order side: Buy or Sell
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Hash)]
@@ -294,9 +279,9 @@ impl OrderStatus {
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
+// \u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}
 // ORDER STRUCTURES
-// ═══════════════════════════════════════════════════════════════════════════
+// \u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}
 
 /// Order request specification
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -334,7 +319,7 @@ impl Order {
     /// Calculate order value in quote currency
     ///
     /// # Returns
-    /// * Total value (price × size)
+    /// * Total value (price \u{00d7} size)
     pub fn value(&self) -> f64 {
         self.price * self.size
     }
@@ -356,7 +341,7 @@ impl Order {
 
     /// Display order details to console
     pub fn display(&self) {
-        println!("📝 Order Details:");
+        println!("\u{1f4dd} Order Details:");
         println!("   Side:       {}", self.side.as_str());
         println!("   Price:      ${:.4}", self.price);
         println!("   Size:       {:.4}", self.size);
@@ -410,9 +395,9 @@ impl PlacedOrder {
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
+// \u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}
 // POSITION TRACKING
-// ═══════════════════════════════════════════════════════════════════════════
+// \u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}
 
 /// Trading position with P&L tracking
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -465,7 +450,7 @@ impl Position {
     /// * `current_price` - Current market price
     ///
     /// # Returns
-    /// * Total value (base × price + quote)
+    /// * Total value (base \u{00d7} price + quote)
     pub fn total_value(&self, current_price: f64) -> f64 {
         (self.base_amount * current_price) + self.quote_amount
     }
@@ -509,7 +494,7 @@ impl Position {
 
     /// Display position info to console
     pub fn display(&self, current_price: f64) {
-        println!("\n💼 Current Position:");
+        println!("\n\u{1f4bc} Current Position:");
         println!("   Base:          {:.4}", self.base_amount);
         println!("   Quote:         ${:.2}", self.quote_amount);
         println!("   Entry Price:   ${:.4}", self.avg_entry_price);
@@ -521,9 +506,9 @@ impl Position {
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
+// \u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}
 // HELPER FUNCTIONS
-// ═══════════════════════════════════════════════════════════════════════════
+// \u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}
 
 /// Calculate trading fee for an order
 ///
@@ -573,9 +558,9 @@ pub fn calculate_trading_fee(
     calculate_fee(value, rate)
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
+// \u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}
 // TESTS
-// ═══════════════════════════════════════════════════════════════════════════
+// \u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}
 
 #[cfg(test)]
 mod tests {
