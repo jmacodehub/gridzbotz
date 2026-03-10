@@ -1,52 +1,27 @@
 //! ═════════════════════════════════════════════════════════════════════════
-//! GRID BOT V5.8 — ELITE AUTONOMOUS TRADING ORCHESTRATOR
-//!
-//! V5.8 CHANGES (PR #86 — Multi-Bot Orchestrator / GAP-3):
-//! ✅ intent_registry: Option<IntentRegistry> field — injected by Orchestrator
-//! ✅ set_intent_registry() impl — wires the shared DashMap conflict guard
-//! ✅ place_grid_orders(): DashMap::entry() atomic check before each level
-//!    — skips + warns if another bot owns the level, increments intent_conflicts
-//! ✅ intent_conflicts: u64 counter — surfaced in BotStats via stats()
-//! ✅ Solo path: intent_registry = None — zero behavior change, zero cost
-//!
-//! PR #91 FIXES:
-//! ✅ Bug 1 (SAFETY): place_grid_orders() key namespace fixed
-//!    pair = instance_name() → pair = trading pair ("SOL/USDC")
-//!    Two bots on the same pair can now detect each other's claims.
-//! ✅ Bug 3 (OBSERVABILITY): stats() now returns self.intent_conflicts
-//!    via BotStats.intent_conflicts — fleet aggregation is correct.
-//! ✅ Bug 4 (STATE): reposition_grid() now removes registry entries
-//!    for cancelled levels — prevents stale claims blocking reposition.
+//! GRID BOT V5.8 - ELITE AUTONOMOUS TRADING ORCHESTRATOR
 //!
 //! PR #92 FIXES:
-//! ✅ P0 #2 (CORRECTNESS): process_price_update() fill-side detection fixed.
-//!    Was: order_id.to_lowercase().contains("buy") — fragile string sniff,
-//!    inconsistent across engine impls → bot-01 showed Buy:0 Sell:0.
-//!    Now: fill.side == OrderSide::Buy — reads authoritative FillEvent field.
-//!    Also drops redundant order_ids Vec; iterates filled_orders directly.
-//! ✅ P0 #3 (UX/CORRECTNESS): Win Rate display guard added.
-//!    display_status() and GridBotStats::display_summary() now print
-//!    "— (no closed trades yet)" when profitable+unprofitable == 0,
-//!    preventing shutdown report from reading as a loss record on partial fills.
+//! [fix] P0 #2 (CORRECTNESS): process_price_update() fill-side detection fixed.
+//!    Was: order_id.to_lowercase().contains("buy") - fragile string sniff.
+//!    Now: fill.side == OrderSide::Buy - reads authoritative FillEvent field.
+//! [fix] P0 #3 (UX): Win Rate display guard added.
+//!    display_status() and GridBotStats::display_summary() print
+//!    "- (no closed trades yet)" when profitable+unprofitable == 0.
 //!
-//! V5.7 CHANGES (PR #85 — process_tick dispatch + Box<dyn Bot>):
-//! ✅ run_trading_loop takes &mut dyn Bot — type-agnostic, orchestrator-ready
-//! ✅ loop body uses bot.process_tick() — concrete process_price_update() retired
-//! ✅ shutdown_components calls bot.shutdown() — trait method (displays status + logs)
-//! ✅ initialize_components: Bot::initialize() covers grid placement — no explicit call
-//! ✅ local type GridBot → Box<dyn Bot> in main()
+//! V5.8 CHANGES (PR #86 - Multi-Bot Orchestrator / GAP-3):
+//! [ok] intent_registry: Option<IntentRegistry> field - injected by Orchestrator
+//! [ok] set_intent_registry() impl - wires the shared DashMap conflict guard
+//! [ok] place_grid_orders(): DashMap::entry() atomic check before each level
+//! [ok] intent_conflicts: u64 counter - surfaced in BotStats via stats()
+//! [ok] Solo path: intent_registry = None - zero behavior change, zero cost
 //!
-//! V5.6 CHANGES (PR #84 — impl Bot for GridBot + PriceFeed ownership):
-//! ✅ GAP-1 RESOLVED: impl Bot for GridBot — trait-polymorphic, orchestrator-ready
-//! ✅ GridBot owns Arc<PriceFeed> — process_tick() is fully autonomous
+//! PR #91 FIXES:
+//! [fix] Bug 1 (SAFETY): place_grid_orders() key namespace fixed
+//! [fix] Bug 3 (OBSERVABILITY): stats() now returns self.intent_conflicts
+//! [fix] Bug 4 (STATE): reposition_grid() removes registry entries for cancelled levels
 //!
-//! Native *Config field mapping (TOML name → strategy field name):
-//!   RsiStrategyConfig.period          → RsiConfig.rsi_period
-//!   MomentumStrategyConfig.lookback_period → MomentumConfig.fast_period
-//!   MeanReversionStrategyConfig.sma_period → MeanReversionConfig.mean_period
-//!   MomentumMACDStrategyConfig.*      → MomentumMACDConfig.* (match 1:1)
-//!
-//! March 2026 — V5.8 MULTI-BOT ORCHESTRATION 🤖
+//! March 2026 - V5.8 MULTI-BOT ORCHESTRATION
 //! ═════════════════════════════════════════════════════════════════════════
 
 use std::sync::Arc;
@@ -101,10 +76,8 @@ pub struct GridBot {
     total_orders_placed:    u64,
     last_known_pnl:         f64,
     /// Shared intent registry for multi-bot conflict detection (PR #86).
-    /// None in solo mode — zero cost, zero behavior change when absent.
     intent_registry:        Option<IntentRegistry>,
-    /// Real conflict events detected this session (Occupied branch hits).
-    /// PR #91: now surfaced via BotStats so fleet aggregation is correct.
+    /// Real conflict events detected this session.
     intent_conflicts:       u64,
 }
 
@@ -119,8 +92,8 @@ impl GridBot {
         feed:   Arc<PriceFeed>,
     ) -> Result<Self> {
         info!("[BOT-V5.8] Initializing GridBot V5.8...");
-        info!("[BOT-V5.8] Engine:   Injected by main.rs (Paper or Real)");
-        info!("[BOT-V5.8] PriceFeed: Owned via Arc — process_tick() autonomous");
+        info!("[BOT-V5.8] Engine:    Injected by main.rs (Paper or Real)");
+        info!("[BOT-V5.8] PriceFeed: Owned via Arc - process_tick() autonomous");
         info!("[BOT-V5.8] Bot Trait: IMPLEMENTED + DISPATCHED (PR #84+#85+#86)");
 
         let grid_config = GridRebalancerConfig {
@@ -192,7 +165,7 @@ impl GridBot {
 
         let manager = _manager;
 
-        info!("[BOT-V5.8] ✅ {} strategies loaded via StrategyRegistryBuilder",
+        info!("[BOT-V5.8] {} strategies loaded via StrategyRegistryBuilder",
               manager.strategies.len());
 
         let grid_state         = GridStateTracker::new();
@@ -233,13 +206,11 @@ impl GridBot {
     }
 
     async fn initialize_with_price(&mut self) -> Result<()> {
-        info!("┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓");
-        info!("┃  V5.8 GRID INIT — awaiting live price...       ┃");
-        info!("┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛");
+        info!("[BOT] V5.8 GRID INIT - awaiting live price...");
 
         let initial_price = self.feed.latest_price().await;
         if initial_price <= 0.0 {
-            bail!("Invalid initial price ${:.2} — cannot initialize grid", initial_price);
+            bail!("Invalid initial price ${:.2} - cannot initialize grid", initial_price);
         }
         info!("[BOT] Live price received: ${:.4}", initial_price);
 
@@ -252,22 +223,19 @@ impl GridBot {
         let used_levels  = self.grid_state.count().await;
         self.enhanced_metrics.update_grid_stats(total_levels, used_levels);
 
-        info!("┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓");
-        info!("┃  ✅ Grid initialized — ready for trading loop   ┃");
-        info!("┃  {} levels  |  {:.3}% spacing              ┃",
+        info!("[BOT] Grid initialized - {} levels @ {:.3}% spacing",
               self.config.trading.grid_levels,
               self.config.trading.grid_spacing_percent);
-        info!("┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛");
         Ok(())
     }
 
     pub async fn should_reposition(&self, current_price: f64, last_price: f64) -> bool {
         if !self.grid_initialized {
-            info!("[BOT] Grid not initialized — will initialize on first cycle");
+            info!("[BOT] Grid not initialized - will initialize on first cycle");
             return true;
         }
         if self.last_price.is_none() {
-            trace!("No last price — skipping reposition check");
+            trace!("No last price - skipping reposition check");
             return false;
         }
         if let Some(last_reposition) = self.last_reposition_time {
@@ -290,8 +258,7 @@ impl GridBot {
 
     pub async fn reposition_grid(&mut self, current_price: f64, last_price: f64) -> Result<()> {
         if !self.grid_initialized {
-            warn!("⚠️  [BOT] Grid not initialized — emergency init at ${:.4}", current_price);
-            warn!("⚠️  [BOT] This should not happen — Bot::initialize() should have run!");
+            warn!("[BOT] Grid not initialized - emergency init at ${:.4}", current_price);
             self.place_grid_orders(current_price).await
                 .context("Emergency grid initialization failed")?;
             self.grid_initialized = true;
@@ -302,21 +269,18 @@ impl GridBot {
             return Ok(());
         }
 
-        info!("[BOT] Repositioning grid: ${:.4} → ${:.4}", last_price, current_price);
+        info!("[BOT] Repositioning grid: ${:.4} -> ${:.4}", last_price, current_price);
         let reposition_start = Instant::now();
 
         let filled_buys = self.grid_state.get_levels_with_filled_buys().await;
         if !filled_buys.is_empty() {
-            warn!("[BOT] {} levels have filled buys — preserving sell orders!", filled_buys.len());
+            warn!("[BOT] {} levels have filled buys - preserving sell orders!", filled_buys.len());
         }
 
-        // PR #91 Bug 4 fix: get the trading pair BEFORE the cancel loop
-        // so we can remove stale registry entries alongside order cancellation.
-        // Guarded by Option — solo bots skip this block entirely (zero cost).
         let trading_pair = self.config.trading_pair();
-
-        let cancellable = self.grid_state.get_cancellable_levels().await;
+        let cancellable  = self.grid_state.get_cancellable_levels().await;
         let mut cancelled_count = 0;
+
         for level_id in cancellable {
             if let Some(level) = self.grid_state.get_level(level_id).await {
                 if let Some(buy_id) = &level.buy_order_id {
@@ -332,11 +296,7 @@ impl GridBot {
                     }
                 }
                 self.grid_state.mark_cancelled(level_id).await;
-
-                // PR #91 Bug 4: Remove this level from the shared intent registry.
-                // Without this, the bot cannot reclaim its own old levels after
-                // reposition — DashMap::entry() would find them Occupied by itself
-                // and spuriously increment intent_conflicts.
+                // PR #91 Bug 4: Remove stale registry claims so bot can reclaim levels after reposition.
                 if let Some(registry) = &self.intent_registry {
                     registry.remove(&(trading_pair.clone(), level_id));
                 }
@@ -360,12 +320,7 @@ impl GridBot {
         let grid_spacing = self.adaptive_optimizer.current_spacing_percent;
         let order_size   = self.adaptive_optimizer.current_position_size;
         let num_levels   = self.config.trading.grid_levels;
-
-        // PR #91 Bug 1 fix: use the actual trading pair as the registry key namespace,
-        // NOT the bot instance name. Using instance_name() meant each bot namespaced
-        // its own keys — two bots on SOL/USDC could never see each other's claims.
-        // With the trading pair as namespace, any two bots on the same pair share
-        // the same key space and conflict detection works correctly.
+        // PR #91 Bug 1: use trading pair as registry key namespace (not instance name).
         let pair = self.config.trading_pair();
 
         debug!("[BOT] Grid params: {} levels @ {:.3}% spacing, {:.3} SOL/order",
@@ -381,14 +336,13 @@ impl GridBot {
             let sell_price = current_price * (1.0 + grid_spacing * i as f64);
             let mut level  = self.grid_state.create_level(buy_price, sell_price, order_size).await;
 
-            // ── Intent registry conflict check (PR #86, namespace fixed PR #91) ───────
             if let Some(registry) = &self.intent_registry {
                 let key = (pair.clone(), level.id);
                 match registry.entry(key) {
                     dashmap::Entry::Occupied(e) => {
                         self.intent_conflicts += 1;
                         warn!(
-                            "[INTENT] ⚠️  Level {} at ${:.4} owned by '{}' — skipping (conflicts: {})",
+                            "[INTENT] Level {} at ${:.4} owned by '{}' - skipping (conflicts: {})",
                             level.id, buy_price, e.get(), self.intent_conflicts
                         );
                         continue;
@@ -452,11 +406,8 @@ impl GridBot {
             self.manager.notify_fill(fill);
         }
 
-        // PR #92 P0 #2: Iterate filled_orders directly and read fill.side
-        // for authoritative Buy/Sell classification. The previous approach
-        // sniffed the order_id string (`contains("buy")`), which is fragile
-        // and engine-dependent — causing bot-01 to show Buy:0 Sell:0 while
-        // bot-02 was correct. fill.side == OrderSide::Buy is always correct.
+        // PR #92 P0 #2: Read fill.side for authoritative Buy/Sell classification.
+        // The old order_id string-sniff was fragile and engine-dependent.
         if !filled_orders.is_empty() {
             info!("[BOT] {} orders filled at ${:.4}", filled_orders.len(), price);
             self.successful_trades += filled_orders.len() as u64;
@@ -465,7 +416,7 @@ impl GridBot {
                 let pnl       = self.grid_state.total_realized_pnl().await;
                 let fill_size = self.adaptive_optimizer.current_position_size;
                 self.total_fills_tracked += 1;
-                info!("[FILL_TRACK] #{}: {} {} @ ${:.4} | size: {:.4} | P&L: ${:.2} | ts: {}",
+                info!("[FILL] #{}: {} {} @ ${:.4} | size: {:.4} | P&L: ${:.2} | ts: {}",
                       self.total_fills_tracked,
                       if is_buy { "BUY" } else { "SELL" },
                       fill.order_id, price, fill_size, pnl, timestamp);
@@ -483,11 +434,10 @@ impl GridBot {
                 info!("[OPT] Applied: {} | spacing={:.3}% | size={:.3} SOL",
                       result.reason, result.new_spacing * 100.0, result.new_position_size);
             } else {
-                // PR #92 P1: Always log why the optimizer did not adjust,
-                // so operators can confirm it's threshold-gated, not silent/broken.
+                // PR #92 P1: Always log why the optimizer did not adjust.
                 debug!("[OPT] No adjustment: {} | spacing={:.3}% size={:.3} SOL",
                        result.reason,
-                       result.new_spacing * 100.0,
+                       result.new_spacing       * 100.0,
                        result.new_position_size);
             }
             self.last_optimization_cycle = self.total_cycles;
@@ -528,7 +478,7 @@ impl GridBot {
         let stats  = self.get_stats().await;
         let border = "=".repeat(60);
         println!("\n{}", border);
-        println!("   [BOT] GRID BOT V5.8 — STATUS REPORT");
+        println!("   [BOT] GRID BOT V5.8 - STATUS REPORT");
         println!("{}", border);
         println!("\n[PERFORMANCE]");
         println!("  Total Cycles:      {}", stats.total_cycles);
@@ -550,10 +500,9 @@ impl GridBot {
         println!("  P&L:               ${:.2}", stats.pnl_usdc);
         println!("  ROI:               {:.2}%", stats.roi_percent);
         println!("\n[TRADING]");
-        // PR #92 P0 #3: Guard win rate display — "0.00%" on zero round-trips
-        // is indistinguishable from a losing record. Print a clear label instead.
+        // PR #92 P0 #3: Guard win rate - "0.00%" on zero round-trips is misleading.
         if stats.profitable_trades + stats.unprofitable_trades == 0 {
-            println!("  Win Rate:          — (no closed trades yet)");
+            println!("  Win Rate:          - (no closed trades yet)");
         } else {
             println!("  Win Rate:          {:.2}%", stats.win_rate);
         }
@@ -589,7 +538,7 @@ impl Bot for GridBot {
 
     fn set_intent_registry(&mut self, registry: IntentRegistry) {
         info!(
-            "[BOT] Intent registry wired for instance '{}' — conflict detection active",
+            "[BOT] Intent registry wired for instance '{}' - conflict detection active",
             self.instance_id()
         );
         self.intent_registry = Some(registry);
@@ -598,14 +547,14 @@ impl Bot for GridBot {
     async fn initialize(&mut self) -> Result<()> {
         self.pre_init_hook().await?;
         self.initialize_with_price().await
-            .context("Bot::initialize — grid placement failed")?;
+            .context("Bot::initialize - grid placement failed")?;
         Ok(())
     }
 
     async fn process_tick(&mut self) -> Result<TickResult> {
         let price = self.feed.latest_price().await;
         if price <= 0.0 {
-            warn!("[BOT::process_tick] Invalid price {:.4} — signalling shutdown", price);
+            warn!("[BOT::process_tick] Invalid price {:.4} - signalling shutdown", price);
             return Ok(TickResult::shutdown());
         }
 
@@ -645,8 +594,6 @@ impl Bot for GridBot {
         Ok(())
     }
 
-    /// PR #91: intent_conflicts now correctly wired into BotStats
-    /// so orchestrator aggregate_stats() sums real conflict events.
     fn stats(&self) -> BotStats {
         BotStats {
             instance_id:      self.config.bot.instance_name().to_string(),
@@ -702,9 +649,9 @@ impl GridBotStats {
         println!("   Total Value:       ${:.2}", self.total_value_usdc);
         println!("   P&L:               ${:.2}", self.pnl_usdc);
         println!("   ROI:               {:.2}%", self.roi_percent);
-        // PR #92 P0 #3: Guard win rate — zero closed trades is not a loss record.
+        // PR #92 P0 #3: Guard win rate - zero closed trades is not a loss record.
         if self.profitable_trades + self.unprofitable_trades == 0 {
-            println!("   Win Rate:          — (no closed trades yet)");
+            println!("   Win Rate:          - (no closed trades yet)");
         } else {
             println!("   Win Rate:          {:.2}%", self.win_rate);
         }
@@ -793,7 +740,7 @@ mod tests {
         assert_eq!(stats.intent_conflicts, 3);
     }
 
-    /// PR #92 P0 #3: Win rate guard — zero closed trades must not display as 0.00%.
+    /// PR #92 P0 #3: Win rate guard - zero closed trades must not display as 0.00%.
     #[test]
     fn test_win_rate_guard_zero_closed_trades() {
         let stats = GridBotStats {
@@ -807,7 +754,6 @@ mod tests {
             win_rate:                0.0,
             total_fees:              0.05,
             trading_paused:          false,
-            // No closed round-trips yet
             profitable_trades:       0,
             unprofitable_trades:     0,
             max_drawdown:            0.0,
@@ -819,14 +765,11 @@ mod tests {
             total_fills_tracked:     3,
             intent_conflicts:        0,
         };
-        // Guard condition: no closed trades → should NOT display win_rate as percentage
-        assert_eq!(stats.profitable_trades + stats.unprofitable_trades, 0,
-            "Guard precondition: no closed trades");
-        // Confirm win_rate field is 0.0 — would be misleading without the guard
+        assert_eq!(stats.profitable_trades + stats.unprofitable_trades, 0);
         assert!((stats.win_rate - 0.0).abs() < 1e-9);
     }
 
-    /// PR #92 P0 #3: Win rate guard — closed trades present → display normally.
+    /// PR #92 P0 #3: Win rate guard - closed trades present -> display normally.
     #[test]
     fn test_win_rate_guard_with_closed_trades() {
         let stats = GridBotStats {
@@ -851,9 +794,7 @@ mod tests {
             total_fills_tracked:     10,
             intent_conflicts:        0,
         };
-        // Guard condition: closed trades present → display win_rate numerically
-        assert!(stats.profitable_trades + stats.unprofitable_trades > 0,
-            "Guard precondition: closed trades exist");
+        assert!(stats.profitable_trades + stats.unprofitable_trades > 0);
         assert!((stats.win_rate - 75.0).abs() < 1e-9);
     }
 
@@ -883,7 +824,6 @@ mod tests {
         assert_eq!(s.uptime_secs, 0);
         assert!(!s.is_paused);
         assert_eq!(s.current_pnl, 0.0);
-        // PR #91: intent_conflicts must default to zero
         assert_eq!(s.intent_conflicts, 0);
     }
 
@@ -898,27 +838,17 @@ mod tests {
 
     #[test]
     fn test_registry_cleanup_on_reposition() {
-        // PR #91 Bug 4: verify registry.remove() logic is correct.
-        // We test the DashMap remove behaviour directly since
-        // reposition_grid() is async and requires full engine setup.
         use crate::bots::bot_trait::new_intent_registry;
-
         let registry = new_intent_registry();
         let pair = "SOL/USDC".to_string();
-
-        // Simulate bot claiming 3 levels at startup
         registry.insert((pair.clone(), 1u64), "sol-usdc-grid-01".into());
         registry.insert((pair.clone(), 2u64), "sol-usdc-grid-01".into());
         registry.insert((pair.clone(), 3u64), "sol-usdc-grid-01".into());
         assert_eq!(registry.len(), 3);
-
-        // Simulate reposition: remove cancelled level entries
         let cancelled_levels = vec![1u64, 2u64];
         for level_id in &cancelled_levels {
             registry.remove(&(pair.clone(), *level_id));
         }
-
-        // Only level 3 remains — bot can now reclaim levels 1 and 2
         assert_eq!(registry.len(), 1);
         assert!(!registry.contains_key(&(pair.clone(), 1u64)));
         assert!(!registry.contains_key(&(pair.clone(), 2u64)));
