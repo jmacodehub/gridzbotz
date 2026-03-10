@@ -45,8 +45,16 @@ use crate::bots::bot_trait::{
 };
 use crate::bots::grid_bot::GridBot;
 use crate::config::Config;
-// FIX 1: removed unused `engine_mode_label` import (was triggering warning)
 use crate::trading::{PriceFeed, EngineParams, create_engine};
+
+// ─────────────────────────────────────────────────────────────────────────
+// TYPE ALIAS
+// `Vec<(String, Arc<Mutex<Box<dyn Bot>>>)>` would trigger clippy::type_complexity.
+// `BotEntry` names the intent: an instance_id paired with its locked bot.
+// ─────────────────────────────────────────────────────────────────────────
+/// An owned, concurrently-accessible bot instance.
+/// `String` = instance_id, `Arc<Mutex<Box<dyn Bot>>>` = the running bot.
+type BotEntry = (String, Arc<Mutex<Box<dyn Bot>>>);
 
 // ═════════════════════════════════════════════════════════════════════════
 // ORCHESTRATOR CONFIG
@@ -77,9 +85,9 @@ pub struct OrchestratorConfig {
     pub channel_buffer_per_bot: usize,
 }
 
-fn default_cycle_interval_ms()   -> u64   { 1000 }
-fn default_stats_interval()      -> u32   { 30   }
-fn default_channel_buffer_per_bot() -> usize { 10 }
+fn default_cycle_interval_ms()      -> u64   { 1000 }
+fn default_stats_interval()         -> u32   { 30   }
+fn default_channel_buffer_per_bot() -> usize { 10   }
 
 impl OrchestratorConfig {
     /// Load from a TOML file at `path`.
@@ -109,12 +117,25 @@ struct BotTickMsg {
 // ═════════════════════════════════════════════════════════════════════════
 
 /// Multi-bot fleet manager.
+///
+/// Owns N initialized `Box<dyn Bot>` instances wrapped in
+/// `Arc<Mutex<_>>` for safe concurrent access from Tokio tasks.
+/// Shares a single `IntentRegistry` across all bots to prevent
+/// overlapping order placement on the same price levels.
 pub struct Orchestrator {
-    bots:             Vec<(String, Arc<Mutex<Box<dyn Bot>>>)>,
+    /// Bot instances ready to run (post-initialize).
+    /// Uses `BotEntry = (String, Arc<Mutex<Box<dyn Bot>>>)` alias
+    /// to satisfy clippy::type_complexity gate in lib.rs.
+    bots:             Vec<BotEntry>,
+    /// Shared intent registry wired into every bot.
     registry:         IntentRegistry,
+    /// Orchestrator-level config (intervals, buffer sizes).
     config:           OrchestratorConfig,
+    /// Shutdown broadcast — set to true by Ctrl+C handler or fatal error.
     shutdown:         Arc<AtomicBool>,
+    /// Wall-clock start time for uptime tracking.
     start_time:       Instant,
+    /// Running intent conflict counter (aggregated across all bots).
     intent_conflicts: u64,
 }
 
@@ -136,7 +157,7 @@ impl Orchestrator {
               orch_config.bot_configs.len());
         info!("[ORCH] =================================================");
 
-        let mut bots: Vec<(String, Arc<Mutex<Box<dyn Bot>>>)> = Vec::new();
+        let mut bots: Vec<BotEntry> = Vec::new();
 
         for bot_toml in &orch_config.bot_configs {
             info!("[ORCH] Loading bot config: {}", bot_toml.display());
@@ -151,10 +172,6 @@ impl Orchestrator {
             let price_history_size = bot_config.trading.volatility_window as usize;
             let feed = Arc::new(PriceFeed::new(price_history_size));
 
-            // FIX 2: feed.start() returns Result<(), Box<dyn StdError + Send + Sync>>.
-            // anyhow::Context::with_context cannot be called on that type because
-            // Box<dyn StdError> doesn't satisfy the anyhow::context::ext::StdError bound
-            // (E0599). Use map_err + anyhow::anyhow! instead, which accepts any Display.
             feed.start().await
                 .map_err(|e| anyhow::anyhow!(
                     "PriceFeed start failed for '{}': {}", instance_id, e
@@ -290,9 +307,9 @@ impl Orchestrator {
             handles.push((instance_id.clone(), handle));
         }
 
-        drop(tx); // let rx.recv() drain once all tasks exit
+        drop(tx);
 
-        // ── Aggregation loop ──────────────────────────────────────────────
+        // ── Aggregation loop ────────────────────────────────────────────────
         let mut fleet_stats: HashMap<String, BotStats> = HashMap::new();
         let mut cycle_count: u64 = 0;
         let mut total_intent_conflicts: u64 = 0;

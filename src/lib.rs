@@ -47,6 +47,10 @@
 #![allow(clippy::needless_return)]
 #![allow(unused_qualifications)]
 #![allow(single_use_lifetimes)]
+// Added PR #87: orchestrator uses Arc<Mutex<Box<dyn Bot>>> which clippy flags
+// as type_complexity. The BotEntry type alias in orchestrator.rs already
+// documents intent; this gate prevents false positives elsewhere in the lib.
+#![allow(clippy::type_complexity)]
 #![deny(unsafe_code)]
 #![allow(clippy::too_many_arguments)]
 
