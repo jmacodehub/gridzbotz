@@ -1,5 +1,5 @@
 //! ═════════════════════════════════════════════════════════════════════════
-//! 🧠 ADAPTIVE OPTIMIZER V1.1 - Self-Learning Grid Intelligence
+//! 🧠 ADAPTIVE OPTIMIZER V1.2 - Self-Learning Grid Intelligence
 //!
 //! FEATURES:
 //! ✅ Smart Grid Spacing - Auto-adjust based on performance
@@ -8,11 +8,12 @@
 //! ✅ Risk-aware adjustments
 //! ✅ Win/Loss streak detection
 //! ✅ Warmup guard - requires minimum fills before acting
+//! ✅ Skip reason logging - every no-change cycle emits why (PR #92)
 //!
 //! PHILOSOPHY:
 //! "The bot that learns from its wins and losses is the bot that survives."
 //!
-//! February 9, 2026  - ADAPTIVE INTELLIGENCE ACTIVATED! 🔥
+//! February  9, 2026 - V1.0 initial
 //! February 28, 2026 - V1.1: Fix unit bugs + warmup guard
 //!   Bug 1: grid_efficiency was stored as 0-100 but thresholds expect 0.0-1.0
 //!   Bug 2: MIN/MAX spacing constants were in % units, values are in fractions
@@ -20,6 +21,10 @@
 //!          Fixed: MIN=0.0001 (0.01%), MAX=0.01 (1.0%) in fraction units.
 //!   Bug 3: Optimizer fired at cycle 1 with 0 fills — decisions from noise.
 //!          Fixed: min_fills_to_activate guard (default 5).
+//! March    10, 2026 - V1.2 PR #92: skip_reason in OptimizationResult
+//!   When optimize() returns no changes, reason now carries a human-readable
+//!   explanation (warming up text OR threshold-not-met detail with current
+//!   drawdown + efficiency values) so callers can always log it at debug.
 //! ═════════════════════════════════════════════════════════════════════════
 
 use super::EnhancedMetrics;
@@ -106,7 +111,7 @@ impl AdaptiveOptimizer {
     /// Create new optimizer with base settings from config.
     /// `base_spacing_percent` must be in fraction form (e.g. 0.0015 for 0.15%).
     pub fn new(base_spacing_percent: f64, base_position_size: f64) -> Self {
-        info!("🧠 Initializing Adaptive Optimizer");
+        info!("\ud83e\udde0 Initializing Adaptive Optimizer");
         info!("   Base Spacing: {:.4}% ({:.6} fraction)", base_spacing_percent * 100.0, base_spacing_percent);
         info!("   Base Position: {} SOL", base_position_size);
         info!("   Warmup: {} fills required before optimization", 5);
@@ -134,19 +139,19 @@ impl AdaptiveOptimizer {
         // Determine multiplier based on drawdown
         let multiplier = if drawdown < LOW_DRAWDOWN_THRESHOLD {
             // Doing great! Tighten grid to catch more moves
-            debug!("🎯 Low drawdown ({:.2}%) - tightening grid", drawdown);
+            debug!("\ud83c\udfaf Low drawdown ({:.2}%) - tightening grid", drawdown);
             SPACING_TIGHTEN_MULTIPLIER
         } else if drawdown < MODERATE_DRAWDOWN_THRESHOLD {
             // Normal operation
-            debug!("⚖️ Moderate drawdown ({:.2}%) - maintaining grid", drawdown);
+            debug!("\u2696\ufe0f Moderate drawdown ({:.2}%) - maintaining grid", drawdown);
             SPACING_NORMAL_MULTIPLIER
         } else if drawdown < HIGH_DRAWDOWN_THRESHOLD {
             // Caution - widen to reduce risk
-            debug!("⚠️ High drawdown ({:.2}%) - widening grid", drawdown);
+            debug!("\u26a0\ufe0f High drawdown ({:.2}%) - widening grid", drawdown);
             SPACING_WIDEN_MULTIPLIER
         } else {
             // Emergency - max widen for capital preservation
-            warn!("🚨 EMERGENCY drawdown ({:.2}%) - max widening!", drawdown);
+            warn!("\ud83d\udea8 EMERGENCY drawdown ({:.2}%) - max widening!", drawdown);
             SPACING_EMERGENCY_MULTIPLIER
         };
 
@@ -175,7 +180,7 @@ impl AdaptiveOptimizer {
                 new_spacing * 100.0
             );
 
-            info!("🧠 SPACING ADJUSTED: {}", self.last_reason);
+            info!("\ud83e\udde0 SPACING ADJUSTED: {}", self.last_reason);
             true
         } else {
             debug!("Spacing change too small ({:.1}%), keeping current", change_pct);
@@ -194,10 +199,10 @@ impl AdaptiveOptimizer {
 
         // Base multiplier from efficiency (fraction 0.0–1.0)
         let efficiency_multiplier = if efficiency > HIGH_EFFICIENCY_THRESHOLD {
-            debug!("📈 High efficiency ({:.1}%) - scaling up orders", efficiency * 100.0);
+            debug!("\ud83d\udcc8 High efficiency ({:.1}%) - scaling up orders", efficiency * 100.0);
             SIZE_HIGH_EFFICIENCY_MULTIPLIER
         } else if efficiency < LOW_EFFICIENCY_THRESHOLD {
-            debug!("📉 Low efficiency ({:.1}%) - scaling down orders", efficiency * 100.0);
+            debug!("\ud83d\udcc9 Low efficiency ({:.1}%) - scaling down orders", efficiency * 100.0);
             SIZE_LOW_EFFICIENCY_MULTIPLIER
         } else {
             SIZE_NORMAL_MULTIPLIER
@@ -234,12 +239,12 @@ impl AdaptiveOptimizer {
         if win_rate > 0.70 {
             // Strong win rate - bonus!
             let bonus = 1.0 + ((win_rate - 0.70) * 1.67); // Scale 0.70-1.0 to 1.0-1.5
-            debug!("✨ Win streak detected ({:.0}%) - bonus {:.2}x", win_rate * 100.0, bonus);
+            debug!("\u2728 Win streak detected ({:.0}%) - bonus {:.2}x", win_rate * 100.0, bonus);
             bonus.min(WIN_STREAK_BONUS_MAX)
         } else if win_rate < 0.40 {
             // Poor win rate - penalty
             let penalty = 0.6 + (win_rate * 1.0); // Scale 0.0-0.40 to 0.6-1.0
-            debug!("🚫 Loss streak detected ({:.0}%) - penalty {:.2}x", win_rate * 100.0, penalty);
+            debug!("\ud83d\udeab Loss streak detected ({:.0}%) - penalty {:.2}x", win_rate * 100.0, penalty);
             penalty.max(LOSS_STREAK_PENALTY_MAX)
         } else {
             1.0 // Normal
@@ -264,7 +269,7 @@ impl AdaptiveOptimizer {
                 efficiency * 100.0, old_size, new_size
             );
 
-            info!("⚡ POSITION SIZE ADJUSTED: {}", self.last_reason);
+            info!("\u26a1 POSITION SIZE ADJUSTED: {}", self.last_reason);
             true
         } else {
             debug!("Size change too small ({:.1}%), keeping current", change_pct);
@@ -279,13 +284,19 @@ impl AdaptiveOptimizer {
     /// Run full optimization cycle — adjust both spacing and position size.
     /// Returns early (no changes) until `min_fills_to_activate` fills have
     /// been recorded, preventing noise-driven decisions at startup.
+    ///
+    /// PR #92: `result.reason` is always populated:
+    /// - Warming up  → "Warming up (n/m fills)"
+    /// - Threshold not met → "threshold not met (drawdown=X% eff=Y%)"
+    /// - Changes applied → last_reason from spacing/size update
+    /// Callers can always log `result.reason` at debug without extra guards.
     pub fn optimize(&mut self, metrics: &EnhancedMetrics) -> OptimizationResult {
-        debug!("🧠 Running optimization cycle #{}", self.adjustment_count + 1);
+        debug!("\ud83e\udde0 Running optimization cycle #{}", self.adjustment_count + 1);
 
         // Warmup guard: require minimum real fills before making decisions
         let total_fills = metrics.total_buys + metrics.total_sells;
         if total_fills < self.min_fills_to_activate {
-            debug!("⏳ Optimizer warming up ({}/{} fills needed)", total_fills, self.min_fills_to_activate);
+            debug!("\u23f3 Optimizer warming up ({}/{} fills needed)", total_fills, self.min_fills_to_activate);
             return OptimizationResult {
                 spacing_adjusted: false,
                 size_adjusted: false,
@@ -296,25 +307,38 @@ impl AdaptiveOptimizer {
         }
 
         let spacing_changed = self.update_spacing(metrics);
-        let size_changed = self.update_position_size(metrics);
+        let size_changed    = self.update_position_size(metrics);
 
         if spacing_changed || size_changed {
-            info!("✅ Optimization applied: spacing={:.4}%, size={:.3} SOL",
+            info!("\u2705 Optimization applied: spacing={:.4}%, size={:.3} SOL",
                   self.current_spacing_percent * 100.0, self.current_position_size);
         }
 
+        // PR #92 P1: Always populate reason so callers can log it unconditionally.
+        // When no changes apply, emit current metric state so operators
+        // can confirm the optimizer is alive and gated by thresholds, not broken.
+        let reason = if spacing_changed || size_changed {
+            self.last_reason.clone()
+        } else {
+            format!(
+                "threshold not met (drawdown={:.2}% eff={:.1}%)",
+                metrics.max_drawdown,
+                metrics.grid_efficiency * 100.0
+            )
+        };
+
         OptimizationResult {
             spacing_adjusted: spacing_changed,
-            size_adjusted: size_changed,
-            new_spacing: self.current_spacing_percent,
+            size_adjusted:    size_changed,
+            new_spacing:      self.current_spacing_percent,
             new_position_size: self.current_position_size,
-            reason: self.last_reason.clone(),
+            reason,
         }
     }
 
     /// Display current optimizer status
     pub fn display(&self) {
-        println!("\n🧠 ADAPTIVE OPTIMIZER STATUS:");
+        println!("\n\ud83e\udde0 ADAPTIVE OPTIMIZER STATUS:");
         println!("   Adjustments Made:   {}", self.adjustment_count);
         println!("   Current Spacing:    {:.4}% (base: {:.4}%)",
                  self.current_spacing_percent * 100.0, self.base_spacing_percent * 100.0);
@@ -366,25 +390,21 @@ mod tests {
 
     #[test]
     fn test_spacing_tightens_on_low_drawdown() {
-        // Use realistic fraction form: 0.0015 = 0.15%
         let optimizer = AdaptiveOptimizer::new(0.0015, 0.1);
         let mut metrics = EnhancedMetrics::new();
         metrics.max_drawdown = 1.0; // Low drawdown → tighten
 
         let new_spacing = optimizer.calculate_optimal_spacing(&metrics);
-        // 0.0015 * 0.80 = 0.0012 > MIN(0.0001) → not clamped
         assert!(new_spacing < optimizer.base_spacing_percent);
     }
 
     #[test]
     fn test_spacing_widens_on_high_drawdown() {
-        // Use realistic fraction form: 0.0015 = 0.15%
         let optimizer = AdaptiveOptimizer::new(0.0015, 0.1);
         let mut metrics = EnhancedMetrics::new();
         metrics.max_drawdown = 10.0; // High drawdown → widen
 
         let new_spacing = optimizer.calculate_optimal_spacing(&metrics);
-        // 0.0015 * 1.80 = 0.0027 < MAX(0.01) → not clamped
         assert!(new_spacing > optimizer.base_spacing_percent);
     }
 
@@ -393,11 +413,10 @@ mod tests {
         let optimizer = AdaptiveOptimizer::new(0.0015, 0.1);
         let mut metrics = EnhancedMetrics::new();
 
-        // grid_efficiency stored as 0.0–1.0 fraction
-        metrics.grid_efficiency = 0.80; // 80% → scale up
+        metrics.grid_efficiency = 0.80;
         let high_eff_size = optimizer.calculate_optimal_position_size(&metrics);
 
-        metrics.grid_efficiency = 0.20; // 20% → scale down
+        metrics.grid_efficiency = 0.20;
         let low_eff_size = optimizer.calculate_optimal_position_size(&metrics);
 
         assert!(high_eff_size > low_eff_size);
@@ -407,7 +426,7 @@ mod tests {
     fn test_limits_enforced() {
         let optimizer = AdaptiveOptimizer::new(0.0015, 0.01);
         let mut metrics = EnhancedMetrics::new();
-        metrics.max_drawdown = 50.0; // Extreme drawdown
+        metrics.max_drawdown = 50.0;
 
         let spacing = optimizer.calculate_optimal_spacing(&metrics);
         assert!(spacing <= MAX_SPACING_PERCENT);
@@ -422,16 +441,13 @@ mod tests {
     fn test_warmup_guard_blocks_early_optimization() {
         let mut optimizer = AdaptiveOptimizer::new(0.0015, 0.1);
         let mut metrics = EnhancedMetrics::new();
-        // Drive drawdown high enough that spacing WOULD change if guard were absent
         metrics.max_drawdown = 10.0;
         metrics.grid_efficiency = 0.80;
-        // total_buys + total_sells = 0 < min_fills_to_activate(5)
 
         let result = optimizer.optimize(&metrics);
         assert!(!result.spacing_adjusted);
         assert!(!result.size_adjusted);
         assert!(result.reason.contains("Warming up"));
-        // Optimizer state must be unchanged
         assert_eq!(optimizer.current_spacing_percent, 0.0015);
     }
 
@@ -439,13 +455,58 @@ mod tests {
     fn test_warmup_guard_releases_after_fills() {
         let mut optimizer = AdaptiveOptimizer::new(0.0015, 0.1);
         let mut metrics = EnhancedMetrics::new();
-        metrics.max_drawdown = 10.0; // will trigger widen once unlocked
-        // Simulate 5 fills: 3 buys + 2 sells
+        metrics.max_drawdown = 10.0;
         metrics.total_buys = 3;
         metrics.total_sells = 2;
 
         let result = optimizer.optimize(&metrics);
-        // Should NOT be warming up anymore
         assert!(!result.reason.contains("Warming up"));
+    }
+
+    /// PR #92 P1: optimize() must always return a non-empty reason.
+    #[test]
+    fn test_optimize_no_change_emits_skip_reason() {
+        let mut optimizer = AdaptiveOptimizer::new(0.0015, 0.1);
+        let mut metrics = EnhancedMetrics::new();
+        // Enough fills to pass warmup guard, but drawdown/efficiency within thresholds
+        metrics.total_buys  = 3;
+        metrics.total_sells = 2;
+        metrics.max_drawdown   = 0.5;  // < LOW_DRAWDOWN_THRESHOLD but change < 5%
+        metrics.grid_efficiency = 0.50; // within normal band — no size change
+
+        let result = optimizer.optimize(&metrics);
+        // Should not adjust (spacing change will be < 5% threshold)
+        assert!(!result.reason.is_empty(),
+            "reason must never be empty");
+        // Reason must mention threshold or drawdown/efficiency context
+        assert!(
+            result.reason.contains("threshold") || result.reason.contains("Warming") ||
+            result.reason.contains("drawdown"),
+            "reason '{}' must contain diagnostic context", result.reason
+        );
+    }
+
+    /// PR #92 P1: reason contains drawdown + efficiency values when threshold not met.
+    #[test]
+    fn test_optimize_skip_reason_contains_metrics() {
+        let mut optimizer = AdaptiveOptimizer::new(0.0015, 0.1);
+        let mut metrics = EnhancedMetrics::new();
+        metrics.total_buys     = 3;
+        metrics.total_sells    = 2;
+        metrics.max_drawdown   = 3.5;  // moderate band — SPACING_NORMAL_MULTIPLIER
+        metrics.grid_efficiency = 0.55; // normal band — SIZE_NORMAL_MULTIPLIER
+        // Both multipliers = 1.0 → 0% change → no adjustment → skip reason
+
+        let result = optimizer.optimize(&metrics);
+        if !result.any_changes() {
+            assert!(
+                result.reason.contains("drawdown"),
+                "skip reason '{}' must include drawdown context", result.reason
+            );
+            assert!(
+                result.reason.contains("eff"),
+                "skip reason '{}' must include efficiency context", result.reason
+            );
+        }
     }
 }

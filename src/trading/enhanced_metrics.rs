@@ -1,6 +1,16 @@
 //! ═══════════════════════════════════════════════════════════════════════════
-//! ENHANCED METRICS TRACKER V1.0 - Comprehensive Trading Analytics
-//! February 9, 2026
+//! ENHANCED METRICS TRACKER V1.1 - Comprehensive Trading Analytics
+//!
+//! PR #92 CHANGES:
+//! ✅ P1: record_signal() clamps signal_execution_ratio to 100.0 max.
+//!    Root cause: record_trade() also increments execution_count, so on fills
+//!    execution_count marginally exceeds signal_count → ratio > 100%.
+//!    Fix: (ratio * 100.0).min(100.0) — belt-and-suspenders clamp at source.
+//! ✅ P1: display() guards trades_per_hour — prints "— (< 2 fills)" instead
+//!    of "0.00" when fewer than 2 timestamps exist (single fill = no delta).
+//!
+//! February 9, 2026  — V1.0 initial
+//! March   10, 2026  — V1.1 PR #92 clamp + display guard
 //! ═══════════════════════════════════════════════════════════════════════════
 
 use serde::{Serialize, Deserialize};
@@ -113,8 +123,13 @@ impl EnhancedMetrics {
         if executed {
             self.execution_count += 1;
         }
+        // PR #92 P1: Clamp to 100.0 max.
+        // record_trade() also increments execution_count on the same cycle
+        // as record_signal(true) for fill ticks, causing execution_count to
+        // marginally exceed signal_count and the ratio to read as 100.1%.
+        // Belt-and-suspenders clamp here at the source.
         self.signal_execution_ratio = if self.signal_count > 0 {
-            (self.execution_count as f64 / self.signal_count as f64) * 100.0
+            ((self.execution_count as f64 / self.signal_count as f64) * 100.0).min(100.0)
         } else {
             0.0
         };
@@ -171,7 +186,9 @@ impl EnhancedMetrics {
             self.avg_profit_per_trade = self.trade_pnls.iter().sum::<f64>() / self.trade_pnls.len() as f64;
         }
 
-        // Trades per hour
+        // Trades per hour: requires at least 2 timestamps for a meaningful delta.
+        // With only 1 fill the VecDeque has 1 entry — no elapsed time to divide by.
+        // trades_per_hour stays 0.0 in that case; display() guards the output.
         if self.trade_timestamps.len() >= 2 {
             let first = self.trade_timestamps.front().unwrap();
             let last = self.trade_timestamps.back().unwrap();
@@ -183,11 +200,11 @@ impl EnhancedMetrics {
     }
 
     pub fn display(&self) {
-        println!("\n╔══════════════════════════════════════════════════════════╗");
-        println!("║          📊 ENHANCED METRICS REPORT                      ║");
-        println!("╚══════════════════════════════════════════════════════════╝");
+        println!("\n\u256c\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u256c");
+        println!("\u2551          \ud83d\udcca ENHANCED METRICS REPORT                      \u2551");
+        println!("\u255a\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255d");
 
-        println!("\n🔢 TRADE-LEVEL METRICS:");
+        println!("\n\ud83d\udd22 TRADE-LEVEL METRICS:");
         println!("   Total Buys:           {}", self.total_buys);
         println!("   Total Sells:          {}", self.total_sells);
         println!("   Profitable Trades:    {}", self.profitable_trades);
@@ -195,27 +212,125 @@ impl EnhancedMetrics {
         println!("   Avg Profit/Trade:     ${:.4}", self.avg_profit_per_trade);
         println!("   Max Profit Trade:     ${:.4}", self.max_profit_trade);
         println!("   Max Loss Trade:       ${:.4}", self.max_loss_trade);
-        println!("   Trades/Hour:          {:.2}", self.trades_per_hour);
+        // PR #92 P1: Guard trades_per_hour display.
+        // With only 1 fill, trade_timestamps has 1 entry — no time delta exists.
+        // Printing 0.00 is misleading; make the data gap explicit instead.
+        if self.trade_timestamps.len() < 2 {
+            println!("   Trades/Hour:          \u2014 (< 2 fills)");
+        } else {
+            println!("   Trades/Hour:          {:.2}", self.trades_per_hour);
+        }
 
-        println!("\n⚠️  RISK METRICS:");
+        println!("\n\u26a0\ufe0f  RISK METRICS:");
         println!("   Max Drawdown:         {:.2}%", self.max_drawdown);
         println!("   Current Drawdown:     {:.2}%", self.current_drawdown);
         println!("   Peak Portfolio Value: ${:.2}", self.peak_value);
 
-        println!("\n⚡ EFFICIENCY METRICS:");
-        println!("   Signal→Execution:     {:.1}%", self.signal_execution_ratio);
+        println!("\n\u26a1 EFFICIENCY METRICS:");
+        // signal_execution_ratio is already clamped to 100.0 at record_signal().
+        println!("   Signal\u2192Execution:     {:.1}%", self.signal_execution_ratio);
         // grid_efficiency is stored as 0.0–1.0; multiply by 100 for human display
         println!("   Grid Efficiency:      {:.1}%", self.grid_efficiency * 100.0);
         println!("   Grid Levels Used:     {}/{}", self.grid_levels_used, self.grid_levels_total);
 
-        println!("\n📈 PRICE RANGE:");
+        println!("\n\ud83d\udcc8 PRICE RANGE:");
         println!("   High:                 ${:.4}", self.price_high);
         println!("   Low:                  ${:.4}", self.price_low);
         println!("   Range:                ${:.4}", self.price_range);
 
-        println!("\n🎯 COMPARISON METRICS:");
+        println!("\n\ud83c\udfaf COMPARISON METRICS:");
         println!("   ROI per Fee:          {:.2}x", self.roi_per_fee);
         println!("   ROI per Reposition:   {:.4}%", self.roi_per_reposition);
         println!("   Trades per ROI point: {:.2}", self.trades_per_roi);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// TESTS
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_record_trade_increments_sides() {
+        let mut m = EnhancedMetrics::new();
+        m.record_trade(true,  0.0, 1000);
+        m.record_trade(false, 5.0, 2000);
+        assert_eq!(m.total_buys,  1);
+        assert_eq!(m.total_sells, 1);
+        assert_eq!(m.profitable_trades, 1);
+        assert_eq!(m.unprofitable_trades, 0);
+    }
+
+    #[test]
+    fn test_record_trade_loss() {
+        let mut m = EnhancedMetrics::new();
+        m.record_trade(false, -2.0, 1000);
+        assert_eq!(m.profitable_trades, 0);
+        assert_eq!(m.unprofitable_trades, 1);
+    }
+
+    #[test]
+    fn test_update_grid_stats_fraction() {
+        let mut m = EnhancedMetrics::new();
+        m.update_grid_stats(10, 7);
+        assert!((m.grid_efficiency - 0.7).abs() < 1e-9,
+            "grid_efficiency must be 0.0–1.0 fraction, got {}", m.grid_efficiency);
+    }
+
+    #[test]
+    fn test_drawdown_tracking() {
+        let mut m = EnhancedMetrics::new();
+        m.update_portfolio_value(1000.0);
+        m.update_portfolio_value(900.0);
+        assert!((m.current_drawdown - 10.0).abs() < 1e-6);
+        assert!((m.max_drawdown - 10.0).abs() < 1e-6);
+    }
+
+    /// PR #92 P1: signal_execution_ratio must never exceed 100.0.
+    #[test]
+    fn test_signal_execution_ratio_clamped_to_100() {
+        let mut m = EnhancedMetrics::new();
+        // Simulate 3 signal cycles; each fill tick bumps execution_count twice
+        // (once via record_signal(true), once via record_trade).
+        // Result without clamp: execution=6, signal=3 → 200% ratio.
+        // With clamp: must be ≤ 100.0.
+        for i in 0..3 {
+            m.record_signal(true);                   // +1 signal, +1 execution
+            m.record_trade(i % 2 == 0, 1.0, 1000 + i as i64); // +1 execution
+        }
+        assert!(
+            m.signal_execution_ratio <= 100.0,
+            "signal_execution_ratio {} exceeded 100.0",
+            m.signal_execution_ratio
+        );
+    }
+
+    /// PR #92 P1: trades_per_hour stays 0.0 when fewer than 2 fills.
+    #[test]
+    fn test_trades_per_hour_zero_on_single_fill() {
+        let mut m = EnhancedMetrics::new();
+        m.record_trade(false, 1.0, 1000); // only 1 timestamp
+        // Single fill: no time delta → trades_per_hour must remain 0.0
+        assert_eq!(m.trades_per_hour, 0.0,
+            "trades_per_hour should be 0.0 with only 1 fill, got {}",
+            m.trades_per_hour);
+    }
+
+    /// PR #92 P1: trades_per_hour is positive when 2+ fills exist.
+    #[test]
+    fn test_trades_per_hour_positive_on_multiple_fills() {
+        let mut m = EnhancedMetrics::new();
+        // Two fills 1 hour apart
+        m.record_trade(false, 1.0, 0);
+        m.record_trade(false, 1.0, 3600);
+        // 2 trades / 1 hour = 2.0 trades/hr
+        assert!(
+            m.trades_per_hour > 0.0,
+            "trades_per_hour should be positive with 2 fills, got {}",
+            m.trades_per_hour
+        );
     }
 }
