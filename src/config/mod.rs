@@ -1,5 +1,12 @@
 //! ═══════════════════════════════════════════════════════════════════════════
-//! 🎛️  UNIFIED CONFIGURATION SYSTEM V5.2 - GRIDZBOTZ
+//! 🎛️  UNIFIED CONFIGURATION SYSTEM V5.3 - GRIDZBOTZ
+//!
+//! V5.3 ADDITIONS (PR #94 — feature/smart-fee-filter-consensus-sizing-config):
+//! ✅ TradingConfig: optimizer_interval_cycles added (OPT-1)
+//!    - Replaces hardcoded `const OPTIMIZATION_INTERVAL_CYCLES = 50` in grid_bot.rs
+//!    - Default: 50 cycles — all 46 existing TOMLs parse unchanged
+//!    - Validation: bail if == 0
+//!    - Wired into grid_bot.rs Commit 2
 //!
 //! V5.2 ADDITIONS (PR #89 — fix/risk-continuous-sl-monitoring):
 //! ✅ RiskConfig: enable_trailing_stop added (default: false)
@@ -51,6 +58,7 @@
 //! • Environment-specific overrides
 //! • Comprehensive validation
 //!
+//! March 10, 2026 - V5.3: optimizer_interval_cycles added (PR #94 OPT-1) ⚙️
 //! March 10, 2026 - V5.2: enable_trailing_stop added to RiskConfig 🛑
 //! PR #93 fix: impl Default for TradingConfig (unblocks CB tests)
 //! ═══════════════════════════════════════════════════════════════════════════
@@ -83,7 +91,7 @@ pub struct Config {
     /// Network and blockchain settings
     pub network: NetworkConfig,
 
-      /// Security and wallet configuration
+    /// Security and wallet configuration
     #[serde(default)]
     pub security: SecurityConfig,
 
@@ -264,6 +272,7 @@ impl NetworkConfig {
         Ok(())
     }
 }
+
 // ═══════════════════════════════════════════════════════════════════════════
 // 🔐 SECURITY CONFIGURATION (New in PR #41 - Step 1/3)
 // ═══════════════════════════════════════════════════════════════════════════
@@ -312,11 +321,11 @@ impl SecurityConfig {
         }
         Ok(())
     }
-        /// 🆕 V5.2 PR #45: Live mode security validation
+
+    /// 🆕 V5.2 PR #45: Live mode security validation
     pub fn validate_for_live_mode(&self) -> Result<()> {
         use std::path::PathBuf;
 
-        // Step 1: Expand ~ if present
         let expanded_path = if self.wallet_path.starts_with('~') {
             let home = std::env::var("HOME")
                 .or_else(|_| std::env::var("USERPROFILE"))
@@ -326,7 +335,6 @@ impl SecurityConfig {
             PathBuf::from(&self.wallet_path)
         };
 
-        // Step 2: Check file exists
         if !expanded_path.exists() {
             bail!(
                 "Wallet file not found: {}\n\
@@ -335,7 +343,6 @@ impl SecurityConfig {
             );
         }
 
-        // Step 3: Check file is readable
         if let Err(e) = fs::File::open(&expanded_path) {
             bail!(
                 "Wallet file exists but cannot be read: {}\n\
@@ -345,7 +352,6 @@ impl SecurityConfig {
             );
         }
 
-        // Step 4: Check for insecure permissions on Unix
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -364,7 +370,6 @@ impl SecurityConfig {
         info!("✅ Wallet file validated: {}", expanded_path.display());
         Ok(())
     }
-
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -395,7 +400,7 @@ pub struct ExecutionConfig {
     #[serde(default = "default_max_trade_sol")]
     pub max_trade_sol: f64,
 
-      /// Maximum USDC amount per single Jupiter swap.
+    /// Maximum USDC amount per single Jupiter swap.
     /// Complementary cap — whichever limit hits first wins.
     #[serde(default = "default_max_trade_size_usdc")]
     pub max_trade_size_usdc: f64,
@@ -491,7 +496,7 @@ impl ExecutionConfig {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// TRADING CONFIGURATION - V3.5 ENHANCED! 🔥
+// TRADING CONFIGURATION - V5.3 ENHANCED! 🔥
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -571,7 +576,10 @@ pub struct TradingConfig {
     #[serde(default)]
     pub enable_market_orders: bool,
 
-    /// Enable fee optimization
+    /// Enable fee optimization via SmartFeeFilter.
+    /// When true, each grid level is checked against fee thresholds before
+    /// placement — unprofitable levels are silently skipped.
+    /// SmartFeeFilter V2.1 wired in grid_bot.rs (PR #94).
     #[serde(default = "default_true")]
     pub enable_fee_optimization: bool,
 
@@ -653,9 +661,33 @@ pub struct TradingConfig {
     #[serde(default)]
     pub enable_adaptive_spacing: bool,
 
-    /// Enable smart position sizing (confidence-based)
+    /// Enable smart position sizing (confidence-based).
+    /// When true, order size scales with the consensus signal strength:
+    ///   Hold       → 0.75× base (capital preservation)
+    ///   Buy/Sell   → 1.0× base (normal conviction)
+    ///   StrongBuy/StrongSell → 1.0–1.4× base (high conviction)
+    /// All sizes clamped to [min_order_size, max_position_size].
+    /// Wired in grid_bot.rs place_grid_orders() (PR #94).
     #[serde(default)]
     pub enable_smart_position_sizing: bool,
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // V5.3 (PR #94): ADAPTIVE OPTIMIZER TUNING ⚙️
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// How many main-loop cycles between AdaptiveOptimizer update ticks.
+    ///
+    /// Replaces the hardcoded `const OPTIMIZATION_INTERVAL_CYCLES = 50`
+    /// in grid_bot.rs. Lower values = more responsive adaptation;
+    /// higher values = smoother, less CPU. Default: 50.
+    ///
+    /// # Example (config/master.toml)
+    /// ```toml
+    /// [trading]
+    /// optimizer_interval_cycles = 50   # default — safe to omit
+    /// ```
+    #[serde(default = "default_optimizer_interval_cycles")]
+    pub optimizer_interval_cycles: u64,
 }
 
 impl TradingConfig {
@@ -735,6 +767,11 @@ impl TradingConfig {
             if self.lower_price_bound <= 0.0 {
                 bail!("lower_price_bound must be positive");
             }
+        }
+
+        // ── V5.3 (PR #94): optimizer_interval_cycles validation ──────────────
+        if self.optimizer_interval_cycles == 0 {
+            bail!("trading.optimizer_interval_cycles must be > 0 (got 0)");
         }
 
         Ok(())
@@ -826,6 +863,8 @@ impl Default for TradingConfig {
             min_orders_to_maintain:          default_min_orders(),
             enable_adaptive_spacing:         false,
             enable_smart_position_sizing:    false,
+            // ── V5.3 PR #94 OPT-1 ───────────────────────────────────────────
+            optimizer_interval_cycles:       default_optimizer_interval_cycles(),
         }
     }
 }
@@ -881,9 +920,6 @@ pub struct RegimeGateConfig {
 
 impl From<&TradingConfig> for RegimeGateConfig {
     fn from(trading: &TradingConfig) -> Self {
-        // Convert percentage to BPS: multiply by 100
-        // Formula: percentage * 100 = BPS
-        // Example: 0.5% * 100 = 50 BPS
         let volatility_bps = trading.min_volatility_to_trade * 100.0;
 
         info!("🔧 Converting TradingConfig → RegimeGateConfig:");
@@ -894,7 +930,7 @@ impl From<&TradingConfig> for RegimeGateConfig {
         Self {
             enable_regime_gate: trading.enable_regime_gate,
             volatility_threshold_bps: volatility_bps,
-            trend_threshold: 3.0,  // Default trend sensitivity
+            trend_threshold: 3.0,
             min_volatility_to_trade_bps: volatility_bps,
             pause_in_very_low_vol: trading.pause_in_very_low_vol,
         }
@@ -905,9 +941,9 @@ impl Default for RegimeGateConfig {
     fn default() -> Self {
         Self {
             enable_regime_gate: true,
-            volatility_threshold_bps: 2.0,   // 0.02%
+            volatility_threshold_bps: 2.0,
             trend_threshold: 3.0,
-            min_volatility_to_trade_bps: 3.0,  // 0.03%
+            min_volatility_to_trade_bps: 3.0,
             pause_in_very_low_vol: true,
         }
     }
@@ -966,7 +1002,6 @@ impl StrategiesConfig {
             bail!("At least one strategy must be active");
         }
 
-        // Validate strategy weights sum to reasonable value
         let mut total_weight = 0.0;
         if self.grid.enabled {
             total_weight += self.grid.weight;
@@ -1056,20 +1091,15 @@ pub struct MeanReversionStrategyConfig {
     pub sma_period: usize,
     pub std_dev_multiplier: f64,
 
-    // ── V5.1: signal threshold tuning ──────────────────────────────────────
-    /// Deviation % above mean to trigger StrongBuy signal (default: 5.0)
     #[serde(default = "default_strong_threshold")]
     pub strong_buy_threshold: f64,
 
-    /// Deviation % above mean to trigger Buy signal (default: 2.5)
     #[serde(default = "default_normal_threshold")]
     pub buy_threshold: f64,
 
-    /// Deviation % below mean to trigger StrongSell signal (default: 5.0)
     #[serde(default = "default_strong_threshold")]
     pub strong_sell_threshold: f64,
 
-    /// Deviation % below mean to trigger Sell signal (default: 2.5)
     #[serde(default = "default_normal_threshold")]
     pub sell_threshold: f64,
 }
@@ -1092,12 +1122,9 @@ pub struct RsiStrategyConfig {
     pub oversold_threshold: f64,
     pub overbought_threshold: f64,
 
-    // ── V5.1: extreme zone tuning ───────────────────────────────────────────
-    /// RSI level that triggers StrongBuy (deeper oversold). Default: 20.0
     #[serde(default = "default_extreme_oversold")]
     pub extreme_oversold: f64,
 
-    /// RSI level that triggers StrongSell (deeper overbought). Default: 80.0
     #[serde(default = "default_extreme_overbought")]
     pub extreme_overbought: f64,
 }
@@ -1122,41 +1149,22 @@ pub struct RsiStrategyConfig {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct MomentumMACDStrategyConfig {
-    /// Include this strategy in the consensus vote
     pub enabled: bool,
-
-    /// Consensus weight (relative to other strategies)
     pub weight: f64,
 
-    /// Minimum confidence to emit a non-Hold signal (0.0–1.0)
     #[serde(default = "default_macd_min_confidence")]
     pub min_confidence: f64,
 
-    /// MACD histogram threshold to qualify as a "strong" signal
-    /// Values > this trigger StrongBuy/StrongSell vs plain Buy/Sell
     #[serde(default = "default_macd_histogram_threshold")]
     pub strong_histogram_threshold: f64,
 
-    /// Minimum price ticks before emitting signals (warmup guard)
-    /// Must be >= 26 (slow MACD period) for meaningful values
     #[serde(default = "default_macd_warmup_periods")]
     pub min_warmup_periods: usize,
 }
 
 // ── V5.1: Conversion helpers (config → strategy constructors) ─────────────
-//
-// These provide the bridge from TOML config → new_from_config() constructors
-// (PR #27). Call them in bot initialisation when constructing strategies:
-//
-//   let rsi = RsiStrategy::new_from_config(config.strategies.rsi.to_rsi_params());
-//   let mr  = MeanReversionStrategy::new_from_config(
-//                 config.strategies.mean_reversion.to_mean_reversion_params());
-//   let mmacd = MomentumMACDStrategy::new_from_config(
-//                 config.strategies.momentum_macd.to_momentum_macd_params());
-// ─────────────────────────────────────────────────────────────────────────
 
 impl RsiStrategyConfig {
-    /// Convert to the `RsiConfig` expected by `RsiStrategy::new_from_config()`.
     pub fn to_rsi_params(&self) -> RsiParams {
         RsiParams {
             rsi_period: self.period,
@@ -1169,8 +1177,6 @@ impl RsiStrategyConfig {
 }
 
 impl MeanReversionStrategyConfig {
-    /// Convert to the `MeanReversionConfig` expected by
-    /// `MeanReversionStrategy::new_from_config()`.
     pub fn to_mean_reversion_params(&self) -> MeanReversionParams {
         MeanReversionParams {
             mean_period: self.sma_period,
@@ -1184,8 +1190,6 @@ impl MeanReversionStrategyConfig {
 }
 
 impl MomentumMACDStrategyConfig {
-    /// Convert to the `MomentumMACDConfig` expected by
-    /// `MomentumMACDStrategy::new_from_config()`.
     pub fn to_momentum_macd_params(&self) -> MomentumMACDParams {
         MomentumMACDParams {
             min_confidence: self.min_confidence,
@@ -1196,18 +1200,8 @@ impl MomentumMACDStrategyConfig {
 }
 
 // ── V5.1: Param mirror structs ────────────────────────────────────────────
-//
-// Plain-data structs that mirror the Config structs in
-// src/strategies/{rsi,mean_reversion,momentum_macd}.rs.
-//
-// Why mirror instead of referencing directly?
-//   • Keeps src/config free of src/strategies dependencies.
-//   • The call site (bot init) owns the conversion; config stays pure data.
-//   • If a strategy changes its internal Config, only the call site updates.
-// ─────────────────────────────────────────────────────────────────────────
 
 /// Mirror of `RsiConfig` in `src/strategies/rsi.rs`.
-/// Passed to `RsiStrategy::new_from_config()` at bot startup.
 #[derive(Debug, Clone)]
 pub struct RsiParams {
     pub rsi_period: usize,
@@ -1218,7 +1212,6 @@ pub struct RsiParams {
 }
 
 /// Mirror of `MeanReversionConfig` in `src/strategies/mean_reversion.rs`.
-/// Passed to `MeanReversionStrategy::new_from_config()` at bot startup.
 #[derive(Debug, Clone)]
 pub struct MeanReversionParams {
     pub mean_period: usize,
@@ -1230,7 +1223,6 @@ pub struct MeanReversionParams {
 }
 
 /// Mirror of `MomentumMACDConfig` in `src/strategies/momentum_macd.rs`.
-/// Passed to `MomentumMACDStrategy::new_from_config()` at bot startup.
 #[derive(Debug, Clone)]
 pub struct MomentumMACDParams {
     pub min_confidence: f64,
@@ -1311,42 +1303,22 @@ impl Default for MomentumMACDStrategyConfig {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RiskConfig {
-    /// Maximum position size as % of portfolio
     pub max_position_size_pct: f64,
-
-    /// Maximum drawdown % before halting
     pub max_drawdown_pct: f64,
-
-    /// Stop loss %
     pub stop_loss_pct: f64,
-
-    /// Take profit %
     pub take_profit_pct: f64,
 
-    /// Enable circuit breaker
     #[serde(default = "default_true")]
     pub enable_circuit_breaker: bool,
 
-    /// Circuit breaker threshold %
     pub circuit_breaker_threshold_pct: f64,
-
-    /// Circuit breaker cooldown (seconds)
     pub circuit_breaker_cooldown_secs: u64,
 
-    /// Maximum consecutive losing trades before circuit breaker trips
     #[serde(default = "default_max_consecutive_losses")]
     pub max_consecutive_losses: u32,
 
-    /// Enable trailing stop-loss.
-    ///
-    /// - `false` (default): fixed stop — stop fires when price drops
-    ///   `stop_loss_pct`% below entry_price.
-    /// - `true`: trailing stop — stop fires when price drops `stop_loss_pct`%
-    ///   below the highest price seen since position open.
-    ///   Locks in gains as price rises; never moves the stop downward.
-    ///
-    /// Set in master.toml [risk] section:
-    ///   enable_trailing_stop = true
+    /// Enable trailing stop-loss (default: false = fixed stop).
+    /// When true: stop fires at `stop_loss_pct`% below highest price seen.
     #[serde(default = "default_trailing_stop")]
     pub enable_trailing_stop: bool,
 }
@@ -1391,11 +1363,9 @@ pub struct PythConfig {
     #[serde(default = "default_update_interval")]
     pub update_interval_ms: u64,
 
-    /// Enable WebSocket feed (future)
     #[serde(default)]
     pub enable_websocket: bool,
 
-    /// WebSocket endpoint (optional)
     #[serde(default)]
     pub websocket_endpoint: Option<String>,
 }
@@ -1421,15 +1391,12 @@ impl Default for PythConfig {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct PerformanceConfig {
-    /// Main cycle interval (milliseconds)
     #[serde(default = "default_cycle_interval")]
     pub cycle_interval_ms: u64,
 
-    /// Startup delay (milliseconds)
     #[serde(default = "default_startup_delay")]
     pub startup_delay_ms: u64,
 
-    /// Request timeout (milliseconds)
     #[serde(default = "default_request_timeout")]
     pub request_timeout_ms: u64,
 }
@@ -1437,7 +1404,7 @@ pub struct PerformanceConfig {
 impl Default for PerformanceConfig {
     fn default() -> Self {
         Self {
-            cycle_interval_ms: 100,  // 10Hz
+            cycle_interval_ms: 100,
             startup_delay_ms: 1000,
             request_timeout_ms: 5000,
         }
@@ -1451,13 +1418,9 @@ impl Default for PerformanceConfig {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct LoggingConfig {
-    /// Log level: "trace", "debug", "info", "warn", "error"
     pub level: String,
-
-    /// Log file path
     pub file_path: String,
 
-    /// Enable file logging
     #[serde(default = "default_true")]
     pub enable_file_logging: bool,
 }
@@ -1482,7 +1445,6 @@ pub struct MetricsConfig {
     #[serde(default = "default_true")]
     pub enable_metrics: bool,
 
-    /// Report stats every N cycles
     #[serde(default = "default_stats_interval")]
     pub stats_interval: u64,
 }
@@ -1503,78 +1465,49 @@ impl Default for MetricsConfig {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct PaperTradingConfig {
-    /// Initial USDC balance
     #[serde(default = "default_initial_usdc")]
     pub initial_usdc: f64,
 
-    /// Initial SOL balance
     #[serde(default = "default_initial_sol")]
     pub initial_sol: f64,
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // V3.5+: FLEXIBLE DURATION OPTIONS 🕐
-    // ─────────────────────────────────────────────────────────────────────────
-
-    /// Test duration in hours (integer only)
     #[serde(default)]
     pub test_duration_hours: Option<usize>,
 
-    /// Test duration in minutes (more flexible)
     #[serde(default)]
     pub test_duration_minutes: Option<usize>,
 
-    /// Test duration in seconds (precise control)
     #[serde(default)]
     pub test_duration_seconds: Option<usize>,
 
-    /// Exact number of cycles (expert mode)
     #[serde(default)]
     pub test_cycles: Option<usize>,
 }
 
 impl PaperTradingConfig {
-    /// Calculate total test duration in seconds
     pub fn duration_seconds(&self) -> usize {
-        if let Some(secs) = self.test_duration_seconds {
-            return secs;
-        }
-        if let Some(mins) = self.test_duration_minutes {
-            return mins * 60;
-        }
-        if let Some(hours) = self.test_duration_hours {
-            return hours * 3600;
-        }
-        // Default: 1 hour
+        if let Some(secs) = self.test_duration_seconds { return secs; }
+        if let Some(mins) = self.test_duration_minutes { return mins * 60; }
+        if let Some(hours) = self.test_duration_hours { return hours * 3600; }
         3600
     }
 
-    /// Calculate total cycles based on duration and cycle interval
     pub fn calculate_cycles(&self, cycle_interval_ms: u64) -> usize {
-        if let Some(cycles) = self.test_cycles {
-            return cycles;
-        }
-
+        if let Some(cycles) = self.test_cycles { return cycles; }
         let duration_secs = self.duration_seconds();
         let cycles_per_sec = 1000 / cycle_interval_ms as usize;
         duration_secs * cycles_per_sec
     }
 
     pub fn validate(&self) -> Result<()> {
-        if self.initial_usdc <= 0.0 {
-            bail!("initial_usdc must be positive");
-        }
-        if self.initial_sol <= 0.0 {
-            bail!("initial_sol must be positive");
-        }
-
-        // Check at least one duration is set
+        if self.initial_usdc <= 0.0 { bail!("initial_usdc must be positive"); }
+        if self.initial_sol <= 0.0 { bail!("initial_sol must be positive"); }
         if self.test_duration_hours.is_none()
             && self.test_duration_minutes.is_none()
             && self.test_duration_seconds.is_none()
             && self.test_cycles.is_none() {
             warn!("⚠️ No test duration specified - using default 1 hour");
         }
-
         Ok(())
     }
 }
@@ -1669,125 +1602,82 @@ fn default_max_trade_size_usdc() -> f64 { 250.0 }
 fn default_max_consecutive_losses() -> u32 { 5 }
 
 // --- V5.2 PR #89: Trailing stop default ---
-/// Default: false — fixed stop. Set `enable_trailing_stop = true` in [risk]
-/// TOML to activate trailing stop behaviour.
 fn default_trailing_stop() -> bool { false }
 
+// --- V5.3 PR #94 OPT-1: Optimizer interval default ---
+/// Replaces `const OPTIMIZATION_INTERVAL_CYCLES = 50` in grid_bot.rs.
+/// Lower = more responsive AdaptiveOptimizer ticks; higher = less CPU.
+fn default_optimizer_interval_cycles() -> u64 { 50 }
+
 // ═══════════════════════════════════════════════════════════════════════════
-// MAIN CONFIG IMPLEMENTATION - V5.2 PRODUCTION GRADE! 🚀
+// MAIN CONFIG IMPLEMENTATION - V5.3 PRODUCTION GRADE! 🚀
 // ═══════════════════════════════════════════════════════════════════════════
 
 impl Config {
-    /// Load configuration from default location
     pub fn load() -> Result<Self> {
         Self::from_file("config/master.toml")
     }
 
-    /// Load configuration from specific file
     pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
         let path = path.as_ref();
         info!("🔧 Loading configuration from: {}", path.display());
 
-        // Read file
         let content = fs::read_to_string(path)
             .with_context(|| format!("Failed to read config file: {}", path.display()))?;
 
-        // Parse TOML
         let mut config: Config = toml::from_str(&content)
             .context("Failed to parse TOML configuration")?;
 
-        // Apply environment-specific overrides
         info!("🌍 Applying environment overrides: {}", config.bot.environment);
         config.apply_environment_defaults();
 
-        // Validate
         config.validate()
             .context("Configuration validation failed")?;
 
         info!("✅ Configuration loaded and validated successfully!\n");
-
         Ok(config)
     }
 
-    /// Save configuration to file
     pub fn save_to_file<P: AsRef<Path>>(&self, path: P) -> Result<()> {
         let path = path.as_ref();
         let toml_string = toml::to_string_pretty(self)
             .context("Failed to serialize config to TOML")?;
-
         fs::write(path, toml_string)
             .with_context(|| format!("Failed to write config to: {}", path.display()))?;
-
         info!("💾 Configuration saved to: {}", path.display());
         Ok(())
     }
 
-    /// Apply environment-specific defaults
     pub fn apply_environment_defaults(&mut self) {
         let env = self.bot.environment.clone();
         self.trading.apply_environment(&env);
     }
 
-    /// Returns the canonical trading pair identifier used as the IntentRegistry
-    /// key namespace for multi-bot conflict detection.
-    ///
-    /// IntentRegistry keys are `(trading_pair, level_id)`. Using the pair
-    /// (not the bot instance name) ensures two bots on the same pair share
-    /// the same key space and can detect each other's level claims. (PR #91)
-    ///
-    /// Currently returns a fixed string — the bot is single-pair and the pair
-    /// is fully implicit in all 46 existing TOMLs.
+    /// Returns the canonical trading pair identifier.
     ///
     /// # TODO(tech-debt)
     /// Promote to a `trading.pair` TOML field (String, default "SOL/USDC")
-    /// when multi-pair support lands. Change this method to return
-    /// `self.trading.pair.clone()` and update all TOML configs in one PR.
+    /// when multi-pair support lands.
     pub fn trading_pair(&self) -> String {
         "SOL/USDC".to_string()
     }
 
-    /// Comprehensive validation
     pub fn validate(&self) -> Result<()> {
-        // Bot validation (includes execution_mode check)
-        self.bot.validate()
-            .context("Bot config validation failed")?;
-
-        // Network validation
-        self.network.validate()
-            .context("Network config validation failed")?;
-
-        // Trading validation
-        self.trading.validate()
-            .context("Trading config validation failed")?;
-
-        // Strategies validation
-        self.strategies.validate()
-            .context("Strategies config validation failed")?;
-
-        // Risk validation
-        self.risk.validate()
-            .context("Risk config validation failed")?;
-
-        // Fees validation
+        self.bot.validate().context("Bot config validation failed")?;
+        self.network.validate().context("Network config validation failed")?;
+        self.trading.validate().context("Trading config validation failed")?;
+        self.strategies.validate().context("Strategies config validation failed")?;
+        self.risk.validate().context("Risk config validation failed")?;
         self.fees.validate()
             .map_err(|e| anyhow::anyhow!(e))
             .context("Fees config validation failed")?;
+        self.priority_fees.validate().context("Priority fees config validation failed")?;
 
-          // Priority fees validation
-        self.priority_fees.validate()
-            .context("Priority fees config validation failed")?;
-
-        // Execution validation — only required when mode = "live"
         if self.bot.is_live() {
             info!("🔴 LIVE MODE DETECTED — validating execution config");
-            self.execution.validate()
-                .context("Execution config validation failed")?;
-
-            // 🆕 V5.2: Validate wallet file exists and is readable
+            self.execution.validate().context("Execution config validation failed")?;
             self.security.validate_for_live_mode()
                 .context("Security config validation failed for live mode")?;
-
-            // Extra safety: live mode requires production environment
             if self.network.cluster != "mainnet-beta" {
                 warn!(
                     "⚠️ execution_mode=live but cluster={}. \
@@ -1797,20 +1687,16 @@ impl Config {
             }
         }
 
-        // Paper trading validation
-        self.paper_trading.validate()
-            .context("Paper trading config validation failed")?;
-
+        self.paper_trading.validate().context("Paper trading config validation failed")?;
         info!("✅ All configuration sections validated");
         Ok(())
     }
 
-    /// Display comprehensive configuration summary
     pub fn display_summary(&self) {
         let border = "═".repeat(78);
 
         println!("\n{}", border);
-        println!("  🤖 GRIDZBOTZ V5.2 - CONFIGURATION");
+        println!("  🤖 GRIDZBOTZ V5.3 - CONFIGURATION");
         println!("{}\n", border);
 
         println!("📋 BOT: {} v{} [{}]",
@@ -1827,8 +1713,7 @@ impl Config {
                 self.execution.max_slippage_bps, self.execution.slippage_pct());
             println!("   Jito MEV:         {}",
                 if self.execution.jito_enabled() {
-                    format!("✅ {} lamports",
-                        self.execution.jito_tip_lamports.unwrap_or(0))
+                    format!("✅ {} lamports", self.execution.jito_tip_lamports.unwrap_or(0))
                 } else {
                     "❌ disabled".to_string()
                 });
@@ -1847,6 +1732,9 @@ impl Config {
         println!("   Smart Rebalance:  {}", if self.trading.enable_smart_rebalance { "✅" } else { "❌" });
         println!("   Reserves:         ${:.0} USDC + {:.1} SOL",
             self.trading.min_usdc_reserve, self.trading.min_sol_reserve);
+        println!("   Fee Optimization: {}", if self.trading.enable_fee_optimization { "✅ SmartFeeFilter" } else { "❌" });
+        println!("   Smart Sizing:     {}", if self.trading.enable_smart_position_sizing { "✅ consensus-driven" } else { "❌" });
+        println!("   Optimizer Cadence:{} cycles", self.trading.optimizer_interval_cycles);
 
         println!("\n🆕 MARKET INTELLIGENCE:");
         println!("   Regime Gate:      {} (min vol: {:.2}%)",
@@ -1859,12 +1747,9 @@ impl Config {
         println!("   Enabled:          {}",
             if self.trading.enable_order_lifecycle { "✅" } else { "❌" });
         if self.trading.enable_order_lifecycle {
-            println!("   Refresh:          Every {}min",
-                self.trading.order_refresh_interval_minutes);
-            println!("   Min Orders:       {}",
-                self.trading.min_orders_to_maintain);
-            println!("   Max Age:          {}min",
-                self.trading.order_max_age_minutes);
+            println!("   Refresh:          Every {}min", self.trading.order_refresh_interval_minutes);
+            println!("   Min Orders:       {}", self.trading.min_orders_to_maintain);
+            println!("   Max Age:          {}min", self.trading.order_max_age_minutes);
         }
 
         println!("\n🎯 STRATEGIES:");
@@ -1930,12 +1815,11 @@ pub struct ConfigBuilder {
 
 impl ConfigBuilder {
     pub fn new() -> Self {
-        // Start with sensible defaults
         Self {
             config: Config {
                 bot: BotConfig {
                     name: "GridzBot-Builder".to_string(),
-                    version: "5.2.0".to_string(),
+                    version: "5.3.0".to_string(),
                     environment: "testing".to_string(),
                     execution_mode: "paper".to_string(),
                     instance_id: None,
@@ -1946,7 +1830,7 @@ impl ConfigBuilder {
                     commitment: "confirmed".to_string(),
                     ws_url: None,
                 },
-                 security: SecurityConfig::default(),
+                security: SecurityConfig::default(),
                 trading: TradingConfig::default(),
                 strategies: StrategiesConfig::default(),
                 risk: RiskConfig {
@@ -1958,7 +1842,6 @@ impl ConfigBuilder {
                     circuit_breaker_threshold_pct: 8.0,
                     circuit_breaker_cooldown_secs: 300,
                     max_consecutive_losses: default_max_consecutive_losses(),
-                    // ✅ V5.2 PR #89: enable_trailing_stop wired in builder
                     enable_trailing_stop: false,
                 },
                 fees: FeesConfig::default(),
@@ -1980,13 +1863,11 @@ impl ConfigBuilder {
         self
     }
 
-    /// Set execution mode: "paper" or "live"
     pub fn execution_mode(mut self, mode: &str) -> Self {
         self.config.bot.execution_mode = mode.to_string();
         self
     }
 
-    /// Set instance ID for multi-bot runs
     pub fn instance_id(mut self, id: &str) -> Self {
         self.config.bot.instance_id = Some(id.to_string());
         self
@@ -2018,6 +1899,13 @@ impl ConfigBuilder {
         self
     }
 
+    /// Set the AdaptiveOptimizer update cadence in main-loop cycles.
+    /// Default: 50. Must be > 0.
+    pub fn optimizer_interval_cycles(mut self, cycles: u64) -> Self {
+        self.config.trading.optimizer_interval_cycles = cycles;
+        self
+    }
+
     pub fn build(mut self) -> Result<Config> {
         self.config.apply_environment_defaults();
         self.config.validate()?;
@@ -2028,5 +1916,71 @@ impl ConfigBuilder {
 impl Default for ConfigBuilder {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// TESTS — V5.3 OPT-1
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// OPT-1: default is 50, never 0.
+    #[test]
+    fn test_optimizer_interval_cycles_default() {
+        let cfg = TradingConfig::default();
+        assert_eq!(cfg.optimizer_interval_cycles, 50,
+            "default optimizer_interval_cycles must be 50");
+    }
+
+    /// OPT-1: validation rejects 0.
+    #[test]
+    fn test_optimizer_interval_cycles_zero_rejected() {
+        let mut cfg = TradingConfig::default();
+        cfg.optimizer_interval_cycles = 0;
+        let err = cfg.validate().unwrap_err();
+        assert!(
+            err.to_string().contains("optimizer_interval_cycles"),
+            "validation error should mention field name; got: {}", err
+        );
+    }
+
+    /// OPT-1: serde round-trip — field survives TOML serialise → deserialise.
+    #[test]
+    fn test_optimizer_interval_cycles_serde_roundtrip() {
+        let mut cfg = TradingConfig::default();
+        cfg.optimizer_interval_cycles = 100;
+        let toml_str = toml::to_string(&cfg).expect("serialise");
+        let restored: TradingConfig = toml::from_str(&toml_str).expect("deserialise");
+        assert_eq!(restored.optimizer_interval_cycles, 100);
+    }
+
+    /// OPT-1: TOML without the field parses to default (50) — no breakage.
+    #[test]
+    fn test_optimizer_interval_cycles_absent_toml_defaults() {
+        // Minimal valid [trading] fragment — no optimizer_interval_cycles key
+        let toml_str = r#"
+grid_levels = 10
+grid_spacing_percent = 0.15
+min_order_size = 0.1
+max_position_size = 10.0
+min_usdc_reserve = 100.0
+min_sol_reserve = 1.0
+"#;
+        let cfg: TradingConfig = toml::from_str(toml_str).expect("deserialise minimal TOML");
+        assert_eq!(cfg.optimizer_interval_cycles, 50,
+            "absent field must default to 50");
+    }
+
+    /// Builder: optimizer_interval_cycles() setter works end-to-end.
+    #[test]
+    fn test_builder_optimizer_interval_cycles() {
+        let config = ConfigBuilder::new()
+            .optimizer_interval_cycles(75)
+            .build()
+            .expect("build");
+        assert_eq!(config.trading.optimizer_interval_cycles, 75);
     }
 }
