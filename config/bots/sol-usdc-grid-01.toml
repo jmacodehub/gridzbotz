@@ -1,32 +1,56 @@
 # ══════════════════════════════════════════════════════════════════════
-# BOT CONFIG: sol-usdc-grid-01
-# Pair: SOL/USDC | Mode: PAPER (fleet validation)
-# Capital: $5,000 USDC | Grid levels: 10 | Spacing: 0.5%
+# BOT CONFIG: sol-usdc-grid-01  (PR #90 — schema corrected)
+# Pair:    SOL/USDC
+# Mode:    PAPER (fleet validation — flip execution_mode="live" when ready)
+# Capital: $5,000 USDC + 10 SOL
+# Grid:    10 levels @ 0.50% spacing (conservative, wide)
 #
-# Part of the multi-bot fleet defined in config/orchestrator.toml.
-# New pair = copy this file, update instance_name + capital + pair.
+# Works standalone:  cargo run -- --config config/bots/sol-usdc-grid-01.toml
+# Works in fleet:    listed in config/orchestrator.toml bot_configs[]
+# New pair = copy this file, update [bot] name/instance_id + capital.
 # ══════════════════════════════════════════════════════════════════════
 
 [bot]
-instance_name    = "sol-usdc-grid-01"
+name             = "GridzBot-SOL-USDC-01"
 version          = "5.8.0"
-environment      = "paper"
+environment      = "testing"
 execution_mode   = "paper"
+instance_id      = "sol-usdc-grid-01"
 
 [network]
 cluster          = "mainnet-beta"
 rpc_url          = "https://api.mainnet-beta.solana.com"
+commitment       = "confirmed"
 
 [trading]
-trading_pair     = "SOL/USDC"
-grid_levels      = 10
-grid_spacing_pct = 0.5
-base_order_size  = 0.5
-max_position     = 5.0
-volatility_window = 20
+grid_levels             = 10
+grid_spacing_percent    = 0.50
+min_order_size          = 0.5
+max_position_size       = 5.0
+min_usdc_reserve        = 500.0
+min_sol_reserve         = 1.0
+volatility_window       = 20
+
+[strategies]
+active           = ["grid"]
+consensus_mode   = "single"
+
+[strategies.grid]
+enabled          = true
+weight           = 1.0
+
+[risk]
+max_position_size_pct           = 30.0
+max_drawdown_pct                = 5.0
+stop_loss_pct                   = 5.0
+take_profit_pct                 = 10.0
+enable_circuit_breaker          = true
+circuit_breaker_threshold_pct   = 5.0
+circuit_breaker_cooldown_secs   = 300
 
 [paper_trading]
-initial_capital  = 5000.0
+initial_usdc        = 5000.0
+initial_sol         = 10.0
 test_duration_hours = 24
 
 [security]
@@ -40,13 +64,8 @@ startup_delay_ms  = 2000
 enable_metrics   = true
 stats_interval   = 30
 
-[risk]
-max_drawdown_pct = 5.0
-daily_loss_limit = 200.0
-
-[strategies]
-enabled          = ["grid"]
-consensus_threshold = 0.6
-
 [pyth]
-price_feed_id    = "0xef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d"
+http_endpoint    = "https://hermes.pyth.network"
+feed_ids         = [
+    "0xef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d"
+]
