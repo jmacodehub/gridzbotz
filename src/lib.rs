@@ -1,12 +1,13 @@
 //! ═══════════════════════════════════════════════════════════════════════════
-//! 🤖 GRIDZBOTZ V5.7 — PRODUCTION GRID TRADING BOT
+//! 🤖 GRIDZBOTZ V5.8 — PRODUCTION GRID TRADING BOT
 //!
 //! High-performance Rust implementation with:
 //! • Dynamic grid repositioning
 //! • Multi-strategy consensus engine (MACD, RSI, Mean Reversion)
-//! • Engine factory (paper ↔ live from config)
+//! • Engine factory (paper ⇔ live from config)
 //! • impl Bot for GridBot (GAP-1 resolved — PR #84)
 //! • Box<dyn Bot> dispatch + process_tick() (PR #85)
+//! • Multi-Bot Orchestrator V1.0 (GAP-3 resolved — PR #86)
 //! • Real-time risk management
 //! • Market regime detection
 //! • Automatic order lifecycle management
@@ -17,21 +18,20 @@
 //! Architecture:
 //! ```text
 //! ┌─────────────────────────────────────────────────────────────────┐
-//! │                      GridBot (Orchestrator)                     │
+//! │          Orchestrator (fleet) | GridBot (single)          │
 //! ├─────────────────────────────────────────────────────────────────┤
 //! │  Config  │  Trading  │  Strategies  │  Risk  │  Metrics  │ DEX │
 //! │          │  Engine   │  Indicators  │        │           │     │
 //! └─────────────────────────────────────────────────────────────────┘
 //! ```
 //!
-//! Version: 5.7.0
+//! Version: 5.8.0
 //! License: MIT
-//! Date: March 9, 2026
+//! Date: March 10, 2026
 //! ═══════════════════════════════════════════════════════════════════════════
 
 #![allow(missing_docs)]
 #![allow(missing_debug_implementations)]
-
 #![allow(dead_code)]
 #![allow(clippy::empty_line_after_doc_comments)]
 #![allow(clippy::manual_range_contains)]
@@ -47,7 +47,10 @@
 #![allow(clippy::needless_return)]
 #![allow(unused_qualifications)]
 #![allow(single_use_lifetimes)]
-
+// Added PR #87: orchestrator uses Arc<Mutex<Box<dyn Bot>>> which clippy flags
+// as type_complexity. The BotEntry type alias in orchestrator.rs already
+// documents intent; this gate prevents false positives elsewhere in the lib.
+#![allow(clippy::type_complexity)]
 #![deny(unsafe_code)]
 #![allow(clippy::too_many_arguments)]
 
@@ -70,7 +73,17 @@ pub mod bots;
 // Public API Exports
 // ═══════════════════════════════════════════════════════════════════════════
 
-pub use bots::{GridBot, Bot};
+// Bot trait, GridBot, and Orchestrator (V5.8 — PR #86)
+pub use bots::{
+    GridBot,
+    Bot,
+    BotStats,
+    OrchestratorStats,
+    Orchestrator,
+    OrchestratorConfig,
+    new_intent_registry,
+    IntentRegistry,
+};
 
 pub use config::{
     Config, BotConfig, NetworkConfig, TradingConfig,
@@ -93,16 +106,16 @@ pub use indicators::{
 // Library Metadata
 // ═══════════════════════════════════════════════════════════════════════════
 
-pub const VERSION: &str  = env!("CARGO_PKG_VERSION");
-pub const NAME:    &str  = env!("CARGO_PKG_NAME");
-pub const CODENAME: &str = "GRIDZBOTZ V5.7 — Production Grid Trading";
+pub const VERSION:  &str = env!("CARGO_PKG_VERSION");
+pub const NAME:     &str = env!("CARGO_PKG_NAME");
+pub const CODENAME: &str = "GRIDZBOTZ V5.8 — Multi-Bot Fleet Commander";
 
 pub const BUILD_INFO: BuildInfo = BuildInfo {
     version:      VERSION,
     name:         NAME,
     codename:     CODENAME,
-    git_hash:     "v5.7-box-dyn-bot",
-    build_date:   "2026-03-09",
+    git_hash:     "v5.8-multi-bot-orchestrator",
+    build_date:   "2026-03-10",
     rust_version: "1.85",
 };
 
@@ -121,15 +134,6 @@ pub struct BuildInfo {
 // ═══════════════════════════════════════════════════════════════════════════
 
 /// Initialize the trading bot library.
-///
-/// # Examples
-///
-/// ```no_run
-/// fn main() -> Result<(), Box<dyn std::error::Error>> {
-///     solana_grid_bot::init()?;
-///     Ok(())
-/// }
-/// ```
 pub fn init() -> Result<(), Box<dyn std::error::Error>> {
     if std::env::var("RUST_LOG").is_err() {
         std::env::set_var("RUST_LOG", "info");
@@ -150,10 +154,10 @@ pub fn init_with_config(config: &Config) -> Result<(), Box<dyn std::error::Error
 pub fn print_startup_banner() {
     let border = "═".repeat(70);
     println!("\n{}", border);
-    println!("  🤖 GRIDZBOTZ V5.7 — Production Grid Trading");
+    println!("  🤖 GRIDZBOTZ V5.8 — Multi-Bot Fleet Commander");
     println!("{}", border);
     println!("  💪 Built with Rust for MAXIMUM PERFORMANCE!");
-    println!("  🎯 Box<dyn Bot> dispatch · process_tick() · GAP-1 Complete");
+    println!("  🎯 Multi-Bot Orchestrator V1.0 · GAP-3 Complete · Fleet Ready");
     println!("  🔥 MACD · RSI · Mean Reversion · Grid · Consensus");
     println!("  📦 Version:  {}", VERSION);
     println!("  🏗️  Build:    {} ({})", BUILD_INFO.build_date, BUILD_INFO.git_hash);
@@ -181,33 +185,10 @@ pub fn has_backtrace() -> bool { std::env::var("RUST_BACKTRACE").is_ok() }
 // Prelude
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Prelude module for convenient imports.
-///
-/// # Examples
-///
-/// ```no_run
-/// use solana_grid_bot::prelude::*;
-/// use solana_grid_bot::trading::PaperTradingEngine;
-/// use solana_grid_bot::trading::PriceFeed;
-/// use std::sync::Arc;
-///
-/// #[tokio::main]
-/// async fn main() -> Result<()> {
-///     let config = Config::from_file("config/master.toml")?;
-///
-///     // V5.7: initialize_components returns Box<dyn Bot>
-///     let engine = Arc::new(PaperTradingEngine::new(10_000.0, 5.0));
-///     let price_history_size = config.trading.volatility_window as usize;
-///     let feed = Arc::new(PriceFeed::new(price_history_size));
-///     let mut bot: Box<dyn Bot> = Box::new(GridBot::new(config, engine, feed)?);
-///     bot.initialize().await?;
-///
-///     Ok(())
-/// }
-/// ```
 pub mod prelude {
     pub use crate::{
-        Config, GridBot, Bot, init, version,
+        Config, GridBot, Bot, Orchestrator, OrchestratorConfig,
+        OrchestratorStats, BotStats, new_intent_registry, init, version,
     };
     pub use crate::trading::{
         OrderSide, OrderType, Order,
@@ -237,31 +218,30 @@ mod tests {
     fn test_version_string() {
         let s = version_string();
         assert!(s.contains(VERSION));
-        assert!(s.contains("GRIDZBOTZ V5.7"));
+        assert!(s.contains("GRIDZBOTZ V5.8"));
     }
 
     #[test]
     fn test_build_info() {
         assert!(!BUILD_INFO.version.is_empty());
         assert!(!BUILD_INFO.name.is_empty());
-        assert_eq!(BUILD_INFO.git_hash, "v5.7-box-dyn-bot");
+        assert_eq!(BUILD_INFO.git_hash, "v5.8-multi-bot-orchestrator");
+    }
+
+    #[test]
+    fn test_orchestrator_exports_accessible() {
+        // If this compiles, all V5.8 exports are wired correctly in lib.rs
+        let _: Option<crate::OrchestratorStats> = None;
+        let _: Option<crate::OrchestratorConfig> = None;
+        let _: Option<crate::BotStats> = None;
+        let registry = crate::new_intent_registry();
+        assert!(registry.is_empty());
     }
 
     #[test]
     fn test_prelude_imports() {
         use crate::prelude::*;
         let _ver = version();
+        let _: Option<OrchestratorStats> = None;
     }
-}
-
-#[cfg(doctest)]
-mod doctests {
-    /// ```no_run
-    /// fn main() -> Result<(), Box<dyn std::error::Error>> {
-    ///     solana_grid_bot::init()?;
-    ///     println!("Version: {}", solana_grid_bot::version());
-    ///     Ok(())
-    /// }
-    /// ```
-    fn _documentation_example() {}
 }

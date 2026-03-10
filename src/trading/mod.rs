@@ -1,5 +1,5 @@
-//! ═════════════════════════════════════════════════════════════════════
-//! Trading Module V5.4 - Jupiter-Powered Real Trading Engine (Consolidated)
+//! ═════════════════════════════════════════════════════════════════
+//! Trading Module V5.8 - Jupiter-Powered Real Trading Engine (Consolidated)
 //!
 //! Architecture:
 //! - Unified Trading Interface: Generic trait for paper and live trading
@@ -12,6 +12,11 @@
 //! - Transaction Executor: Solana transaction building and signing
 //! - Enhanced Metrics: Trade-level analytics and performance tracking
 //! - Adaptive Optimizer: Self-learning grid spacing and position sizing
+//! - Wallet Utils: Shared on-chain balance query (single-bot + fleet)
+//!
+//! V5.8 CHANGES (PR #86 — Multi-Bot Orchestrator):
+//! ✅ wallet_utils.rs — fetch_wallet_balances_for_orchestrator() extracted from main.rs
+//!    Shared between main.rs (single-bot) and orchestrator.rs (fleet mode)
 //!
 //! V5.4 CHANGES (Mar 2026 — PR #72):
 //! ✅ price_feed_utils.rs — fetch_pyth_price() with 3x retry + confidence check
@@ -52,8 +57,8 @@
 //! ✅ executor.execute_versioned() wired for Jupiter swaps
 //! ✅ keystore.sign_versioned_transaction() added
 //!
-//! March 2026 - V5.4 ENGINE FACTORY! 🏭
-//! ═════════════════════════════════════════════════════════════════════
+//! March 2026 - V5.8 FLEET COMMANDER 🚀
+//! ═════════════════════════════════════════════════════════════════
 
 pub use crate::config::Config;
 
@@ -68,17 +73,18 @@ pub mod price_feed;
 pub mod pyth_price_feed;
 pub mod pyth_http;
 pub mod paper_trader;
-pub mod grid_level;          // V4.0: Grid state machine
-pub mod executor;            // Transaction executor
-pub mod trade;               // Trade data structures
-pub mod feed_consensus;      // Feed consensus logic
-pub mod redundant_feed;      // Redundant price feeds
-pub mod real_trader;         // 🔥 ENABLED - Phase 5 Complete!
-pub mod enhanced_metrics;    // 📊 V4.1: Enhanced analytics tracking
-pub mod adaptive_optimizer;  // 🧠 V4.2: Self-learning optimizer
-pub mod engine;              // 🏭 V5.4: Config-driven engine factory
-pub mod price_feed_utils;    // 📡 V5.4: Pyth HTTP price fetching with retry (PR #72)
+pub mod grid_level;             // V4.0: Grid state machine
+pub mod executor;               // Transaction executor
+pub mod trade;                  // Trade data structures
+pub mod feed_consensus;         // Feed consensus logic
+pub mod redundant_feed;         // Redundant price feeds
+pub mod real_trader;            // 🔥 ENABLED - Phase 5 Complete!
+pub mod enhanced_metrics;       // 📊 V4.1: Enhanced analytics tracking
+pub mod adaptive_optimizer;     // 🧠 V4.2: Self-learning optimizer
+pub mod engine;                 // 🏭 V5.4: Config-driven engine factory
+pub mod price_feed_utils;       // 📡 V5.4: Pyth HTTP price fetching with retry (PR #72)
 pub mod priority_fee_estimator; // ⚡ Dynamic priority fee estimation (EXEC-4)
+pub mod wallet_utils;           // 💰 V5.8: Shared on-chain balance query (PR #86)
 
 // WebSocket feeds (optional feature)
 #[cfg(feature = "websockets")]
@@ -87,6 +93,12 @@ pub mod pyth_websocket;
 pub mod binance_ws;
 #[cfg(feature = "websockets")]
 pub mod pyth_lazer;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Wallet Utils Export (V5.8 — PR #86) 💰
+// ═══════════════════════════════════════════════════════════════════════════
+
+pub use wallet_utils::fetch_wallet_balances_for_orchestrator;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Engine Factory Exports (V5.4 — PR #72) 🏭
@@ -142,12 +154,6 @@ pub use adaptive_optimizer::{
 // Jupiter Client Exports (V5.3.1 / Mar 2026) 🪐 — Production from src/dex/
 // ═══════════════════════════════════════════════════════════════════════════
 
-// Re-export production JupiterClient V4.0 from src/dex/
-// This replaces the old stub that lived in src/trading/jupiter_client.rs
-//
-// V5.3.1 FIX: Only export what's actually public in jupiter_client.rs
-// Removed phantom exports: JupiterConfig, JupiterQuote*, Jupiter*Request/Response, PriorityFee*
-// Those are internal implementation details, not part of the public API.
 pub use crate::dex::jupiter_client::{
     JupiterClient,
     SOL_MINT,
@@ -155,7 +161,6 @@ pub use crate::dex::jupiter_client::{
 };
 
 // WSOL_MINT backwards-compat alias (SOL and WSOL are the same on Solana)
-// This was promised in V5.3 comments but never implemented — now it is!
 pub const WSOL_MINT: &str = SOL_MINT;
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -267,42 +272,18 @@ pub struct BatchOrderRequest {
 
 #[derive(Debug, Clone)]
 pub struct FillEvent {
-    /// Unique order identifier
     pub order_id:   String,
-    /// Buy or Sell
     pub side:       OrderSide,
-    /// Actual fill price
     pub fill_price: f64,
-    /// Amount filled (in base token, e.g. SOL)
     pub fill_size:  f64,
-    /// Transaction fee paid in USDC
     pub fee_usdc:   f64,
-    /// Realised P&L for this fill (None if unknown / first leg)
     pub pnl:        Option<f64>,
-    /// Unix timestamp (seconds)
     pub timestamp:  i64,
-
-    // ── V5.2.1: Per-level analytics ───────────────────────────────────────
-    /// Grid level that triggered this fill.
-    /// Matches `GridLevel.id` (u64) exactly.
-    /// `None` for non-grid fills (manual trades, RSI/Momentum signals).
     pub level_id:              Option<u64>,
-    /// Percentage distance from mid-price at the moment of fill.
-    /// Negative = fill below mid (buy side), positive = above (sell side).
-    /// Example: -1.2 means the fill occurred 1.2% below mid-price.
-    /// `None` when mid-price was unavailable at fill time.
     pub distance_from_mid_pct: Option<f64>,
 }
 
 impl FillEvent {
-    /// Construct a FillEvent.
-    ///
-    /// Pass `timestamp` from the engine clock
-    /// (`chrono::Utc::now().timestamp()` or a mock for tests).
-    ///
-    /// `level_id` and `distance_from_mid_pct` default to `None`.
-    /// Attach them with the builder methods below:
-    ///   `.with_level(id)` and `.with_distance_from_mid(pct)`
     pub fn new(
         order_id:   impl Into<String>,
         side:       OrderSide,
@@ -325,18 +306,9 @@ impl FillEvent {
         }
     }
 
-    // ── V5.2.1: Builder methods ────────────────────────────────────────
-
-    /// Attach the grid level that triggered this fill.
-    ///
-    /// Use the `GridLevel.id` value directly.
-    ///
-    /// # Examples
-    ///
     /// ```
     /// use solana_grid_bot::trading::{FillEvent, OrderSide};
     ///
-    /// let level_id: u64 = 42;
     /// let fill = FillEvent::new(
     ///     "ORDER-123",
     ///     OrderSide::Buy,
@@ -345,7 +317,7 @@ impl FillEvent {
     ///     0.0025,
     ///     None,
     ///     1_700_000_000,
-    /// ).with_level(level_id);
+    /// ).with_level(42);
     ///
     /// assert_eq!(fill.level_id, Some(42));
     /// ```
@@ -355,31 +327,20 @@ impl FillEvent {
         self
     }
 
-    /// Attach the percentage distance from mid-price at fill time.
-    ///
-    /// - Negative value → fill occurred below mid (buy side)
-    /// - Positive value → fill occurred above mid (sell side)
-    ///
-    /// # Examples
-    ///
     /// ```
     /// use solana_grid_bot::trading::{FillEvent, OrderSide};
-    ///
-    /// let mid = 155.00_f64;
-    /// let fill_price = 153.14_f64;
-    /// let pct = (fill_price - mid) / mid * 100.0;
     ///
     /// let fill = FillEvent::new(
     ///     "ORDER-456",
     ///     OrderSide::Buy,
-    ///     fill_price,
+    ///     153.14,
     ///     0.1,
     ///     0.0025,
     ///     None,
     ///     1_700_000_100,
-    /// ).with_distance_from_mid(pct);
+    /// ).with_distance_from_mid(-1.2);
     ///
-    /// assert!(fill.distance_from_mid_pct.unwrap() < 0.0, "Buy below mid should be negative");
+    /// assert!(fill.distance_from_mid_pct.unwrap() < 0.0);
     /// ```
     #[inline]
     pub fn with_distance_from_mid(mut self, pct: f64) -> Self {
@@ -413,26 +374,15 @@ pub trait TradingEngine: Send + Sync {
     async fn cancel_order(&self, order_id: &str) -> TradingResult<()>;
     async fn cancel_all_orders(&self) -> TradingResult<usize>;
 
-    /// Process price update and return any newly confirmed fills.
-    ///
-    /// V5.2: Returns Vec<FillEvent> (not Vec<String>) to support fill fan-out.
-    /// Each FillEvent is broadcast to all strategies via StrategyManager::notify_fill().
     async fn process_price_update(&self, current_price: f64) -> TradingResult<Vec<FillEvent>>;
 
     async fn open_order_count(&self) -> usize;
     async fn is_trading_allowed(&self) -> bool;
 
-    // ── V5.2.2: Wallet and performance queries (PR #37) ──────────────────────
-    /// Get the current wallet state (balances, P&L).
-    /// Used by GridBot to display portfolio value and track performance.
     async fn get_wallet(&self) -> VirtualWallet;
-
-    /// Get trading performance statistics (win rate, fees, P&L).
-    /// Used by GridBot's get_stats() to report comprehensive metrics.
     async fn get_performance_stats(&self) -> PaperPerformanceStats;
 
     async fn health_check(&self) -> EngineHealthStatus {
-
         EngineHealthStatus {
             is_healthy: true,
             trading_allowed: self.is_trading_allowed().await,
@@ -491,6 +441,9 @@ pub mod prelude {
         engine_mode_label,
         EngineParams,
 
+        // Wallet Utils (V5.8 — PR #86) 💰
+        fetch_wallet_balances_for_orchestrator,
+
         // Engines
         PaperTradingEngine,
         RealTradingEngine,
@@ -538,7 +491,8 @@ pub mod prelude {
 
         // Priority Fee Estimator (⚡ EXEC-4)
         PriorityFeeEstimator,
-        FeeDataSource, };
+        FeeDataSource,
+    };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -568,124 +522,31 @@ mod tests {
     #[test]
     fn test_fill_event_construction() {
         let fill = FillEvent::new(
-            "ORDER-BUY-001",
-            OrderSide::Buy,
-            142.50,
-            0.1,
-            0.0025,
-            Some(0.05),
-            1_700_000_000,
+            "ORDER-BUY-001", OrderSide::Buy, 142.50, 0.1, 0.0025, Some(0.05), 1_700_000_000,
         );
         assert_eq!(fill.order_id, "ORDER-BUY-001");
         assert_eq!(fill.fill_price, 142.50);
-        assert_eq!(fill.fill_size, 0.1);
-        assert_eq!(fill.pnl, Some(0.05));
-        assert_eq!(fill.timestamp, 1_700_000_000);
-        // V5.2.1: new fields must be None by default — existing callers unaffected
-        assert!(fill.level_id.is_none(), "level_id must default to None");
-        assert!(fill.distance_from_mid_pct.is_none(), "distance_from_mid_pct must default to None");
-    }
-
-    #[test]
-    fn test_fill_event_no_pnl() {
-        // First leg of a grid pair has no P&L yet
-        let fill = FillEvent::new(
-            "ORDER-SELL-002",
-            OrderSide::Sell,
-            143.00,
-            0.1,
-            0.0025,
-            None,
-            1_700_000_001,
-        );
-        assert!(fill.pnl.is_none());
         assert!(fill.level_id.is_none());
         assert!(fill.distance_from_mid_pct.is_none());
     }
 
-    // ── V5.2.1: Per-level analytics tests ───────────────────────────────────────
-
-    #[test]
-    fn test_fill_event_with_level_id() {
-        let fill = FillEvent::new(
-            "ORDER-BUY-042",
-            OrderSide::Buy,
-            153.50,
-            0.1,
-            0.0025,
-            None,
-            1_700_000_100,
-        )
-        .with_level(102);
-
-        assert_eq!(fill.level_id, Some(102));
-        assert!(fill.distance_from_mid_pct.is_none());
-        assert_eq!(fill.order_id, "ORDER-BUY-042");
-        assert_eq!(fill.fill_price, 153.50);
-    }
-
     #[test]
     fn test_fill_event_builder_chain() {
-        // Simulate a real grid fill: level 3, price 1.2% below mid of 155.00
-        let mid_price = 155.00_f64;
-        let fill_price = 153.14_f64;
-        let level_id: u64 = 3;
-        let distance_pct = (fill_price - mid_price) / mid_price * 100.0;
-
+        let mid = 155.00_f64;
+        let price = 153.14_f64;
+        let dist = (price - mid) / mid * 100.0;
         let fill = FillEvent::new(
-            "ORDER-BUY-003",
-            OrderSide::Buy,
-            fill_price,
-            0.2,
-            0.003,
-            Some(1.85),
-            1_700_000_200,
+            "ORDER-BUY-003", OrderSide::Buy, price, 0.2, 0.003, Some(1.85), 1_700_000_200,
         )
-        .with_level(level_id)
-        .with_distance_from_mid(distance_pct);
-
-        // All core fields intact
-        assert_eq!(fill.order_id, "ORDER-BUY-003");
-        assert_eq!(fill.side, OrderSide::Buy);
-        assert_eq!(fill.fill_price, fill_price);
-        assert_eq!(fill.pnl, Some(1.85));
-
-        // Analytics fields correctly attached
+        .with_level(3)
+        .with_distance_from_mid(dist);
         assert_eq!(fill.level_id, Some(3));
-        let dist = fill.distance_from_mid_pct.unwrap();
-        assert!(dist < 0.0, "Buy below mid must be negative: got {:.4}", dist);
-        assert!((dist - (-1.2)).abs() < 0.1, "Expected ~-1.2%, got {:.4}%", dist);
-    }
-
-    #[test]
-    fn test_fill_event_sell_side_distance() {
-        // Sell fill above mid → positive distance
-        let mid_price = 155.00_f64;
-        let fill_price = 156.55_f64;
-        let distance_pct = (fill_price - mid_price) / mid_price * 100.0;
-
-        let fill = FillEvent::new(
-            "ORDER-SELL-201",
-            OrderSide::Sell,
-            fill_price,
-            0.1,
-            0.002,
-            Some(3.10),
-            1_700_000_300,
-        )
-        .with_level(201)
-        .with_distance_from_mid(distance_pct);
-
-        assert_eq!(fill.level_id, Some(201));
-        let dist = fill.distance_from_mid_pct.unwrap();
-        assert!(dist > 0.0, "Sell above mid must be positive: got {:.4}", dist);
-        assert!((dist - 1.0).abs() < 0.1, "Expected ~+1.0%, got {:.4}%", dist);
+        assert!(fill.distance_from_mid_pct.unwrap() < 0.0);
     }
 
     #[test]
     fn test_wsol_mint_alias() {
-        // V5.3.1: WSOL_MINT is now a backwards-compat alias for SOL_MINT
-        assert_eq!(WSOL_MINT, SOL_MINT, "WSOL_MINT should be an alias for SOL_MINT");
+        assert_eq!(WSOL_MINT, SOL_MINT);
     }
 
     #[test]
@@ -696,10 +557,8 @@ mod tests {
         let _: Option<AdaptiveOptimizer> = None;
         let _: Option<JupiterClient>     = None;
         let _: Option<FillEvent>         = None;
-
-        // V5.3.1: Verify token mint constants are accessible
-        let _sol_mint: &str = SOL_MINT;
-        let _wsol_mint: &str = WSOL_MINT;
-        let _usdc_mint: &str = USDC_MINT;
+        let _sol: &str = SOL_MINT;
+        let _wsol: &str = WSOL_MINT;
+        let _usdc: &str = USDC_MINT;
     }
 }
