@@ -1677,6 +1677,24 @@ impl Config {
         self.trading.apply_environment(&env);
     }
 
+    /// Returns the canonical trading pair identifier used as the IntentRegistry
+    /// key namespace for multi-bot conflict detection.
+    ///
+    /// IntentRegistry keys are `(trading_pair, level_id)`. Using the pair
+    /// (not the bot instance name) ensures two bots on the same pair share
+    /// the same key space and can detect each other's level claims. (PR #91)
+    ///
+    /// Currently returns a fixed string — the bot is single-pair and the pair
+    /// is fully implicit in all 46 existing TOMLs.
+    ///
+    /// # TODO(tech-debt)
+    /// Promote to a `trading.pair` TOML field (String, default "SOL/USDC")
+    /// when multi-pair support lands. Change this method to return
+    /// `self.trading.pair.clone()` and update all TOML configs in one PR.
+    pub fn trading_pair(&self) -> String {
+        "SOL/USDC".to_string()
+    }
+
     /// Comprehensive validation
     pub fn validate(&self) -> Result<()> {
         // Bot validation (includes execution_mode check)
