@@ -14,9 +14,8 @@
 //!
 //! | `enable_trailing_stop` | Behaviour |
 //! |------------------------|-----------|
-//! | `false` (default)      | Fixed stop — reference is always `entry_price` |
-//! | `true`                 | Trailing stop — reference ratchets up with the
-//!                            highest price seen since position open |
+//! | `false` (default) | Fixed stop — reference is always `entry_price` |
+//! | `true` | Trailing stop — reference ratchets up with the highest price seen since position open |
 //!
 //! Trailing stop guarantees the stop never moves **down**: gains are locked
 //! in as price rises; if price reverses the stop fires at
@@ -285,7 +284,7 @@ mod tests {
         cfg
     }
 
-    // ── Field binding tests ───────────────────────────────────────────────────────
+    // ── Field binding tests ──────────────────────────────────────────────────────────────────────────────────
 
     #[test]
     fn test_reads_correct_config_fields() {
@@ -311,7 +310,7 @@ mod tests {
         assert!(!mgr.should_stop_loss(100.0, 50.0));
     }
 
-    // ── Fixed stop tests ────────────────────────────────────────────────────────────
+    // ── Fixed stop tests ──────────────────────────────────────────────────────────────────────────────────────
 
     #[test]
     fn test_fixed_stop_triggers_at_threshold() {
@@ -334,7 +333,7 @@ mod tests {
         assert!(!mgr.should_stop_loss(100.0, 99.5));
     }
 
-    // ── Trailing stop tests (PR #89) ──────────────────────────────────────────────
+    // ── Trailing stop tests (PR #89) ────────────────────────────────────────────────────────────────────
 
     #[test]
     fn test_trailing_stop_config_wired_from_risk_config() {
@@ -382,7 +381,7 @@ mod tests {
             "highest_price must never decrease");
     }
 
-    // ── Take-profit tests ───────────────────────────────────────────────────────────
+    // ── Take-profit tests ───────────────────────────────────────────────────────────────────────────────────────
 
     #[test]
     fn test_take_profit_triggers_at_threshold() {
@@ -398,7 +397,7 @@ mod tests {
         assert!(!mgr.should_take_profit(100.0, 109.9));
     }
 
-    // ── Reset + entry_price accessor tests ─────────────────────────────────────
+    // ── Reset + entry_price accessor tests ─────────────────────────────────────────────────────
 
     #[test]
     fn test_reset_sets_entry_and_highest() {

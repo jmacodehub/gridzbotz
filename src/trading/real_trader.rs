@@ -362,7 +362,7 @@ impl RealTradingEngine {
         // Replaces deleted RealTradingConfig::profit_take_threshold shadow field.
         let profit_take_pct = global_config.risk.take_profit_pct;
 
-        // ── Dynamic priority fees ───────────────────────────────────────────
+        // ── Dynamic priority fees ───────────────────────────────────────────────────────────────────
         let (priority_fee_estimator, static_priority_fee) =
             if global_config.priority_fees.enable_dynamic {
                 let source = AsyncRpcFeeSource::new(
@@ -555,7 +555,7 @@ impl RealTradingEngine {
                 "jupiter_api_key not configured — set GRIDZBOTZ_JUPITER_API_KEY env var"
             ))?;
 
-        // ── Dynamic priority fee ───────────────────────────────────────
+        // ── Dynamic priority fee ──────────────────────────────────────────────────────────────
         let per_cu_microlamports = match &self.priority_fee_estimator {
             Some(estimator) => {
                 let fee = estimator.get_priority_fee().await;
@@ -819,26 +819,18 @@ impl TradingEngine for RealTradingEngine {
 
     /// Continuous SL/TP monitoring — called on every Pyth price tick (10Hz).
     ///
-    /// ## Execution order
+    /// Execution order:
     /// 1. Circuit-breaker cooldown tick (`is_trading_allowed()`).
     /// 2. NAV reconciliation (P&L → circuit-breaker).
-    /// 3. SL/TP check (only when entry_price > 0.0 — i.e. after first fill).
-    ///    a. Acquire a single write lock (needed for trailing-stop ratchet).
-    ///    b. Snapshot `stop_triggered` + `profit_triggered` booleans.
-    ///    c. Drop lock **before** any async call to prevent holding across await.
-    ///    d. Stop-loss  → `trigger_emergency_shutdown()` (halts all trading).
-    ///    e. Take-profit → `auto_take_profit()` (partial sell, non-fatal).
+    /// 3. SL/TP check (only when entry_price > 0.0 — i.e. after first fill):
+    ///    acquire write lock, snapshot stop/profit booleans, drop lock,
+    ///    then call shutdown or take-profit without holding the lock.
     ///
-    /// ## Lock safety
-    /// The write lock is held only for the two synchronous predicate calls
-    /// and is explicitly dropped before `trigger_emergency_shutdown()` or
-    /// `auto_take_profit()` — both of which re-acquire locks internally.
-    /// No deadlock risk.
+    /// Lock safety: write lock held only for two synchronous predicate calls,
+    /// explicitly dropped before any async call. No deadlock risk.
     ///
-    /// ## Zero-cost before first fill
-    /// `entry_price()` returns 0.0 until `reset_for_new_position()` is called
-    /// on a confirmed trade. The outer guard (`entry_price > 0.0`) skips the
-    /// lock entirely on every cycle before the first position is opened.
+    /// Zero-cost before first fill: `entry_price()` returns 0.0 until
+    /// `reset_for_new_position()` fires on a confirmed trade.
     async fn process_price_update(&self, current_price: f64) -> TradingResult<Vec<FillEvent>> {
         // Step 1: circuit-breaker cooldown tick.
         let _ = self.circuit_breaker.write().await.is_trading_allowed();
