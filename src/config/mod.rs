@@ -52,6 +52,7 @@
 //! • Comprehensive validation
 //!
 //! March 10, 2026 - V5.2: enable_trailing_stop added to RiskConfig 🛑
+//! PR #93 fix: impl Default for TradingConfig (unblocks CB tests)
 //! ═══════════════════════════════════════════════════════════════════════════
 
 use serde::{Deserialize, Serialize};
@@ -775,6 +776,56 @@ impl TradingConfig {
             _ => {
                 warn!("⚠️ Unknown environment '{}' - using config as-is", environment);
             }
+        }
+    }
+}
+
+/// Default TradingConfig for use in tests and programmatic construction.
+///
+/// Values mirror `ConfigBuilder::new()` — the canonical test-safe baseline.
+/// Required TOML fields (no serde default) get concrete values here so that
+/// `TradingConfig::default()` compiles cleanly in unit tests without needing
+/// a full TOML file on disk.
+///
+/// **NOT used for production TOML loading** — `Config::from_file()` always
+/// deserialises from the TOML, so these defaults are test-only in practice.
+impl Default for TradingConfig {
+    fn default() -> Self {
+        Self {
+            // ── Required core fields (no serde default) ─────────────────────
+            grid_levels:            35,
+            grid_spacing_percent:   0.15,
+            min_order_size:         0.1,
+            max_position_size:      100.0,
+            min_usdc_reserve:       300.0,
+            min_sol_reserve:        2.0,
+            // ── Optional fields — delegate to existing default_*() fns ──────
+            enable_dynamic_grid:             false,
+            reposition_threshold:            default_reposition_threshold(),
+            volatility_window:               default_volatility_window(),
+            enable_auto_rebalance:           true,
+            enable_smart_rebalance:          true,
+            rebalance_threshold_pct:         default_rebalance_threshold(),
+            rebalance_cooldown_secs:         default_cooldown(),
+            max_orders_per_side:             default_max_orders(),
+            order_refresh_interval_secs:     default_refresh_interval(),
+            enable_market_orders:            false,
+            enable_fee_optimization:         true,
+            min_profit_threshold_pct:        default_profit_threshold(),
+            max_slippage_pct:                default_slippage(),
+            enable_price_bounds:             false,
+            lower_price_bound:               default_lower_bound(),
+            upper_price_bound:               default_upper_bound(),
+            // Regime gate OFF in default — tests should not be gated by volatility
+            enable_regime_gate:              false,
+            min_volatility_to_trade:         0.0,
+            pause_in_very_low_vol:           false,
+            enable_order_lifecycle:          true,
+            order_max_age_minutes:           default_order_max_age(),
+            order_refresh_interval_minutes:  default_lifecycle_check(),
+            min_orders_to_maintain:          default_min_orders(),
+            enable_adaptive_spacing:         false,
+            enable_smart_position_sizing:    false,
         }
     }
 }
@@ -1896,39 +1947,7 @@ impl ConfigBuilder {
                     ws_url: None,
                 },
                  security: SecurityConfig::default(),
-                trading: TradingConfig {
-                    grid_levels: 35,
-                    grid_spacing_percent: 0.15,
-                    min_order_size: 0.1,
-                    max_position_size: 100.0,
-                    min_usdc_reserve: 300.0,
-                    min_sol_reserve: 2.0,
-                    enable_dynamic_grid: true,
-                    reposition_threshold: 0.5,
-                    volatility_window: 100,
-                    enable_auto_rebalance: true,
-                    enable_smart_rebalance: true,
-                    rebalance_threshold_pct: 5.0,
-                    rebalance_cooldown_secs: 60,
-                    max_orders_per_side: 10,
-                    order_refresh_interval_secs: 300,
-                    enable_market_orders: false,
-                    enable_fee_optimization: true,
-                    min_profit_threshold_pct: 0.1,
-                    max_slippage_pct: 1.0,
-                    enable_price_bounds: false,
-                    lower_price_bound: 100.0,
-                    upper_price_bound: 200.0,
-                    enable_regime_gate: false,
-                    min_volatility_to_trade: 0.0,
-                    pause_in_very_low_vol: false,
-                    enable_order_lifecycle: true,
-                    order_max_age_minutes: 10,
-                    order_refresh_interval_minutes: 5,
-                    min_orders_to_maintain: 8,
-                    enable_adaptive_spacing: false,
-                    enable_smart_position_sizing: false,
-                },
+                trading: TradingConfig::default(),
                 strategies: StrategiesConfig::default(),
                 risk: RiskConfig {
                     max_position_size_pct: 30.0,
