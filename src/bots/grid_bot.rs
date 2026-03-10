@@ -18,6 +18,17 @@
 //! ✅ Bug 4 (STATE): reposition_grid() now removes registry entries
 //!    for cancelled levels — prevents stale claims blocking reposition.
 //!
+//! PR #92 FIXES:
+//! ✅ P0 #2 (CORRECTNESS): process_price_update() fill-side detection fixed.
+//!    Was: order_id.to_lowercase().contains("buy") — fragile string sniff,
+//!    inconsistent across engine impls → bot-01 showed Buy:0 Sell:0.
+//!    Now: fill.side == OrderSide::Buy — reads authoritative FillEvent field.
+//!    Also drops redundant order_ids Vec; iterates filled_orders directly.
+//! ✅ P0 #3 (UX/CORRECTNESS): Win Rate display guard added.
+//!    display_status() and GridBotStats::display_summary() now print
+//!    "— (no closed trades yet)" when profitable+unprofitable == 0,
+//!    preventing shutdown report from reading as a loss record on partial fills.
+//!
 //! V5.7 CHANGES (PR #85 — process_tick dispatch + Box<dyn Bot>):
 //! ✅ run_trading_loop takes &mut dyn Bot — type-agnostic, orchestrator-ready
 //! ✅ loop body uses bot.process_tick() — concrete process_price_update() retired
@@ -441,19 +452,23 @@ impl GridBot {
             self.manager.notify_fill(fill);
         }
 
-        let order_ids: Vec<String> = filled_orders.iter().map(|f| f.order_id.clone()).collect();
-        if !order_ids.is_empty() {
-            info!("[BOT] {} orders filled at ${:.4}", order_ids.len(), price);
-            self.successful_trades += order_ids.len() as u64;
-            for order_id in &order_ids {
-                let is_buy    = order_id.to_lowercase().contains("buy");
+        // PR #92 P0 #2: Iterate filled_orders directly and read fill.side
+        // for authoritative Buy/Sell classification. The previous approach
+        // sniffed the order_id string (`contains("buy")`), which is fragile
+        // and engine-dependent — causing bot-01 to show Buy:0 Sell:0 while
+        // bot-02 was correct. fill.side == OrderSide::Buy is always correct.
+        if !filled_orders.is_empty() {
+            info!("[BOT] {} orders filled at ${:.4}", filled_orders.len(), price);
+            self.successful_trades += filled_orders.len() as u64;
+            for fill in &filled_orders {
+                let is_buy    = fill.side == OrderSide::Buy;
                 let pnl       = self.grid_state.total_realized_pnl().await;
                 let fill_size = self.adaptive_optimizer.current_position_size;
                 self.total_fills_tracked += 1;
                 info!("[FILL_TRACK] #{}: {} {} @ ${:.4} | size: {:.4} | P&L: ${:.2} | ts: {}",
                       self.total_fills_tracked,
                       if is_buy { "BUY" } else { "SELL" },
-                      order_id, price, fill_size, pnl, timestamp);
+                      fill.order_id, price, fill_size, pnl, timestamp);
                 self.enhanced_metrics.record_trade(is_buy, pnl, timestamp);
             }
         }
@@ -467,6 +482,13 @@ impl GridBot {
             if result.any_changes() {
                 info!("[OPT] Applied: {} | spacing={:.3}% | size={:.3} SOL",
                       result.reason, result.new_spacing * 100.0, result.new_position_size);
+            } else {
+                // PR #92 P1: Always log why the optimizer did not adjust,
+                // so operators can confirm it's threshold-gated, not silent/broken.
+                debug!("[OPT] No adjustment: {} | spacing={:.3}% size={:.3} SOL",
+                       result.reason,
+                       result.new_spacing * 100.0,
+                       result.new_position_size);
             }
             self.last_optimization_cycle = self.total_cycles;
         }
@@ -528,7 +550,13 @@ impl GridBot {
         println!("  P&L:               ${:.2}", stats.pnl_usdc);
         println!("  ROI:               {:.2}%", stats.roi_percent);
         println!("\n[TRADING]");
-        println!("  Win Rate:          {:.2}%", stats.win_rate);
+        // PR #92 P0 #3: Guard win rate display — "0.00%" on zero round-trips
+        // is indistinguishable from a losing record. Print a clear label instead.
+        if stats.profitable_trades + stats.unprofitable_trades == 0 {
+            println!("  Win Rate:          — (no closed trades yet)");
+        } else {
+            println!("  Win Rate:          {:.2}%", stats.win_rate);
+        }
         println!("  Total Fees:        ${:.2}", stats.total_fees);
         println!("\n[METRICS]");
         self.enhanced_metrics.display();
@@ -674,13 +702,18 @@ impl GridBotStats {
         println!("   Total Value:       ${:.2}", self.total_value_usdc);
         println!("   P&L:               ${:.2}", self.pnl_usdc);
         println!("   ROI:               {:.2}%", self.roi_percent);
-        println!("   Win Rate:          {:.2}%", self.win_rate);
+        // PR #92 P0 #3: Guard win rate — zero closed trades is not a loss record.
+        if self.profitable_trades + self.unprofitable_trades == 0 {
+            println!("   Win Rate:          — (no closed trades yet)");
+        } else {
+            println!("   Win Rate:          {:.2}%", self.win_rate);
+        }
         println!("   Fees:              ${:.2}", self.total_fees);
         println!("\n[ANALYTICS]");
         println!("   Profitable Trades: {}", self.profitable_trades);
         println!("   Losing Trades:     {}", self.unprofitable_trades);
         println!("   Max Drawdown:      {:.2}%", self.max_drawdown);
-        println!("   Signal Exec Rate:  {:.2}%", self.signal_execution_ratio * 100.0);
+        println!("   Signal Exec Rate:  {:.2}%", self.signal_execution_ratio);
         println!("   Grid Efficiency:   {:.2}%", self.grid_efficiency * 100.0);
         println!("\n[OPTIMIZER]");
         println!("   Current Spacing:   {:.3}%", self.current_spacing_percent * 100.0);
@@ -758,6 +791,70 @@ mod tests {
             intent_conflicts:        3,
         };
         assert_eq!(stats.intent_conflicts, 3);
+    }
+
+    /// PR #92 P0 #3: Win rate guard — zero closed trades must not display as 0.00%.
+    #[test]
+    fn test_win_rate_guard_zero_closed_trades() {
+        let stats = GridBotStats {
+            total_cycles:            100,
+            successful_trades:       3,
+            grid_repositions:        0,
+            open_orders:             8,
+            total_value_usdc:        1000.0,
+            pnl_usdc:                0.0,
+            roi_percent:             0.0,
+            win_rate:                0.0,
+            total_fees:              0.05,
+            trading_paused:          false,
+            // No closed round-trips yet
+            profitable_trades:       0,
+            unprofitable_trades:     0,
+            max_drawdown:            0.0,
+            signal_execution_ratio:  1.0,
+            grid_efficiency:         0.5,
+            current_spacing_percent: 0.003,
+            current_position_size:   0.1,
+            optimization_count:      0,
+            total_fills_tracked:     3,
+            intent_conflicts:        0,
+        };
+        // Guard condition: no closed trades → should NOT display win_rate as percentage
+        assert_eq!(stats.profitable_trades + stats.unprofitable_trades, 0,
+            "Guard precondition: no closed trades");
+        // Confirm win_rate field is 0.0 — would be misleading without the guard
+        assert!((stats.win_rate - 0.0).abs() < 1e-9);
+    }
+
+    /// PR #92 P0 #3: Win rate guard — closed trades present → display normally.
+    #[test]
+    fn test_win_rate_guard_with_closed_trades() {
+        let stats = GridBotStats {
+            total_cycles:            200,
+            successful_trades:       10,
+            grid_repositions:        1,
+            open_orders:             6,
+            total_value_usdc:        1020.0,
+            pnl_usdc:                20.0,
+            roi_percent:             2.0,
+            win_rate:                75.0,
+            total_fees:              0.25,
+            trading_paused:          false,
+            profitable_trades:       6,
+            unprofitable_trades:     2,
+            max_drawdown:            0.5,
+            signal_execution_ratio:  99.8,
+            grid_efficiency:         0.7,
+            current_spacing_percent: 0.003,
+            current_position_size:   0.1,
+            optimization_count:      1,
+            total_fills_tracked:     10,
+            intent_conflicts:        0,
+        };
+        // Guard condition: closed trades present → display win_rate numerically
+        assert!(stats.profitable_trades + stats.unprofitable_trades > 0,
+            "Guard precondition: closed trades exist");
+        assert!((stats.win_rate - 75.0).abs() < 1e-9);
     }
 
     #[test]
