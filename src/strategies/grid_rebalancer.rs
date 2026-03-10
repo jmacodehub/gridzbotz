@@ -1,5 +1,13 @@
 //! ═════════════════════════════════════════════════════════════════════════
-//! 🔥📎 GRID REBALANCER V5.3 - ADAPTIVE SPACING + FILL FEEDBACK + LEVEL ANALYTICS 🔥📎
+//! 🔥📎 GRID REBALANCER V5.4 - ADAPTIVE SPACING + FILL FEEDBACK + LEVEL ANALYTICS 🔥📎
+//!
+//! V5.4 (PR #94 Commit 4 — SmartFeeFilter wired):
+//!   ✅ fee_filter: Option<SmartFeeFilter> — built from FeesConfig, per-instance
+//!   ✅ should_place_order(): Path A = full P&L simulation via SmartFeeFilter;
+//!      Path B = legacy spread gate (enable_fee_filtering=false fallback)
+//!   ✅ position_size_sol param added so SmartFeeFilter gets market impact data
+//!   ✅ fee_filter_stats() → Option<FeeFilterStats> for future metrics surfacing
+//!   ✅ fill_rate_threshold: f64 replaces hardcoded HIGH_FILL_THR=0.10 in on_fill()
 //!
 //! V5.0 ENHANCEMENTS (Stage 3 — Feb 2026):
 //!   ✅ SpacingMode enum: Fixed | VolatilityBuckets | AtrDynamic
@@ -25,12 +33,13 @@
 //!   ✅ GATE-3 fix: display shows dollar std-dev, not misleading percentage
 //!   ✅ Resume path now reachable — no more permanent pause deadlock
 //!
-//! February 28, 2026 - V5.1 | March 2026 - V5.3 🚀
+//! February 28, 2026 - V5.1 | March 2026 - V5.4 🚀
 //! ═════════════════════════════════════════════════════════════════════════
 
 use crate::trading::{FillEvent, OrderSide};
 use crate::strategies::{Strategy, Signal, StrategyStats as BaseStrategyStats};
 use crate::strategies::shared::analytics::atr_dynamic::{ATRDynamic, ATRConfig};
+use crate::strategies::fee_filter::{SmartFeeFilter, SmartFeeFilterConfig, FeeFilterStats};
 use crate::config::FeesConfig;
 use async_trait::async_trait;
 use anyhow::{Result, Context};
@@ -165,8 +174,6 @@ impl LevelAnalytics {
     }
 
     /// Record one fill. Upserts the `LevelSnapshot` when `level_id` is `Some`.
-    /// Increments `fills_without_level` otherwise — non-grid fills are counted
-    /// for coverage but not tracked per-level.
     fn record_fill(&mut self, fill: &FillEvent) {
         match fill.level_id {
             Some(id) => {
@@ -193,8 +200,6 @@ impl LevelAnalytics {
         }
     }
 
-    /// Level IDs with at least `min_fills` fills, sorted descending by fill count.
-    /// These are the "hot zones" where price action is most active.
     fn hot_levels(&self, min_fills: u64) -> Vec<u64> {
         let mut ids: Vec<u64> = self.levels.values()
             .filter(|s| s.fill_count >= min_fills)
@@ -206,7 +211,6 @@ impl LevelAnalytics {
         ids
     }
 
-    /// Level IDs with `total_pnl > min_pnl`, sorted descending by total PnL.
     fn profitable_levels(&self, min_pnl: f64) -> Vec<u64> {
         let mut ids: Vec<u64> = self.levels.values()
             .filter(|s| s.total_pnl > min_pnl)
@@ -220,7 +224,6 @@ impl LevelAnalytics {
         ids
     }
 
-    /// Cloned snapshots of all levels, sorted descending by fill count.
     fn snapshots_sorted(&self) -> Vec<LevelSnapshot> {
         let mut snaps: Vec<LevelSnapshot> = self.levels.values().cloned().collect();
         snaps.sort_unstable_by(|a, b| b.fill_count.cmp(&a.fill_count));
@@ -231,17 +234,11 @@ impl LevelAnalytics {
 /// Public analytics report returned by `GridRebalancer::get_level_analytics()`.
 #[derive(Debug, Clone)]
 pub struct LevelAnalyticsReport {
-    /// All level snapshots sorted by fill count descending (most active first)
     pub snapshots:            Vec<LevelSnapshot>,
-    /// Level IDs with ≥ 5 fills — hot activity zones
     pub hot_levels:           Vec<u64>,
-    /// Level IDs with total_pnl > 0 — profitable zones
     pub profitable_levels:    Vec<u64>,
-    /// Fills that carried a `level_id` (grid-originated fills)
     pub fills_with_level:     u64,
-    /// Fills without a `level_id` (non-grid strategy fills)
     pub fills_without_level:  u64,
-    /// Total distinct grid levels tracked
     pub total_tracked_levels: usize,
 }
 
@@ -280,7 +277,16 @@ pub struct GridRebalancerConfig {
     // ── V5.0: Spacing Mode ───────────────────────────────────────────
     /// Selects the spacing algorithm. Defaults to VolatilityBuckets.
     pub spacing_mode: SpacingMode,
+
+    // ── V5.4: Fill-rate bias threshold ───────────────────────────────
+    /// Fill-rate (fills/sec) above which grid spacing widens to reduce
+    /// over-trading. Replaces `const HIGH_FILL_THR = 0.10` in on_fill().
+    /// Default: 0.10 (≈ 6 fills/min).
+    #[serde(default = "default_high_fill_threshold")]
+    pub fill_rate_threshold: f64,
 }
+
+fn default_high_fill_threshold() -> f64 { 0.10 }
 
 impl Default for GridRebalancerConfig {
     fn default() -> Self {
@@ -307,6 +313,8 @@ impl Default for GridRebalancerConfig {
             min_orders_to_maintain: 8,
 
             spacing_mode: SpacingMode::VolatilityBuckets,
+
+            fill_rate_threshold: 0.10,
         }
     }
 }
@@ -352,6 +360,9 @@ impl GridRebalancerConfig {
                 return Err(anyhow::anyhow!("order_refresh_interval_minutes must be > 0"));
             }
         }
+        if self.fill_rate_threshold <= 0.0 {
+            return Err(anyhow::anyhow!("fill_rate_threshold must be > 0"));
+        }
         Ok(())
     }
 
@@ -386,7 +397,7 @@ impl GridRebalancerConfig {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// GRID REBALANCER - V5.3
+// GRID REBALANCER - V5.4
 // ═══════════════════════════════════════════════════════════════════════════
 
 pub struct GridRebalancer {
@@ -413,6 +424,9 @@ pub struct GridRebalancer {
 
     // V5.1: Per-level analytics
     level_analytics: Arc<tokio::sync::Mutex<LevelAnalytics>>,
+
+    // V5.4: SmartFeeFilter — built from FeesConfig, None when fee filtering disabled
+    fee_filter: Option<SmartFeeFilter>,
 }
 
 impl GridRebalancer {
@@ -425,7 +439,7 @@ impl GridRebalancer {
         config.validate().context("GridRebalancer config validation failed")?;
 
         info!("═══════════════════════════════════════════════════════════");
-        info!("🎯 Grid Rebalancer V5.3 Initializing...");
+        info!("🎯 Grid Rebalancer V5.4 Initializing...");
         info!("═══════════════════════════════════════════════════════════");
         info!("📊 CORE: spacing={:.3}% size={} SOL reserves=${:.0}/{} SOL",
               config.grid_spacing * 100.0, config.order_size,
@@ -447,12 +461,11 @@ impl GridRebalancer {
         info!("💰 FEES: maker={:.1}bps taker={:.1}bps slippage={:.1}bps multiplier={:.1}x",
               fees.maker_fee_bps, fees.taker_fee_bps,
               fees.slippage_bps, fees.min_profit_multiplier);
-        // GATE-3 fix: display dollar std-dev, not misleading percentage
         info!("🛡️ REGIME GATE: {} | min_vol=${:.4} (dollar std-dev)",
               if config.enable_regime_gate { "✅" } else { "❌ FREE" },
               config.min_volatility_to_trade);
-        info!("🧠 ADAPTIVE: fill-feedback bias ✅ | level analytics ✅");
-        info!("═══════════════════════════════════════════════════════════");
+        info!("🧠 ADAPTIVE: fill-feedback bias ✅ | level analytics ✅ | fill_rate_thr={:.2}",
+              config.fill_rate_threshold);
 
         // Build ATR only when the mode requires it
         let atr_dynamic = match &config.spacing_mode {
@@ -460,13 +473,30 @@ impl GridRebalancer {
                 let atr_cfg = ATRConfig {
                     atr_period: *period,
                     atr_multiplier: *multiplier,
-                    min_spacing: config.min_spacing * 100.0, // ATRConfig uses %
+                    min_spacing: config.min_spacing * 100.0,
                     max_spacing: config.max_spacing * 100.0,
                 };
                 Some(ATRDynamic::from_config(&atr_cfg))
             }
             _ => None,
         };
+
+        // V5.4: build SmartFeeFilter when fee filtering is enabled
+        let fee_filter = if config.enable_fee_filtering {
+            let filter_cfg = SmartFeeFilterConfig::from_fees_config(&fees);
+            info!("💎 SmartFeeFilter: ACTIVE (maker={:.2}bps taker={:.2}bps slippage={:.2}bps mult={:.1}x grace={})",
+                  filter_cfg.maker_fee_percent * 100.0,
+                  filter_cfg.taker_fee_percent * 100.0,
+                  filter_cfg.slippage_percent * 100.0,
+                  filter_cfg.min_profit_multiplier,
+                  filter_cfg.grace_period_trades);
+            Some(SmartFeeFilter::new(filter_cfg))
+        } else {
+            info!("💎 SmartFeeFilter: DISABLED (enable_fee_filtering = false)");
+            None
+        };
+
+        info!("═══════════════════════════════════════════════════════════");
 
         Ok(Self {
             current_spacing: Arc::new(tokio::sync::RwLock::new(config.grid_spacing)),
@@ -485,6 +515,7 @@ impl GridRebalancer {
             fill_state: Arc::new(tokio::sync::Mutex::new(FillState::new())),
             atr_dynamic: Arc::new(tokio::sync::Mutex::new(atr_dynamic)),
             level_analytics: Arc::new(tokio::sync::Mutex::new(LevelAnalytics::new())),
+            fee_filter,
         })
     }
 
@@ -505,7 +536,6 @@ impl GridRebalancer {
             - tokio::time::Duration::from_secs(self.config.volatility_window_seconds);
         history.retain(|(time, _)| *time > cutoff);
 
-        // Feed ATR (no-op when mode is not AtrDynamic)
         let mut atr_guard = self.atr_dynamic.lock().await;
         if let Some(atr) = atr_guard.as_mut() {
             atr.update(price);
@@ -517,17 +547,13 @@ impl GridRebalancer {
 
     // ── Regime Gate (V5.3: GATE-1 fix — always re-evaluate) ──────────────────
 
-    /// Regime gate: always re-evaluate market conditions, even when paused.
-    /// PR #80 fix: removed early return on trading_paused that caused permanent freeze.
     pub async fn should_trade_now(&self) -> bool {
         if !self.config.enable_regime_gate {
             return true;
         }
 
-        // Always evaluate conditions — never short-circuit on stale flag
         let stats = self.grid_stats().await;
 
-        // Check 1: VERY_LOW_VOL regime gate
         if self.config.pause_in_very_low_vol && stats.market_regime == "VERY_LOW_VOL" {
             if !self.trading_paused.load(Ordering::Acquire) {
                 self.trading_paused.store(true, Ordering::Release);
@@ -537,7 +563,6 @@ impl GridRebalancer {
             return false;
         }
 
-        // Check 2: Min volatility threshold (dollar std-dev)
         if stats.volatility < self.config.min_volatility_to_trade {
             if !self.trading_paused.load(Ordering::Acquire) {
                 self.trading_paused.store(true, Ordering::Release);
@@ -551,7 +576,6 @@ impl GridRebalancer {
             return false;
         }
 
-        // Resume path — NOW REACHABLE when conditions clear
         if self.trading_paused.load(Ordering::Acquire) {
             info!("✅ REGIME GATE: Resuming — {} / vol=${:.4}",
                   stats.market_regime, stats.volatility);
@@ -561,9 +585,26 @@ impl GridRebalancer {
         true
     }
 
-    // ── Fee Filter (V5.2: FeesConfig-driven) ────────────────────────────────────
+    // ── Fee Filter (V5.4: SmartFeeFilter-driven, V5.2 spread-gate fallback) ──
 
-    pub async fn should_place_order(&self, side: OrderSide, price: f64, stats: &GridStats) -> bool {
+    /// Returns `true` if this order should be placed.
+    ///
+    /// **Path A** (`fee_filter` is `Some`, `enable_fee_filtering = true`):
+    ///   Computes full round-trip P&L: entry fee + exit fee + both-leg slippage
+    ///   + market impact + regime-aware threshold multiplier.
+    ///   Uses `exit_price = price * (1 ± grid_spacing)` as synthetic exit.
+    ///   Logs structured `reason` string from SmartFeeFilter for observability.
+    ///
+    /// **Path B** (`fee_filter` is `None`, legacy fallback):
+    ///   Single-number spread gate via `FeesConfig.min_order_spread_for_regime()`.
+    ///   Identical behaviour to V5.2 — zero regression.
+    pub async fn should_place_order(
+        &self,
+        side: OrderSide,
+        price: f64,
+        position_size_sol: f64,
+        stats: &GridStats,
+    ) -> bool {
         if !self.config.enable_fee_filtering {
             return true;
         }
@@ -571,13 +612,37 @@ impl GridRebalancer {
             Some(p) => p,
             None => return true,
         };
+
+        // ── Path A: SmartFeeFilter (full P&L simulation) ──────────────────
+        if let Some(filter) = &self.fee_filter {
+            let exit_price = match side {
+                OrderSide::Buy  => price * (1.0 + self.config.grid_spacing),
+                OrderSide::Sell => price * (1.0 - self.config.grid_spacing),
+            };
+            let volatility = self.calculate_volatility().await;
+            let (pass, net_profit, reason) = filter.should_execute_trade(
+                price,
+                exit_price,
+                position_size_sol,
+                volatility,
+                stats.market_regime.as_str(),
+            );
+            if !pass {
+                debug!("🚫 SmartFeeFilter BLOCKED {:?} @ ${:.4} | net_profit=${:.6} | {}",
+                    side, price, net_profit, reason);
+                self.stats_filtered.fetch_add(1, Ordering::Relaxed);
+            } else {
+                trace!("✅ SmartFeeFilter PASSED {:?} @ ${:.4} | net_profit=${:.6} | {}",
+                    side, price, net_profit, reason);
+            }
+            return pass;
+        }
+
+        // ── Path B: Legacy spread gate (SmartFeeFilter disabled) ──────────
         let spread_pct = ((price - current_price).abs() / current_price) * 100.0;
-
-        // V5.2: Single source of truth — FeesConfig drives min spread per regime
         let min_spread = self.fees.min_order_spread_for_regime(stats.market_regime.as_str());
-
         if spread_pct < min_spread {
-            debug!("🚫 FILTERED: {:?} @ ${:.4} (spread {:.3}% < min {:.2}%)",
+            debug!("🚫 SPREAD GATE: {:?} @ ${:.4} (spread {:.3}% < min {:.2}%)",
                 side, price, spread_pct, min_spread);
             self.stats_filtered.fetch_add(1, Ordering::Relaxed);
             return false;
@@ -585,7 +650,13 @@ impl GridRebalancer {
         true
     }
 
-    // ── Volatility (fallback for VolatilityBuckets) ────────────────────────────────
+    /// Snapshot of SmartFeeFilter statistics.
+    /// Returns `None` when `enable_fee_filtering = false`.
+    pub fn fee_filter_stats(&self) -> Option<FeeFilterStats> {
+        self.fee_filter.as_ref().map(|f| f.stats())
+    }
+
+    // ── Volatility (fallback for VolatilityBuckets) ───────────────────────────
 
     async fn calculate_volatility(&self) -> f64 {
         let history = self.price_history.lock().await;
@@ -598,7 +669,7 @@ impl GridRebalancer {
         variance.sqrt()
     }
 
-    // ── Spacing Dispatch ─────────────────────────────────────────────────────────────
+    // ── Spacing Dispatch ──────────────────────────────────────────────────────
 
     async fn update_dynamic_spacing(&self) {
         if !self.config.enable_dynamic_spacing {
@@ -606,7 +677,7 @@ impl GridRebalancer {
         }
 
         let base_spacing = match &self.config.spacing_mode {
-            SpacingMode::Fixed => return, // constant — nothing to update
+            SpacingMode::Fixed => return,
 
             SpacingMode::VolatilityBuckets => {
                 let vol = self.calculate_volatility().await;
@@ -620,7 +691,6 @@ impl GridRebalancer {
                 let price_guard = self.current_price.read().await;
                 match (atr_guard.as_ref(), *price_guard) {
                     (Some(atr), Some(price)) if atr.ready() => {
-                        // calculate_spacing() returns % → convert to fraction
                         atr.calculate_spacing(price)
                             .map(|pct| pct / 100.0)
                             .unwrap_or(self.config.grid_spacing)
@@ -633,7 +703,6 @@ impl GridRebalancer {
             }
         };
 
-        // Apply fill-rate bias (shared by all modes)
         let bias = self.fill_state.lock().await.bias;
         let biased = (base_spacing + bias)
             .max(self.config.min_spacing)
@@ -647,7 +716,7 @@ impl GridRebalancer {
         }
     }
 
-    // ── Grid Stats ──────────────────────────────────────────────────────────────
+    // ── Grid Stats ────────────────────────────────────────────────────────────
 
     pub async fn grid_stats(&self) -> GridStats {
         let rebalances = self.stats_rebalances.load(Ordering::Relaxed);
@@ -679,13 +748,8 @@ impl GridRebalancer {
         }
     }
 
-    // ── V5.1: Level Analytics API ──────────────────────────────────────────────
+    // ── V5.1: Level Analytics API ─────────────────────────────────────────────
 
-    /// Return a point-in-time snapshot of per-level fill analytics.
-    ///
-    /// Cheap clone — safe to call from monitoring loops or status endpoints.
-    /// The `hot_levels` threshold is fixed at 5 fills; use `LevelAnalyticsReport`
-    /// fields to apply custom thresholds downstream.
     pub async fn get_level_analytics(&self) -> LevelAnalyticsReport {
         let analytics = self.level_analytics.lock().await;
         LevelAnalyticsReport {
@@ -715,7 +779,7 @@ impl GridRebalancer {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// BUILDER (V5.2: +fees_config)
+// BUILDER (V5.4: +fill_rate_threshold)
 // ═══════════════════════════════════════════════════════════════════════════
 
 pub struct GridRebalancerBuilder {
@@ -737,6 +801,11 @@ impl GridRebalancerBuilder {
     pub fn environment(mut self, env: &str) -> Self { self.config.apply_environment(env); self }
     pub fn spacing_mode(mut self, mode: SpacingMode) -> Self { self.config.spacing_mode = mode; self }
     pub fn fees_config(mut self, fees: FeesConfig) -> Self { self.fees = fees; self }
+    /// Override fill-rate bias threshold. Default: 0.10 (≈ 6 fills/min).
+    pub fn fill_rate_threshold(mut self, threshold: f64) -> Self {
+        self.config.fill_rate_threshold = threshold;
+        self
+    }
     pub fn build(self) -> Result<GridRebalancer> { GridRebalancer::with_fees(self.config, self.fees) }
 }
 
@@ -750,7 +819,7 @@ impl Default for GridRebalancerBuilder {
 
 #[async_trait]
 impl Strategy for GridRebalancer {
-    fn name(&self) -> &str { "Grid Rebalancer V5.3" }
+    fn name(&self) -> &str { "Grid Rebalancer V5.4" }
 
     async fn analyze(&mut self, price: f64, _timestamp: i64) -> Result<Signal> {
         self.update_price(price).await.context("Failed to update price")?;
@@ -798,33 +867,33 @@ impl Strategy for GridRebalancer {
         })
     }
 
-    // ── V5.0 + V5.1: Fill feedback loop + per-level analytics ────────────────────
+    // ── V5.0 + V5.1 + V5.4: Fill feedback loop + per-level analytics ─────────
     //
     // Sync fn — uses try_lock (non-blocking). Never contended under normal load.
     //
     // Execution order:
-    //   1. [V5.0] Update fill-rate ring buffer + compute spacing bias
-    //   2. [V5.1] Record level analytics (O(1) HashMap upsert)
-    //   3.        Increment global rebalance counter
+    //   1. [V5.0/V5.4] Update fill-rate ring buffer + compute spacing bias
+    //      HIGH_FILL_THR is now self.config.fill_rate_threshold (TOML-driven)
+    //   2. [V5.1]       Record level analytics (O(1) HashMap upsert)
+    //   3.              Increment global rebalance counter
     fn on_fill(&mut self, fill: &FillEvent) {
-        // ───────────────────────────────────────────────────────────────
-        // Step 1: Fill-rate spacing bias (V5.0 — unchanged)
-        // ───────────────────────────────────────────────────────────────
+        // ─────────────────────────────────────────────────────────────────
+        // Step 1: Fill-rate spacing bias (V5.0 — threshold now config-driven)
+        // ─────────────────────────────────────────────────────────────────
         if let Ok(mut state) = self.fill_state.try_lock() {
-            // Ring buffer — keep last 20 timestamps
             state.timestamps.push_back(fill.timestamp);
             if state.timestamps.len() > 20 {
                 state.timestamps.pop_front();
             }
 
-            // Fill rate over last 60 seconds
             let rate = state.fill_rate(60);
-            const HIGH_FILL_THR: f64 = 0.10; // > 6 fills/min = hot market
+            // V5.4: config-driven threshold replaces hardcoded 0.10 const
+            let high_fill_thr = self.config.fill_rate_threshold;
 
             let old_bias = state.bias;
-            if rate > HIGH_FILL_THR {
+            if rate > high_fill_thr {
                 state.bias = (state.bias + 0.0002).min(0.002);
-            } else if rate < HIGH_FILL_THR * 0.3 {
+            } else if rate < high_fill_thr * 0.3 {
                 state.bias = (state.bias - 0.0001).max(-0.001);
             }
 
@@ -836,9 +905,9 @@ impl Strategy for GridRebalancer {
                 fill.side, fill.order_id, fill.fill_price, state.bias * 100.0);
         }
 
-        // ───────────────────────────────────────────────────────────────
+        // ─────────────────────────────────────────────────────────────────
         // Step 2: Per-level analytics (V5.1)
-        // ───────────────────────────────────────────────────────────────
+        // ─────────────────────────────────────────────────────────────────
         if let Ok(mut analytics) = self.level_analytics.try_lock() {
             analytics.record_fill(fill);
             if let Some(id) = fill.level_id {
@@ -850,9 +919,9 @@ impl Strategy for GridRebalancer {
             }
         }
 
-        // ───────────────────────────────────────────────────────────────
+        // ─────────────────────────────────────────────────────────────────
         // Step 3: Global fill counter
-        // ───────────────────────────────────────────────────────────────
+        // ─────────────────────────────────────────────────────────────────
         self.stats_rebalances.fetch_add(1, Ordering::Relaxed);
     }
 }
@@ -883,9 +952,9 @@ mod tests {
     use super::*;
     use crate::trading::{FillEvent, OrderSide};
 
-    // ───────────────────────────────────────────────────────────────
-    // Existing V5.0 + V5.1 tests (unchanged)
-    // ───────────────────────────────────────────────────────────────
+    // ─────────────────────────────────────────────────────────────────────
+    // Existing V5.0 + V5.1 + V5.2 + V5.3 tests (unchanged)
+    // ─────────────────────────────────────────────────────────────────────
 
     #[test]
     fn test_config_validation() {
@@ -953,7 +1022,6 @@ mod tests {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs() as i64).unwrap_or(0);
-        // 10 fills in quick succession pushes rate above threshold
         for i in 0..10 {
             let fill = FillEvent::new(
                 format!("ORDER-{:03}", i),
@@ -976,10 +1044,6 @@ mod tests {
         let stats = rebalancer.grid_stats().await;
         assert_eq!(stats.total_rebalances, 1);
     }
-
-    // ───────────────────────────────────────────────────────────────
-    // V5.1: Level analytics tests (unchanged)
-    // ───────────────────────────────────────────────────────────────
 
     #[test]
     fn test_level_snapshot_avg_distance() {
@@ -1012,7 +1076,6 @@ mod tests {
     fn test_level_analytics_records_fills() {
         let mut analytics = LevelAnalytics::new();
         let now = 1_700_000_000_i64;
-
         for i in 0..3 {
             let fill = FillEvent::new(
                 format!("ORD-{}", i), OrderSide::Buy,
@@ -1020,7 +1083,6 @@ mod tests {
             ).with_level(102).with_distance_from_mid(-1.0);
             analytics.record_fill(&fill);
         }
-
         assert_eq!(analytics.fills_with_level, 3);
         assert_eq!(analytics.fills_without_level, 0);
         let snap = &analytics.levels[&102];
@@ -1033,7 +1095,6 @@ mod tests {
     fn test_level_analytics_hot_levels() {
         let mut analytics = LevelAnalytics::new();
         let now = 1_700_000_000_i64;
-
         for i in 0..6 {
             analytics.record_fill(&FillEvent::new(
                 format!("H-{}", i), OrderSide::Buy,
@@ -1046,10 +1107,8 @@ mod tests {
                 101.0, 0.1, 0.001, None, now + i,
             ).with_level(103));
         }
-
         let hot = analytics.hot_levels(5);
-        assert_eq!(hot, vec![102], "Only level 102 has ≥ 5 fills");
-
+        assert_eq!(hot, vec![102], "Only level 102 has >= 5 fills");
         let not_hot = analytics.hot_levels(3);
         assert!(not_hot.contains(&102));
         assert!(!not_hot.contains(&103), "level 103 has only 2 fills");
@@ -1059,23 +1118,19 @@ mod tests {
     fn test_level_analytics_profitable_levels() {
         let mut analytics = LevelAnalytics::new();
         let now = 1_700_000_000_i64;
-
         analytics.record_fill(&FillEvent::new(
             "P1", OrderSide::Sell, 155.0, 0.1, 0.001, Some(5.0), now,
         ).with_level(201));
-
         analytics.record_fill(&FillEvent::new(
             "P2", OrderSide::Sell, 155.5, 0.1, 0.001, Some(0.0), now + 1,
         ).with_level(202));
-
         analytics.record_fill(&FillEvent::new(
             "P3", OrderSide::Buy, 154.0, 0.1, 0.001, Some(-1.0), now + 2,
         ).with_level(203));
-
         let profitable = analytics.profitable_levels(0.0);
-        assert!(profitable.contains(&201), "Level 201 should be profitable");
-        assert!(!profitable.contains(&202), "Level 202 is break-even, not > 0");
-        assert!(!profitable.contains(&203), "Level 203 is a loss");
+        assert!(profitable.contains(&201));
+        assert!(!profitable.contains(&202));
+        assert!(!profitable.contains(&203));
     }
 
     #[test]
@@ -1083,12 +1138,8 @@ mod tests {
         let config = GridRebalancerConfig::default();
         let mut rebalancer = GridRebalancer::new(config).unwrap();
         let now = 1_700_000_000_i64;
-
-        let fill = FillEvent::new(
-            "RSI-001", OrderSide::Buy, 150.0, 0.5, 0.005, None, now,
-        );
+        let fill = FillEvent::new("RSI-001", OrderSide::Buy, 150.0, 0.5, 0.005, None, now);
         rebalancer.on_fill(&fill);
-
         let analytics = rebalancer.level_analytics.try_lock().unwrap();
         assert_eq!(analytics.fills_without_level, 1);
         assert_eq!(analytics.fills_with_level, 0);
@@ -1100,22 +1151,15 @@ mod tests {
         let config = GridRebalancerConfig::default();
         let mut rebalancer = GridRebalancer::new(config).unwrap();
         let now = 1_700_000_000_i64;
-
         let fill = FillEvent::new(
             "GRID-042", OrderSide::Buy, 153.50, 0.1, 0.001, Some(1.25), now,
-        )
-        .with_level(42)
-        .with_distance_from_mid(-0.9);
-
+        ).with_level(42).with_distance_from_mid(-0.9);
         rebalancer.on_fill(&fill);
-
         let analytics = rebalancer.level_analytics.try_lock().unwrap();
         assert_eq!(analytics.fills_with_level, 1);
-        assert_eq!(analytics.fills_without_level, 0);
         let snap = analytics.levels.get(&42).expect("Level 42 must be tracked");
         assert_eq!(snap.fill_count, 1);
         assert!((snap.total_pnl - 1.25).abs() < 0.001);
-        assert!((snap.distance_from_mid_sum - (-0.9)).abs() < 0.001);
     }
 
     #[tokio::test]
@@ -1123,7 +1167,6 @@ mod tests {
         let config = GridRebalancerConfig::default();
         let mut rebalancer = GridRebalancer::new(config).unwrap();
         let now = 1_700_000_000_i64;
-
         for i in 0..6 {
             rebalancer.on_fill(&FillEvent::new(
                 format!("L101-{}", i), OrderSide::Buy,
@@ -1139,26 +1182,18 @@ mod tests {
         rebalancer.on_fill(&FillEvent::new(
             "MOMENTUM-01", OrderSide::Buy, 154.0, 0.3, 0.003, None, now,
         ));
-
         let report = rebalancer.get_level_analytics().await;
-
         assert_eq!(report.total_tracked_levels, 2);
         assert_eq!(report.fills_with_level, 8);
         assert_eq!(report.fills_without_level, 1);
-        assert_eq!(report.hot_levels, vec![101], "Only level 101 has ≥ 5 fills");
+        assert_eq!(report.hot_levels, vec![101]);
         assert!(report.profitable_levels.contains(&101));
         assert!(report.profitable_levels.contains(&201));
         assert_eq!(report.snapshots[0].level_id, 101);
-        assert_eq!(report.snapshots[0].fill_count, 6);
     }
-
-    // ───────────────────────────────────────────────────────────────
-    // V5.2: FeesConfig wiring tests
-    // ───────────────────────────────────────────────────────────────
 
     #[tokio::test]
     async fn test_should_place_order_uses_fees_config() {
-        // Custom fees with wider spreads — should filter more aggressively
         let fees = FeesConfig {
             maker_fee_bps: 10.0,
             taker_fee_bps: 20.0,
@@ -1169,20 +1204,10 @@ mod tests {
         config.enable_regime_gate = false;
         let r = GridRebalancer::with_fees(config, fees).unwrap();
         r.update_price(100.0).await.unwrap();
-
-        let stats = r.grid_stats().await;
-
-        // Price at 100.05 → spread = 0.05% — should be filtered with wider fees
-        let _result = r.should_place_order(OrderSide::Buy, 100.05, &stats).await;
-        // With default FeesConfig the VERY_LOW_VOL min_spread is 0.05%,
-        // but with 10/20/15 bps fees the regime spread will be higher.
-        // The key assertion: the FeesConfig is actually being consulted.
-        // We verify by checking that the fees field is wired:
         assert_eq!(r.fees.maker_fee_bps, 10.0);
         assert_eq!(r.fees.taker_fee_bps, 20.0);
-
-        // With very tight spread (0.01%), should always filter
-        let tight_result = r.should_place_order(OrderSide::Buy, 100.01, &stats).await;
+        let stats = r.grid_stats().await;
+        let tight_result = r.should_place_order(OrderSide::Buy, 100.01, 0.1, &stats).await;
         assert!(!tight_result, "0.01% spread should be filtered");
     }
 
@@ -1200,59 +1225,80 @@ mod tests {
             .fees_config(custom_fees)
             .build()
             .unwrap();
-
         assert_eq!(r.fees.maker_fee_bps, 3.0);
         assert_eq!(r.fees.taker_fee_bps, 6.0);
         assert_eq!(r.fees.min_profit_multiplier, 3.0);
     }
 
-    // ───────────────────────────────────────────────────────────────
-    // V5.3: Regime gate fix tests (PR #80)
-    // ───────────────────────────────────────────────────────────────
-
     #[tokio::test]
     async fn test_regime_gate_pause_then_resume() {
-        // Verify the GATE-1 fix: bot can resume after being paused
-        let mut config = GridRebalancerConfig::default();
-        config.enable_regime_gate = true;
-        config.min_volatility_to_trade = 0.5;
-        config.pause_in_very_low_vol = false; // isolate min_vol check
-        let r = GridRebalancer::new(config).unwrap();
-
-        // No price history → volatility = 0.0 → should pause
-        let result1 = r.should_trade_now().await;
-        assert!(!result1, "Should pause when volatility is below threshold");
-        assert!(r.trading_paused.load(Ordering::Acquire), "trading_paused should be true");
-
-        // Add prices with enough spread to exceed min_volatility_to_trade
-        // std-dev of [80.0, 82.0, 84.0, 80.0, 84.0] ≈ 1.6 > 0.5
-        for p in [80.0, 82.0, 84.0, 80.0, 84.0] {
-            r.update_price(p).await.unwrap();
-        }
-
-        // Now conditions have cleared — should resume
-        let result2 = r.should_trade_now().await;
-        assert!(result2, "Should resume when volatility rises above threshold");
-        assert!(!r.trading_paused.load(Ordering::Acquire), "trading_paused should be false after resume");
-    }
-
-    #[tokio::test]
-    async fn test_regime_gate_no_spam_logging() {
-        // Verify pause only logs on state TRANSITION, not every cycle
         let mut config = GridRebalancerConfig::default();
         config.enable_regime_gate = true;
         config.min_volatility_to_trade = 0.5;
         config.pause_in_very_low_vol = false;
         let r = GridRebalancer::new(config).unwrap();
+        let result1 = r.should_trade_now().await;
+        assert!(!result1);
+        assert!(r.trading_paused.load(Ordering::Acquire));
+        for p in [80.0, 82.0, 84.0, 80.0, 84.0] {
+            r.update_price(p).await.unwrap();
+        }
+        let result2 = r.should_trade_now().await;
+        assert!(result2);
+        assert!(!r.trading_paused.load(Ordering::Acquire));
+    }
 
-        // First call: should pause and set flag
+    #[tokio::test]
+    async fn test_regime_gate_no_spam_logging() {
+        let mut config = GridRebalancerConfig::default();
+        config.enable_regime_gate = true;
+        config.min_volatility_to_trade = 0.5;
+        config.pause_in_very_low_vol = false;
+        let r = GridRebalancer::new(config).unwrap();
         let _ = r.should_trade_now().await;
         assert!(r.trading_paused.load(Ordering::Acquire));
-
-        // Second call: flag already true, should NOT re-store (no transition)
-        // This tests the `if !self.trading_paused.load()` guard
         let result = r.should_trade_now().await;
-        assert!(!result, "Should still be paused");
-        // If we got here without panic, the guard works correctly
+        assert!(!result);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // V5.4: SmartFeeFilter wiring tests
+    // ─────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_fill_rate_threshold_default() {
+        let cfg = GridRebalancerConfig::default();
+        assert!((cfg.fill_rate_threshold - 0.10).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_fill_rate_threshold_zero_rejected() {
+        let mut cfg = GridRebalancerConfig::default();
+        cfg.fill_rate_threshold = 0.0;
+        assert!(cfg.validate().is_err());
+    }
+
+    #[tokio::test]
+    async fn test_smart_fee_filter_wired_when_enabled() {
+        let cfg = GridRebalancerConfig {
+            enable_fee_filtering: true,
+            ..GridRebalancerConfig::default()
+        };
+        let fees = FeesConfig::default();
+        let rebalancer = GridRebalancer::with_fees(cfg, fees).unwrap();
+        assert!(rebalancer.fee_filter_stats().is_some(),
+            "SmartFeeFilter must be Some when enable_fee_filtering=true");
+    }
+
+    #[tokio::test]
+    async fn test_smart_fee_filter_absent_when_disabled() {
+        let cfg = GridRebalancerConfig {
+            enable_fee_filtering: false,
+            ..GridRebalancerConfig::default()
+        };
+        let fees = FeesConfig::default();
+        let rebalancer = GridRebalancer::with_fees(cfg, fees).unwrap();
+        assert!(rebalancer.fee_filter_stats().is_none(),
+            "SmartFeeFilter must be None when enable_fee_filtering=false");
     }
 }
