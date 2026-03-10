@@ -406,16 +406,25 @@ mod tests {
         assert!(!result.reason.contains("Warming up"));
     }
 
-    /// PR #92 P1: optimize() must always return a non-empty reason.
+    /// PR #92 P1: optimize() must always return a non-empty reason when no
+    /// adjustment occurs.
+    ///
+    /// max_drawdown = 3.5  -> moderate band (2.0-5.0) -> SPACING_NORMAL_MULTIPLIER 1.00
+    ///   -> new_spacing = 0.0015 * 1.00 = 0.0015 -> 0% change < 5% gate -> NOT adjusted
+    /// grid_efficiency = 0.50 -> normal band (0.30-0.70) -> SIZE_NORMAL_MULTIPLIER 1.00
+    ///   -> new_size = 0.1 * 1.00 = 0.1 -> 0% change < 10% gate -> NOT adjusted
+    /// Result: reason = "threshold not met (drawdown=3.50% eff=50.0%)"
     #[test]
     fn test_optimize_no_change_emits_skip_reason() {
         let mut opt = AdaptiveOptimizer::new(0.0015, 0.1);
         let mut m   = EnhancedMetrics::new();
-        m.total_buys     = 3;
-        m.total_sells    = 2;
-        m.max_drawdown    = 0.5;  // < LOW_DRAWDOWN_THRESHOLD but change < 5%
-        m.grid_efficiency = 0.50; // normal band - no size change
+        m.total_buys      = 3;
+        m.total_sells     = 2;
+        m.max_drawdown    = 3.5;  // moderate band -> 1.00x multiplier -> 0% spacing change
+        m.grid_efficiency = 0.50; // normal band   -> 1.00x multiplier -> 0% size change
         let result = opt.optimize(&m);
+        assert!(!result.spacing_adjusted, "spacing must not be adjusted with 0% change");
+        assert!(!result.size_adjusted,    "size must not be adjusted with 0% change");
         assert!(!result.reason.is_empty(), "reason must never be empty");
         assert!(
             result.reason.contains("threshold")
