@@ -1,6 +1,11 @@
 //! ═════════════════════════════════════════════════════════════════════════
 //! GRID BOT V5.9 - ELITE AUTONOMOUS TRADING ORCHESTRATOR
 //!
+//! PR #94 (Commit 2): OPT-1 - optimizer_interval_cycles wired from config
+//!    Was: `const OPTIMIZATION_INTERVAL_CYCLES: u64 = 50` (hardcoded)
+//!    Now: `self.config.trading.optimizer_interval_cycles` (TOML-driven)
+//!    Zero behaviour change — default in config/mod.rs is 50.
+//!
 //! PR #93 FIXES:
 //! [fix] P0 #1 (SAFETY): CircuitBreaker wired into GridBot with real NAV P&L.
 //!    Was: CircuitBreaker built in src/risk/ but never instantiated in GridBot.
@@ -59,7 +64,8 @@ use crate::trading::{
 use crate::risk::CircuitBreaker;
 use crate::config::Config;
 
-const OPTIMIZATION_INTERVAL_CYCLES: u64 = 50;
+// OPTIMIZATION_INTERVAL_CYCLES removed (PR #94 OPT-1).
+// Use self.config.trading.optimizer_interval_cycles (TOML-driven, default 50).
 
 // ═════════════════════════════════════════════════════════════════════════
 // GRID BOT STRUCT
@@ -109,6 +115,8 @@ impl GridBot {
         info!("[BOT-V5.9] PriceFeed: Owned via Arc - process_tick() autonomous");
         info!("[BOT-V5.9] Bot Trait: IMPLEMENTED + DISPATCHED (PR #84+#85+#86)");
         info!("[BOT-V5.9] CircuitBreaker: WIRED (PR #93) - bot-layer protection active");
+        info!("[BOT-V5.9] OptimizerCadence: {} cycles (TOML-driven, PR #94 OPT-1)",
+              config.trading.optimizer_interval_cycles);
 
         let grid_config = GridRebalancerConfig {
             grid_spacing:                   config.trading.grid_spacing_percent / 100.0,
@@ -460,7 +468,11 @@ impl GridBot {
         self.last_known_pnl = wallet.pnl_usdc(price);
         self.enhanced_metrics.update_portfolio_value(new_nav);
 
-        if self.total_cycles - self.last_optimization_cycle >= OPTIMIZATION_INTERVAL_CYCLES {
+        // PR #94 OPT-1: optimizer cadence is now TOML-driven (config default: 50 cycles).
+        // Replaced: `OPTIMIZATION_INTERVAL_CYCLES` const.
+        if self.total_cycles - self.last_optimization_cycle
+            >= self.config.trading.optimizer_interval_cycles
+        {
             let result = self.adaptive_optimizer.optimize(&self.enhanced_metrics);
             if result.any_changes() {
                 info!("[OPT] Applied: {} | spacing={:.3}% | size={:.3} SOL",
@@ -522,6 +534,8 @@ impl GridBot {
         println!("  Fills Tracked:     {}", stats.total_fills_tracked);
         println!("  Orders Placed:     {}", self.total_orders_placed);
         println!("  Intent Conflicts:  {}", stats.intent_conflicts);
+        println!("  Optimizer Cadence: {} cycles",
+                 self.config.trading.optimizer_interval_cycles);
         let grid_levels = self.grid_state.count().await;
         let filled_buys = self.grid_state.get_levels_with_filled_buys().await.len();
         let total_pnl   = self.grid_state.total_realized_pnl().await;
@@ -908,9 +922,9 @@ mod tests {
         assert!(registry.contains_key(&(pair.clone(), 3u64)));
     }
 
-    // ═════════════════════════════════════════════════════════════════════
+    // ═════════════════════════════════════════════════════════════════════════
     // PR #93 tests
-    // ═════════════════════════════════════════════════════════════════════
+    // ═════════════════════════════════════════════════════════════════════════
 
     /// PR #93: CircuitBreaker field is initialized and not tripped at startup.
     #[test]
@@ -965,12 +979,11 @@ mod tests {
     /// PR #93: trading_paused in GridBotStats reflects CB trip state.
     #[test]
     fn test_circuit_breaker_trading_paused_in_stats() {
-        // Directly verify the field contract: trading_paused=true when CB is tripped.
         let stats_paused = GridBotStats {
             total_cycles: 10, successful_trades: 0, grid_repositions: 0,
             open_orders: 0, total_value_usdc: 800.0, pnl_usdc: -200.0,
             roi_percent: -20.0, win_rate: 0.0, total_fees: 0.5,
-            trading_paused:      true,   // CB tripped
+            trading_paused:      true,
             profitable_trades: 0, unprofitable_trades: 5,
             max_drawdown: 20.0, signal_execution_ratio: 1.0, grid_efficiency: 0.3,
             current_spacing_percent: 0.003, current_position_size: 0.1,
@@ -985,8 +998,6 @@ mod tests {
     }
 
     /// PR #93: CircuitBreaker record_trade() accumulates real P&L correctly.
-    /// Verifies the CB trips after max_consecutive_losses with real NAV values
-    /// (same assertion pattern used in circuit_breaker.rs own tests).
     #[test]
     fn test_circuit_breaker_record_trade_real_pnl() {
         use crate::config::*;
@@ -1016,7 +1027,7 @@ mod tests {
                 enable_circuit_breaker: true,
                 circuit_breaker_threshold_pct: 15.0,
                 circuit_breaker_cooldown_secs: 60,
-                max_consecutive_losses: 3,  // low threshold for test speed
+                max_consecutive_losses: 3,
                 enable_trailing_stop: false,
             },
             fees: FeesConfig::default(),
@@ -1030,13 +1041,11 @@ mod tests {
             alerts: AlertsConfig::default(),
         };
         let mut cb = CircuitBreaker::new(&config);
-        // Simulate 3 losing fills with real-world NAV values.
-        // peak_balance self-anchors on first call: 0.0 < 1000.0 -> peak=1000.
-        cb.record_trade(-10.0, 990.0);  // loss 1 - not tripped
+        cb.record_trade(-10.0, 990.0);
         assert!(!cb.status().is_tripped);
-        cb.record_trade(-10.0, 980.0);  // loss 2 - not tripped
+        cb.record_trade(-10.0, 980.0);
         assert!(!cb.status().is_tripped);
-        cb.record_trade(-10.0, 970.0);  // loss 3 - trips ConsecutiveLosses
+        cb.record_trade(-10.0, 970.0);
         assert!(cb.status().is_tripped,
             "CB must trip after max_consecutive_losses with real NAV P&L");
         assert!(matches!(cb.status().trip_reason, Some(TripReason::ConsecutiveLosses)),
