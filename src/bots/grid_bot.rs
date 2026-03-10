@@ -1,6 +1,19 @@
 //! ═════════════════════════════════════════════════════════════════════════
 //! GRID BOT V6.0 - ELITE AUTONOMOUS TRADING ORCHESTRATOR
 //!
+//! PR #94 (Commit 6): GridBotStats observability — Items 1 + 2 telemetry.
+//!    GridBot struct: `orders_filtered_session: u64` added.
+//!    place_grid_orders(): accumulates into self.orders_filtered_session.
+//!    GridBotStats: 5 new fields:
+//!      last_signal_strength       — consensus strength at last tick
+//!      orders_filtered_session    — orders skipped by SmartFeeFilter (session)
+//!      fee_filter_total_checked   — total evaluated by fee filter
+//!      fee_filter_total_passed    — total that passed the fee filter
+//!      fee_filter_total_blocked   — total blocked by fee filter
+//!    get_stats(): populates all 5 from self + grid_rebalancer.fee_filter_stats()
+//!    display_summary(): adds [SIGNAL SIZING] + [FEE FILTER] sections
+//!    Zero behaviour change — trading logic untouched.
+//!
 //! PR #94 (Commit 5b): Consensus-Signal-Driven Position Sizing WIRED.
 //!    `last_signal_strength: f64` field added to GridBot.
 //!    process_price_update() caches signal.strength() after analyze_all().
@@ -39,6 +52,7 @@
 //! [ok] intent_conflicts: u64 counter - surfaced in BotStats via stats()
 //! [ok] Solo path: intent_registry = None - zero behavior change, zero cost
 //!
+//! March 11, 2026 - V6.0: GridBotStats observability (PR #94 Commit 6) 📊
 //! March 11, 2026 - V6.0: Consensus sizing wired (PR #94 Commit 5b) 📊
 //! March 11, 2026 - V5.9: signal_size_multiplier config (PR #94 Commit 5a) 📐
 //! March 10, 2026 - V5.9: CircuitBreaker wired (PR #93) 🛑
@@ -99,6 +113,12 @@ pub struct GridBot {
     /// enable_smart_position_sizing = true.
     /// Initialized to 0.0 (Hold equivalent — flat sizing until first analysis).
     last_signal_strength:   f64,
+    /// PR #94 Commit 6: Session-lifetime count of orders skipped by
+    /// SmartFeeFilter across all place_grid_orders() calls.
+    /// Accumulated from the local `orders_filtered` counter per placement.
+    /// Surfaced in GridBotStats so orchestrator / Telegram / Supabase can
+    /// consume it without reaching into GridBot internals.
+    orders_filtered_session: u64,
     feed:                   Arc<PriceFeed>,
     session_start:          Instant,
     last_price:             Option<f64>,
@@ -136,6 +156,7 @@ impl GridBot {
         info!("[BOT-V6.0] ConsensusSizing: {} (PR #94 Commit 5b) | multiplier={:.2}x",
               if config.trading.enable_smart_position_sizing { "ACTIVE" } else { "disabled" },
               config.trading.signal_size_multiplier);
+        info!("[BOT-V6.0] FeeFilterStats:  WIRED into GridBotStats (PR #94 Commit 6)");
         info!("[BOT-V6.0] OptimizerCadence: {} cycles (TOML-driven, PR #94 OPT-1)",
               config.trading.optimizer_interval_cycles);
 
@@ -243,6 +264,8 @@ impl GridBot {
             grid_rebalancer,
             // PR #94 Commit 5b: starts at 0.0 = Hold strength = flat sizing
             last_signal_strength:    0.0,
+            // PR #94 Commit 6: session counter — reset to 0 at construction
+            orders_filtered_session: 0,
             feed,
             session_start:           Instant::now(),
             last_price:              None,
@@ -508,6 +531,10 @@ impl GridBot {
             self.grid_state.update_level(level).await;
         }
 
+        // PR #94 Commit 6: accumulate per-call filtered count into session counter
+        // so GridBotStats can surface it without reaching into place_grid_orders().
+        self.orders_filtered_session += orders_filtered as u64;
+
         info!("[BOT] Placed {} orders ({} pairs), {} filtered, {} failed",
               orders_placed, buy_levels.min(sell_levels), orders_filtered, orders_failed);
         Ok(())
@@ -589,6 +616,14 @@ impl GridBot {
         let open_orders   = self.engine.open_order_count().await;
         let current_price = self.last_price.unwrap_or(0.0);
         let cb_status     = self.circuit_breaker.status();
+
+        // PR #94 Commit 6: pull fee filter counters from GridRebalancer.
+        // fee_filter_stats() is sync — safe to call from async context.
+        let (fee_checked, fee_passed, fee_blocked) = self.grid_rebalancer
+            .fee_filter_stats()
+            .map(|s| (s.total_checked, s.total_passed, s.total_blocked))
+            .unwrap_or((0, 0, 0));
+
         GridBotStats {
             total_cycles:            self.total_cycles,
             successful_trades:       self.successful_trades,
@@ -610,6 +645,12 @@ impl GridBot {
             optimization_count:      self.adaptive_optimizer.adjustment_count,
             total_fills_tracked:     self.total_fills_tracked,
             intent_conflicts:        self.intent_conflicts,
+            // PR #94 Commit 6: observability fields
+            last_signal_strength:     self.last_signal_strength,
+            orders_filtered_session:  self.orders_filtered_session,
+            fee_filter_total_checked: fee_checked,
+            fee_filter_total_passed:  fee_passed,
+            fee_filter_total_blocked: fee_blocked,
         }
     }
 
@@ -755,12 +796,14 @@ impl Bot for GridBot {
         self.display_status(final_price).await;
         self.display_strategy_performance().await;
         info!(
-            "[BOT] Shutdown complete | cycles={} fills={} orders={} repos={} conflicts={} uptime={}s pnl=${:.2}",
+            "[BOT] Shutdown complete | cycles={} fills={} orders={} repos={} \
+             conflicts={} filtered={} uptime={}s pnl=${:.2}",
             self.total_cycles,
             self.total_fills_tracked,
             self.total_orders_placed,
             self.grid_repositions,
             self.intent_conflicts,
+            self.orders_filtered_session,
             self.session_start.elapsed().as_secs(),
             self.last_known_pnl,
         );
@@ -808,6 +851,20 @@ pub struct GridBotStats {
     pub optimization_count:      u64,
     pub total_fills_tracked:     u64,
     pub intent_conflicts:        u64,
+    // ── PR #94 Commit 6: Items 1+2 observability ─────────────────────────
+    /// Cached consensus signal strength from the last process_price_update() tick.
+    /// Hold = 0.0, Buy/Sell = 0.25–0.5, StrongBuy/Sell = 0.5–1.0.
+    /// Lets orchestrator/Telegram/Supabase read conviction without touching GridBot.
+    pub last_signal_strength:       f64,
+    /// Session-lifetime count of grid levels skipped by SmartFeeFilter.
+    /// Accumulated across all place_grid_orders() calls since bot start.
+    pub orders_filtered_session:    u64,
+    /// Total grid levels evaluated by the SmartFeeFilter since bot start.
+    pub fee_filter_total_checked:   u64,
+    /// Total grid levels that passed the SmartFeeFilter profitability gate.
+    pub fee_filter_total_passed:    u64,
+    /// Total grid levels blocked by the SmartFeeFilter (unprofitable).
+    pub fee_filter_total_blocked:   u64,
 }
 
 impl GridBotStats {
@@ -839,6 +896,23 @@ impl GridBotStats {
         println!("   Max Drawdown:      {:.2}%", self.max_drawdown);
         println!("   Signal Exec Rate:  {:.2}%", self.signal_execution_ratio);
         println!("   Grid Efficiency:   {:.2}%", self.grid_efficiency * 100.0);
+        // PR #94 Commit 6: signal sizing observability
+        println!("\n[SIGNAL SIZING]");
+        println!("   Signal Strength:   {:.3}", self.last_signal_strength);
+        // PR #94 Commit 6: fee filter observability
+        println!("\n[FEE FILTER]");
+        println!("   Orders Filtered:   {}", self.orders_filtered_session);
+        println!("   Total Checked:     {}", self.fee_filter_total_checked);
+        println!("   Passed:            {}", self.fee_filter_total_passed);
+        println!("   Blocked:           {}", self.fee_filter_total_blocked);
+        if self.fee_filter_total_checked > 0 {
+            println!("   Pass Rate:         {:.1}%",
+                self.fee_filter_total_passed as f64
+                    / self.fee_filter_total_checked as f64
+                    * 100.0);
+        } else {
+            println!("   Pass Rate:         - (no orders evaluated yet)");
+        }
         println!("\n[OPTIMIZER]");
         println!("   Current Spacing:   {:.3}%", self.current_spacing_percent * 100.0);
         println!("   Current Size:      {:.3} SOL", self.current_position_size);
@@ -861,7 +935,41 @@ mod tests {
     use crate::risk::circuit_breaker::TripReason;
 
     // ────────────────────────────────────────────────────────────────────────
-    // Existing tests (carried forward verbatim)
+    // Helper: zero-value GridBotStats for tests that only care about
+    // specific fields. Avoids repeating 24 fields in every test.
+    // ────────────────────────────────────────────────────────────────────────
+    fn zero_stats() -> GridBotStats {
+        GridBotStats {
+            total_cycles:            0,
+            successful_trades:       0,
+            grid_repositions:        0,
+            open_orders:             0,
+            total_value_usdc:        0.0,
+            pnl_usdc:                0.0,
+            roi_percent:             0.0,
+            win_rate:                0.0,
+            total_fees:              0.0,
+            trading_paused:          false,
+            profitable_trades:       0,
+            unprofitable_trades:     0,
+            max_drawdown:            0.0,
+            signal_execution_ratio:  0.0,
+            grid_efficiency:         0.0,
+            current_spacing_percent: 0.0,
+            current_position_size:   0.0,
+            optimization_count:      0,
+            total_fills_tracked:     0,
+            intent_conflicts:        0,
+            last_signal_strength:    0.0,
+            orders_filtered_session: 0,
+            fee_filter_total_checked: 0,
+            fee_filter_total_passed:  0,
+            fee_filter_total_blocked: 0,
+        }
+    }
+
+    // ────────────────────────────────────────────────────────────────────────
+    // Existing tests (carried forward — use zero_stats() helper)
     // ────────────────────────────────────────────────────────────────────────
 
     #[test]
@@ -887,6 +995,11 @@ mod tests {
             optimization_count:      2,
             total_fills_tracked:     42,
             intent_conflicts:        0,
+            last_signal_strength:    0.0,
+            orders_filtered_session: 0,
+            fee_filter_total_checked: 0,
+            fee_filter_total_passed:  0,
+            fee_filter_total_blocked: 0,
         };
         assert_eq!(stats.total_cycles, 100);
         assert_eq!(stats.successful_trades, 42);
@@ -898,26 +1011,8 @@ mod tests {
     #[test]
     fn test_gridbotstats_intent_conflicts_tracked() {
         let stats = GridBotStats {
-            total_cycles:            50,
-            successful_trades:       10,
-            grid_repositions:        1,
-            open_orders:             4,
-            total_value_usdc:        1000.0,
-            pnl_usdc:                0.0,
-            roi_percent:             0.0,
-            win_rate:                0.5,
-            total_fees:              0.5,
-            trading_paused:          false,
-            profitable_trades:       5,
-            unprofitable_trades:     5,
-            max_drawdown:            1.0,
-            signal_execution_ratio:  0.80,
-            grid_efficiency:         0.85,
-            current_spacing_percent: 0.003,
-            current_position_size:   0.1,
-            optimization_count:      1,
-            total_fills_tracked:     10,
-            intent_conflicts:        3,
+            intent_conflicts: 3,
+            ..zero_stats()
         };
         assert_eq!(stats.intent_conflicts, 3);
     }
@@ -925,26 +1020,17 @@ mod tests {
     #[test]
     fn test_win_rate_guard_zero_closed_trades() {
         let stats = GridBotStats {
-            total_cycles:            100,
-            successful_trades:       3,
-            grid_repositions:        0,
-            open_orders:             8,
-            total_value_usdc:        1000.0,
-            pnl_usdc:                0.0,
-            roi_percent:             0.0,
-            win_rate:                0.0,
-            total_fees:              0.05,
-            trading_paused:          false,
-            profitable_trades:       0,
-            unprofitable_trades:     0,
-            max_drawdown:            0.0,
-            signal_execution_ratio:  1.0,
-            grid_efficiency:         0.5,
+            total_cycles:        100,
+            successful_trades:   3,
+            open_orders:         8,
+            total_value_usdc:    1000.0,
+            total_fees:          0.05,
+            signal_execution_ratio: 1.0,
+            grid_efficiency:     0.5,
             current_spacing_percent: 0.003,
             current_position_size:   0.1,
-            optimization_count:      0,
-            total_fills_tracked:     3,
-            intent_conflicts:        0,
+            total_fills_tracked: 3,
+            ..zero_stats()
         };
         assert_eq!(stats.profitable_trades + stats.unprofitable_trades, 0);
         assert!((stats.win_rate - 0.0).abs() < 1e-9);
@@ -953,26 +1039,25 @@ mod tests {
     #[test]
     fn test_win_rate_guard_with_closed_trades() {
         let stats = GridBotStats {
-            total_cycles:            200,
-            successful_trades:       10,
-            grid_repositions:        1,
-            open_orders:             6,
-            total_value_usdc:        1020.0,
-            pnl_usdc:                20.0,
-            roi_percent:             2.0,
-            win_rate:                75.0,
-            total_fees:              0.25,
-            trading_paused:          false,
-            profitable_trades:       6,
-            unprofitable_trades:     2,
-            max_drawdown:            0.5,
-            signal_execution_ratio:  99.8,
-            grid_efficiency:         0.7,
+            total_cycles:        200,
+            successful_trades:   10,
+            grid_repositions:    1,
+            open_orders:         6,
+            total_value_usdc:    1020.0,
+            pnl_usdc:            20.0,
+            roi_percent:         2.0,
+            win_rate:            75.0,
+            total_fees:          0.25,
+            profitable_trades:   6,
+            unprofitable_trades: 2,
+            max_drawdown:        0.5,
+            signal_execution_ratio: 99.8,
+            grid_efficiency:     0.7,
             current_spacing_percent: 0.003,
             current_position_size:   0.1,
-            optimization_count:      1,
-            total_fills_tracked:     10,
-            intent_conflicts:        0,
+            optimization_count:  1,
+            total_fills_tracked: 10,
+            ..zero_stats()
         };
         assert!(stats.profitable_trades + stats.unprofitable_trades > 0);
         assert!((stats.win_rate - 75.0).abs() < 1e-9);
@@ -1087,14 +1172,21 @@ mod tests {
     #[test]
     fn test_circuit_breaker_trading_paused_in_stats() {
         let stats_paused = GridBotStats {
-            total_cycles: 10, successful_trades: 0, grid_repositions: 0,
-            open_orders: 0, total_value_usdc: 800.0, pnl_usdc: -200.0,
-            roi_percent: -20.0, win_rate: 0.0, total_fees: 0.5,
+            total_cycles:        10,
+            open_orders:         0,
+            total_value_usdc:    800.0,
+            pnl_usdc:            -200.0,
+            roi_percent:         -20.0,
+            total_fees:          0.5,
             trading_paused:      true,
-            profitable_trades: 0, unprofitable_trades: 5,
-            max_drawdown: 20.0, signal_execution_ratio: 1.0, grid_efficiency: 0.3,
-            current_spacing_percent: 0.003, current_position_size: 0.1,
-            optimization_count: 0, total_fills_tracked: 5, intent_conflicts: 0,
+            unprofitable_trades: 5,
+            max_drawdown:        20.0,
+            signal_execution_ratio: 1.0,
+            grid_efficiency:     0.3,
+            current_spacing_percent: 0.003,
+            current_position_size:   0.1,
+            total_fills_tracked: 5,
+            ..zero_stats()
         };
         assert!(stats_paused.trading_paused);
         let stats_ok = GridBotStats { trading_paused: false, ..stats_paused.clone() };
@@ -1175,12 +1267,9 @@ mod tests {
         }
     }
 
-    /// Flag=false → effective_size always equals base order_size, regardless
-    /// of signal strength or multiplier value.
     #[test]
     fn test_smart_sizing_disabled_uses_base_size() {
         let base = 0.1_f64;
-        // Even with a strong signal and large multiplier, flag=false → no change.
         let effective = compute_effective_size(false, base, 1.0, 2.0, 0.05, 10.0);
         assert!(
             (effective - base).abs() < 1e-12,
@@ -1188,12 +1277,9 @@ mod tests {
         );
     }
 
-    /// Hold signal (strength=0.0) → multiplier=1.0 → effective_size == base_size.
-    /// Proves consensus indifference is truly flat regardless of configured multiplier.
     #[test]
     fn test_smart_sizing_hold_signal_no_size_change() {
         let base = 0.1_f64;
-        // strength=0.0 regardless of configured multiplier → multiplier = 1.0 + 0 × (X-1) = 1.0
         for multiplier_cfg in [1.0_f64, 1.5, 2.0, 3.0] {
             let effective = compute_effective_size(true, base, 0.0, multiplier_cfg, 0.05, 10.0);
             assert!(
@@ -1203,13 +1289,9 @@ mod tests {
         }
     }
 
-    /// StrongBuy at max confidence (strength=1.0) with multiplier=2.0
-    /// should exactly double the base size (within float epsilon), pre-clamp.
     #[test]
     fn test_smart_sizing_strong_signal_scales_up() {
         let base = 0.1_f64;
-        // strength=1.0 (StrongBuy conf=1.0), multiplier_cfg=2.0
-        // expected: (0.1 * (1.0 + 1.0 * 1.0)).clamp(0.05, 10.0) = 0.2
         let effective = compute_effective_size(true, base, 1.0, 2.0, 0.05, 10.0);
         assert!(
             (effective - 0.2_f64).abs() < 1e-12,
@@ -1217,13 +1299,10 @@ mod tests {
         );
     }
 
-    /// Clamp ceiling — even at max strength + max multiplier, effective_size
-    /// never exceeds max_position_size.
     #[test]
     fn test_smart_sizing_clamp_respects_max_position() {
         let base = 5.0_f64;
         let max  = 8.0_f64;
-        // 5.0 * (1 + 1.0 * 2.0) = 15.0 → clamped to 8.0
         let effective = compute_effective_size(true, base, 1.0, 3.0, 0.05, max);
         assert!(
             (effective - max).abs() < 1e-12,
@@ -1231,17 +1310,63 @@ mod tests {
         );
     }
 
-    /// Clamp floor — effective_size never goes below min_order_sol,
-    /// even with a sub-1.0 multiplier config edge case.
     #[test]
     fn test_smart_sizing_clamp_respects_min_order() {
         let base    = 0.1_f64;
         let min_sol = 0.08_f64;
-        // multiplier_cfg=0.5, strength=1.0 → mult = 1 + 1*(0.5-1) = 0.5 → 0.05 < 0.08 → clamped
         let effective = compute_effective_size(true, base, 1.0, 0.5, min_sol, 10.0);
         assert!(
             (effective - min_sol).abs() < 1e-12,
             "clamp min: expected {min_sol}, got {effective}"
+        );
+    }
+
+    // ────────────────────────────────────────────────────────────────────────
+    // PR #94 Commit 6: GridBotStats observability field tests
+    // ────────────────────────────────────────────────────────────────────────
+
+    /// New fields default to zero — orchestrator consumers get safe baseline.
+    #[test]
+    fn test_gridbotstats_fee_filter_fields_zero_default() {
+        let stats = zero_stats();
+        assert_eq!(stats.orders_filtered_session,  0);
+        assert_eq!(stats.fee_filter_total_checked, 0);
+        assert_eq!(stats.fee_filter_total_passed,  0);
+        assert_eq!(stats.fee_filter_total_blocked, 0);
+        assert!((stats.last_signal_strength - 0.0).abs() < 1e-12);
+    }
+
+    /// Fee filter counters are independently settable and correctly read back.
+    #[test]
+    fn test_gridbotstats_fee_filter_fields_populated() {
+        let stats = GridBotStats {
+            fee_filter_total_checked: 120,
+            fee_filter_total_passed:   95,
+            fee_filter_total_blocked:  25,
+            orders_filtered_session:   25,
+            ..zero_stats()
+        };
+        assert_eq!(stats.fee_filter_total_checked, 120);
+        assert_eq!(stats.fee_filter_total_passed,   95);
+        assert_eq!(stats.fee_filter_total_blocked,  25);
+        assert_eq!(stats.orders_filtered_session,   25);
+        // Invariant: checked == passed + blocked
+        assert_eq!(
+            stats.fee_filter_total_passed + stats.fee_filter_total_blocked,
+            stats.fee_filter_total_checked
+        );
+    }
+
+    /// Signal strength field carries the cached consensus value end-to-end.
+    #[test]
+    fn test_gridbotstats_signal_strength_field() {
+        let stats = GridBotStats {
+            last_signal_strength: 0.75,
+            ..zero_stats()
+        };
+        assert!(
+            (stats.last_signal_strength - 0.75).abs() < 1e-12,
+            "expected 0.75, got {}", stats.last_signal_strength
         );
     }
 }
