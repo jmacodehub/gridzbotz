@@ -38,6 +38,7 @@
 #![allow(clippy::field_reassign_with_default)]
 #![allow(clippy::if_same_then_else)]
 #![allow(clippy::doc_lazy_continuation)]
+#![allow(clippy::doc_overindented_list_items)]
 #![allow(clippy::clone_on_copy)]
 #![allow(clippy::should_implement_trait)]
 #![allow(clippy::derivable_impls)]

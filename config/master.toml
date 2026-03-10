@@ -1,5 +1,15 @@
 # ═══════════════════════════════════════════════════════════════════════════
-#  🏆 MASTER V5.4.2 — GRIDZBOTZ — CANONICAL CONFIG TEMPLATE
+#  🏆 MASTER V5.5.1 — GRIDZBOTZ — CANONICAL CONFIG TEMPLATE
+#
+#  V5.5.1 (fix/risk-continuous-sl-monitoring — PR #89):
+#  ✅ [risk] enable_trailing_stop added (default: false = fixed stop)
+#     Wires RiskConfig.enable_trailing_stop from TOML — was always parsed
+#     by the Rust struct but had no canonical default in master.toml.
+#     Set true to activate trailing-stop mode in StopLossManager.
+#
+#  V5.5.0 (feat/dynamic-priority-fees — PR #79):
+#  ✅ [priority_fees] section added — dynamic CU-based fee estimation
+#  ✅ max_consecutive_losses added to [risk]
 #
 #  V5.4.2 (improve/config-rd-future-patterns) — Future Pattern Annotations:
 #  ✅ 3x 🔮 Future annotations added to [trading] section:
@@ -20,16 +30,6 @@
 #  ✅ keystore_path now configurable (no hardcoded paths)
 #  ✅ Transaction safety limits: per-trade, daily count, daily volume
 #  ✅ Multi-bot ready: each instance can use different keypair
-#
-#  V5.3 (PR #38 - Mar 2, 2026) — Live Execution Wiring:
-#  ✅ RealTradingEngine activated for --mode live
-#  ✅ Capital safety validation (min $10 enforced)
-#  ✅ Live SOL price passed to engine for accurate NAV tracking
-#
-#  V5.1 Stage 2 (Mar 1, 2026) — Per-strategy tuning wired to TOML:
-#  ✅ [strategies.rsi]:          extreme_oversold / extreme_overbought
-#  ✅ [strategies.mean_reversion]: strong_buy/sell thresholds
-#  ✅ [strategies.momentum_macd]:  full MACD config section
 #
 #  ── CONFIG STRUCTURE ───────────────────────────────────────────────────
 #
@@ -419,6 +419,20 @@ circuit_breaker_cooldown_secs = 300
 # Complements drawdown-based tripping — catches slow-bleed scenarios.
 max_consecutive_losses = 5
 
+# ✅ PR #89: Trailing stop mode — controls StopLossManager behaviour.
+#
+# | enable_trailing_stop | Behaviour                                          |
+# |----------------------|----------------------------------------------------|
+# | false (default)      | Fixed stop — fires when price drops stop_loss_pct% |
+# |                      | below entry_price. Reference never moves.          |
+# | true                 | Trailing stop — reference ratchets up with the     |
+# |                      | highest price seen since position open.            |
+# |                      | Locks in gains; fires when price reverses          |
+# |                      | stop_loss_pct% from the peak.                      |
+#
+# Trailing stop is aggressive — enable in trending markets only.
+# Default false = fixed stop (safe for ranging/sideways SOL/USDC grids).
+enable_trailing_stop = false
 
 # ═══════════════════════════════════════════════════════════════════════════
 #  💰 FEE CONFIGURATION — Single Source of Truth (V1.0)

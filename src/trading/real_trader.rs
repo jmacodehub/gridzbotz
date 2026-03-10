@@ -1,5 +1,16 @@
 //! =============================================================================
-//! REAL TRADER ENGINE V2.8
+//! REAL TRADER ENGINE V2.9
+//!
+//! V2.9 CHANGES (fix/risk-continuous-sl-monitoring — PR #89):
+//! ✅ process_price_update(): continuous SL/TP monitoring on every price tick.
+//!    - Reads entry_price() from StopLossManager (0.0 until first fill).
+//!    - Acquires single write lock, checks should_stop_loss() then
+//!      should_take_profit() in one atomic pass.
+//!    - Lock dropped before any async call (no lock held across await).
+//!    - Stop-loss fires  → trigger_emergency_shutdown() with formatted reason.
+//!    - Take-profit fires → auto_take_profit() partial-sell (existing path).
+//!    - entry_price == 0.0 guard → no-op before first position opens;
+//!      zero cost on every cycle until a real fill is confirmed.
 //!
 //! V2.8 CHANGES (fix/risk-stop-loss-wiring — PR #88):
 //! ✅ StopLossManager wired into RealTradingEngine.
@@ -27,7 +38,7 @@
 //! ✅ rpc_url Default: None — must be wired via from_config().
 //! ✅ from_execution_config() renamed → from_config(global: &Config).
 //!
-//! March 2026 — V2.8 🚀
+//! March 2026 — V2.9 🚀
 //! =============================================================================
 
 use anyhow::{bail, Context, Result};
@@ -294,6 +305,7 @@ pub struct RealTradingEngine {
     executor:              Arc<RwLock<TransactionExecutor>>,
     circuit_breaker:       Arc<RwLock<CircuitBreaker>>,
     /// ✅ V2.8 PR #88: StopLossManager wired — checks before every Jupiter swap.
+    /// ✅ V2.9 PR #89: Also checked on every price tick via process_price_update().
     /// Reads thresholds from RiskConfig (stop_loss_pct, take_profit_pct).
     /// Shared via Arc<RwLock> so should_stop_loss() can mutate trailing-stop state.
     stop_loss_manager:     Arc<RwLock<StopLossManager>>,
@@ -328,7 +340,7 @@ impl RealTradingEngine {
         initial_balance_sol: f64,
         initial_sol_price_usd: f64,
     ) -> Result<Self> {
-        info!("[RealEngine] Initializing V2.8");
+        info!("[RealEngine] Initializing V2.9");
 
         config.validate()?;
 
@@ -341,7 +353,7 @@ impl RealTradingEngine {
         ));
 
         // ✅ V2.8: Construct StopLossManager from global_config.risk.*
-        //    Reads stop_loss_pct and take_profit_pct (correct fields, PR #88 fix).
+        //    Reads stop_loss_pct, take_profit_pct, and enable_trailing_stop.
         let stop_loss_manager = Arc::new(RwLock::new(
             StopLossManager::new(global_config)
         ));
@@ -350,7 +362,7 @@ impl RealTradingEngine {
         // Replaces deleted RealTradingConfig::profit_take_threshold shadow field.
         let profit_take_pct = global_config.risk.take_profit_pct;
 
-        // ── Dynamic priority fees ───────────────────────────────────────────
+        // ── Dynamic priority fees ───────────────────────────────────────────────────────────────────
         let (priority_fee_estimator, static_priority_fee) =
             if global_config.priority_fees.enable_dynamic {
                 let source = AsyncRpcFeeSource::new(
@@ -386,12 +398,14 @@ impl RealTradingEngine {
             initial_sol_price_usd,
         ));
 
-        info!("[RealEngine] Initialized V2.8");
+        info!("[RealEngine] Initialized V2.9");
         info!("  Wallet      : {}", keystore.pubkey());
         info!("  NAV         : ${:.2} (SOL @ ${:.4})",
             balance_tracker.initial_balance_usd(), initial_sol_price_usd);
         info!("  Stop-loss   : -{:.1}% | Take-profit: +{:.1}%",
             global_config.risk.stop_loss_pct, profit_take_pct);
+        info!("  SL mode     : {}",
+            if global_config.risk.enable_trailing_stop { "trailing" } else { "fixed" });
 
         Ok(Self {
             keystore,
@@ -541,7 +555,7 @@ impl RealTradingEngine {
                 "jupiter_api_key not configured — set GRIDZBOTZ_JUPITER_API_KEY env var"
             ))?;
 
-        // ── Dynamic priority fee ───────────────────────────────────────
+        // ── Dynamic priority fee ──────────────────────────────────────────────────────────────
         let per_cu_microlamports = match &self.priority_fee_estimator {
             Some(estimator) => {
                 let fee = estimator.get_priority_fee().await;
@@ -691,11 +705,15 @@ impl RealTradingEngine {
         let stats       = self.get_performance_stats().await;
         let (daily_trades, daily_volume) = self.keystore.get_daily_stats().await;
         let executor_stats = self.executor.read().await.get_stats();
-        let (sl_pct, tp_pct) = self.stop_loss_manager.read().await.thresholds();
+        let sl_mgr = self.stop_loss_manager.read().await;
+        let (sl_pct, tp_pct) = sl_mgr.thresholds();
+        let sl_mode = if sl_mgr.is_trailing() { "trailing" } else { "fixed" };
+        let highest  = sl_mgr.highest_observed_price();
+        drop(sl_mgr);
 
         println!();
         println!("=======================================================");
-        println!("  REAL TRADING ENGINE V2.8 - STATUS");
+        println!("  REAL TRADING ENGINE V2.9 - STATUS");
         println!("=======================================================");
         println!();
         println!("Balances:");
@@ -720,8 +738,11 @@ impl RealTradingEngine {
         println!("  Total Exec      : {}",     executor_stats.total_executions);
         println!();
         println!("Risk Guards:");
-        println!("  Stop-loss   : -{:.1}%",   sl_pct);
-        println!("  Take-profit : +{:.1}%",   tp_pct);
+        println!("  Stop-loss   : -{:.1}%  ({})", sl_pct, sl_mode);
+        println!("  Take-profit : +{:.1}%",       tp_pct);
+        if sl_mode == "trailing" && highest > 0.0 {
+            println!("  Trailing high: ${:.4}",   highest);
+        }
         println!();
         println!("Priority Fees:");
         if self.priority_fee_estimator.is_some() {
@@ -796,13 +817,58 @@ impl TradingEngine for RealTradingEngine {
         Ok(0)
     }
 
-    /// Tick price-based risk guards on every cycle.
+    /// Continuous SL/TP monitoring — called on every Pyth price tick (10Hz).
     ///
-    /// Calls `is_trading_allowed()` first so circuit-breaker cooldown resets
-    /// fire on every cycle, not just when a trade is attempted.
+    /// Execution order:
+    /// 1. Circuit-breaker cooldown tick (`is_trading_allowed()`).
+    /// 2. NAV reconciliation (P&L → circuit-breaker).
+    /// 3. SL/TP check (only when entry_price > 0.0 — i.e. after first fill):
+    ///    acquire write lock, snapshot stop/profit booleans, drop lock,
+    ///    then call shutdown or take-profit without holding the lock.
+    ///
+    /// Lock safety: write lock held only for two synchronous predicate calls,
+    /// explicitly dropped before any async call. No deadlock risk.
+    ///
+    /// Zero-cost before first fill: `entry_price()` returns 0.0 until
+    /// `reset_for_new_position()` fires on a confirmed trade.
     async fn process_price_update(&self, current_price: f64) -> TradingResult<Vec<FillEvent>> {
+        // Step 1: circuit-breaker cooldown tick.
         let _ = self.circuit_breaker.write().await.is_trading_allowed();
+
+        // Step 2: NAV reconciliation.
         self.reconcile_balances(current_price).await?;
+
+        // Step 3: continuous SL/TP monitoring.
+        // ✅ V2.9 PR #89: entry_price is 0.0 until reset_for_new_position() fires
+        // on a confirmed fill → this block is a no-op before the first trade.
+        let entry_price = self.stop_loss_manager.read().await.entry_price();
+        if entry_price > 0.0 {
+            // Acquire write lock once — needed to ratchet trailing-stop high.
+            // Snapshot both booleans synchronously, then drop before async work.
+            let (stop_triggered, profit_triggered) = {
+                let mut sl = self.stop_loss_manager.write().await;
+                let stop   = sl.should_stop_loss(entry_price, current_price);
+                let profit = if stop { false } else {
+                    sl.should_take_profit(entry_price, current_price)
+                };
+                (stop, profit)
+            }; // ← write lock released here — safe to call async below
+
+            if stop_triggered {
+                let (sl_pct, _) = self.stop_loss_manager.read().await.thresholds();
+                self.trigger_emergency_shutdown(&format!(
+                    "STOP-LOSS: price ${:.4} crossed -{:.1}% threshold (entry ${:.4})",
+                    current_price, sl_pct, entry_price
+                )).await?;
+            } else if profit_triggered {
+                info!(
+                    "[RealEngine] TAKE-PROFIT on price tick: ${:.4} (entry ${:.4})",
+                    current_price, entry_price
+                );
+                self.auto_take_profit(current_price).await?;
+            }
+        }
+
         Ok(vec![])
     }
 

@@ -1,7 +1,12 @@
 //! ═══════════════════════════════════════════════════════════════════════════
-//! 🎛️  UNIFIED CONFIGURATION SYSTEM V5.1 - GRIDZBOTZ
+//! 🎛️  UNIFIED CONFIGURATION SYSTEM V5.2 - GRIDZBOTZ
 //!
-//! Stage 2: Per-Strategy Tuning Params Wired to TOML
+//! V5.2 ADDITIONS (PR #89 — fix/risk-continuous-sl-monitoring):
+//! ✅ RiskConfig: enable_trailing_stop added (default: false)
+//!    - When false: fixed stop — reference price is always entry_price
+//!    - When true:  trailing stop — reference ratchets up with highest_price
+//!    - Wires into StopLossManager::new() replacing the hardcoded `false`
+//!    - All 46 existing TOMLs parse unchanged (serde(default) + fn → false)
 //!
 //! V5.1 ADDITIONS (Stage 2 — Mar 1, 2026):
 //! ✅ RsiStrategyConfig: extreme_oversold + extreme_overbought (defaults: 20.0 / 80.0)
@@ -46,7 +51,7 @@
 //! • Environment-specific overrides
 //! • Comprehensive validation
 //!
-//! March 1, 2026 - V5.1 STAGE 2: PER-STRATEGY TUNING PARAMS 🚀
+//! March 10, 2026 - V5.2: enable_trailing_stop added to RiskConfig 🛑
 //! ═══════════════════════════════════════════════════════════════════════════
 
 use serde::{Deserialize, Serialize};
@@ -142,7 +147,7 @@ pub struct BotConfig {
     /// Bot name (e.g., "GridzBot-Live-1")
     pub name: String,
 
-    /// Bot version (e.g., "5.1.0")
+    /// Bot version (e.g., "5.2.0")
     pub version: String,
 
     /// Environment: "testing", "development", "production"
@@ -1245,6 +1250,13 @@ impl Default for MomentumMACDStrategyConfig {
 // RISK CONFIGURATION
 // ═══════════════════════════════════════════════════════════════════════════
 
+/// Risk management configuration.
+///
+/// ## V5.2 (PR #89): enable_trailing_stop added
+/// - `false` (default): fixed stop — reference price is always entry_price.
+/// - `true`:            trailing stop — reference ratchets up with highest
+///                      observed price since position open.
+/// All existing TOMLs omitting this field parse unchanged (serde default = false).
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RiskConfig {
@@ -1273,6 +1285,19 @@ pub struct RiskConfig {
     /// Maximum consecutive losing trades before circuit breaker trips
     #[serde(default = "default_max_consecutive_losses")]
     pub max_consecutive_losses: u32,
+
+    /// Enable trailing stop-loss.
+    ///
+    /// - `false` (default): fixed stop — stop fires when price drops
+    ///   `stop_loss_pct`% below entry_price.
+    /// - `true`: trailing stop — stop fires when price drops `stop_loss_pct`%
+    ///   below the highest price seen since position open.
+    ///   Locks in gains as price rises; never moves the stop downward.
+    ///
+    /// Set in master.toml [risk] section:
+    ///   enable_trailing_stop = true
+    #[serde(default = "default_trailing_stop")]
+    pub enable_trailing_stop: bool,
 }
 
 impl RiskConfig {
@@ -1285,7 +1310,7 @@ impl RiskConfig {
             bail!("max_drawdown_pct must be between 0-100%");
         }
 
-                if self.max_consecutive_losses == 0 {
+        if self.max_consecutive_losses == 0 {
             bail!("max_consecutive_losses must be > 0");
         }
 
@@ -1592,8 +1617,13 @@ fn default_wallet_path() -> String { "~/.config/solana/id.json".to_string() }
 fn default_max_trade_size_usdc() -> f64 { 250.0 }
 fn default_max_consecutive_losses() -> u32 { 5 }
 
+// --- V5.2 PR #89: Trailing stop default ---
+/// Default: false — fixed stop. Set `enable_trailing_stop = true` in [risk]
+/// TOML to activate trailing stop behaviour.
+fn default_trailing_stop() -> bool { false }
+
 // ═══════════════════════════════════════════════════════════════════════════
-// MAIN CONFIG IMPLEMENTATION - V5.1 PRODUCTION GRADE! 🚀
+// MAIN CONFIG IMPLEMENTATION - V5.2 PRODUCTION GRADE! 🚀
 // ═══════════════════════════════════════════════════════════════════════════
 
 impl Config {
@@ -1684,7 +1714,7 @@ impl Config {
             self.execution.validate()
                 .context("Execution config validation failed")?;
 
-                        // 🆕 V5.2: Validate wallet file exists and is readable
+            // 🆕 V5.2: Validate wallet file exists and is readable
             self.security.validate_for_live_mode()
                 .context("Security config validation failed for live mode")?;
 
@@ -1711,7 +1741,7 @@ impl Config {
         let border = "═".repeat(78);
 
         println!("\n{}", border);
-        println!("  🤖 GRIDZBOTZ V5.1 - CONFIGURATION");
+        println!("  🤖 GRIDZBOTZ V5.2 - CONFIGURATION");
         println!("{}\n", border);
 
         println!("📋 BOT: {} v{} [{}]",
@@ -1797,7 +1827,9 @@ impl Config {
         println!("\n🛡️  RISK MANAGEMENT:");
         println!("   Max Position:     {:.0}%", self.risk.max_position_size_pct);
         println!("   Max Drawdown:     {:.1}%", self.risk.max_drawdown_pct);
-        println!("   Stop Loss:        {:.1}%", self.risk.stop_loss_pct);
+        println!("   Stop Loss:        {:.1}% ({})",
+            self.risk.stop_loss_pct,
+            if self.risk.enable_trailing_stop { "trailing" } else { "fixed" });
         println!("   Take Profit:      {:.1}%", self.risk.take_profit_pct);
         println!("   Circuit Breaker:  {} ({:.1}%)",
             if self.risk.enable_circuit_breaker { "✅" } else { "❌" },
@@ -1805,7 +1837,7 @@ impl Config {
         if self.risk.enable_circuit_breaker {
             println!("   Max Consec Loss:  {} trades", self.risk.max_consecutive_losses);
         }
-                if self.priority_fees.enable_dynamic {
+        if self.priority_fees.enable_dynamic {
             println!("   Priority Fees:    ⚡ dynamic (P{}, {:.1}x, {}-{} µL)",
                 self.priority_fees.percentile,
                 self.priority_fees.multiplier,
@@ -1834,7 +1866,7 @@ impl ConfigBuilder {
             config: Config {
                 bot: BotConfig {
                     name: "GridzBot-Builder".to_string(),
-                    version: "5.1.0".to_string(),
+                    version: "5.2.0".to_string(),
                     environment: "testing".to_string(),
                     execution_mode: "paper".to_string(),
                     instance_id: None,
@@ -1889,6 +1921,8 @@ impl ConfigBuilder {
                     circuit_breaker_threshold_pct: 8.0,
                     circuit_breaker_cooldown_secs: 300,
                     max_consecutive_losses: default_max_consecutive_losses(),
+                    // ✅ V5.2 PR #89: enable_trailing_stop wired in builder
+                    enable_trailing_stop: false,
                 },
                 fees: FeesConfig::default(),
                 priority_fees: PriorityFeeConfig::default(),
