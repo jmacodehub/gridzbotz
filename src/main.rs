@@ -29,7 +29,9 @@
 
 use solana_grid_bot::init;
 use solana_grid_bot::config::Config;
-use solana_grid_bot::bots::{GridBot, Bot, Orchestrator, OrchestratorConfig};
+// FIX 1: OrchestratorConfig lives inside bots::orchestrator — not used directly
+// in main.rs scope. Removing avoids the unused-import warning/error.
+use solana_grid_bot::bots::{GridBot, Bot, Orchestrator};
 use solana_grid_bot::trading::{
     PriceFeed, EngineParams, create_engine, engine_mode_label,
     fetch_wallet_balances_for_orchestrator,
@@ -495,12 +497,21 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     // ── PATH A: Fleet mode (──orchestrate <orch.toml>) ───────────────────────
     if let Some(ref orch_path) = args.orchestrate {
-        // Minimal single-bot config for banner (uses --config default)
-        // The orchestrator owns its own per-bot configs; we only need this
-        // for the version/env metadata line in the banner.
-        let banner_config = Config::from_file(&args.config)
-            .unwrap_or_else(|_| Config::default_config());
-        print_banner(&banner_config, /*fleet_mode=*/ true);
+        // FIX 2: Config::default_config() does not exist on Config.
+        // The banner is best-effort in fleet mode — if --config is absent
+        // we print a minimal fleet-only banner without instance metadata.
+        // Use if-let so a missing/invalid config is silently skipped.
+        if let Ok(banner_config) = Config::from_file(&args.config) {
+            print_banner(&banner_config, /*fleet_mode=*/ true);
+        } else {
+            // Minimal fleet banner without per-bot config metadata
+            let border = "═".repeat(75);
+            println!("\n{}", border);
+            println!("     🚀 GRIDZBOTZ V5.8 — PRODUCTION GRID TRADING BOT");
+            println!("     🤖 Multi-Bot Orchestrator V1.0 · GAP-3 Complete · Fleet Ready");
+            println!("     🟠 FLEET — multi-bot Orchestrator V1.0");
+            println!("{}\n", border);
+        }
 
         let shutdown       = Arc::new(AtomicBool::new(false));
         let shutdown_clone = Arc::clone(&shutdown);
