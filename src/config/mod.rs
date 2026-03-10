@@ -1,5 +1,15 @@
 //! ═══════════════════════════════════════════════════════════════════════════
-//! 🎛️  UNIFIED CONFIGURATION SYSTEM V5.4 - GRIDZBOTZ
+//! 🎛️  UNIFIED CONFIGURATION SYSTEM V5.5 - GRIDZBOTZ
+//!
+//! V5.5 ADDITIONS (PR #94 — Commit 5a):
+//! ✅ TradingConfig: signal_size_multiplier added
+//!    - Controls how strongly consensus signal strength scales order size
+//!    - Default: 1.0 (flat — zero effect, safe opt-in)
+//!    - Active only when enable_smart_position_sizing = true
+//!    - Formula: effective_size = base_size * (1.0 + strength * (multiplier - 1.0))
+//!    - strength() from Signal enum: Hold=0.0, Buy/Sell=0.25–0.5, StrongBuy/Sell=0.5–1.0
+//!    - Validation: must be in [0.5, 3.0] when smart sizing is enabled
+//!    - Zero breaking changes — all 46 TOMLs parse unchanged (serde default)
 //!
 //! V5.4 ADDITIONS (PR #94 — Commit 3):
 //! ✅ FeeFilterConfig sub-section added under [trading.fee_filter]
@@ -29,6 +39,7 @@
 //! V5.0 ADDITIONS (Stage 1 — Feb 23, 2026):
 //! ✅ execution_mode, instance_id, ExecutionConfig, BotConfig helpers
 //!
+//! March 11, 2026 - V5.5: signal_size_multiplier added (PR #94 Commit 5a) 📐
 //! March 10, 2026 - V5.4: FeeFilterConfig added (PR #94 Commit 3) 🔥
 //! March 10, 2026 - V5.3: optimizer_interval_cycles added (PR #94 OPT-1) ⚙️
 //! March 10, 2026 - V5.2: enable_trailing_stop added to RiskConfig 🛑
@@ -400,7 +411,7 @@ impl FeeFilterConfig {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// TRADING CONFIGURATION - V5.4 ENHANCED! 🔥
+// TRADING CONFIGURATION - V5.5 ENHANCED! 📐
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -500,11 +511,36 @@ pub struct TradingConfig {
     pub enable_adaptive_spacing: bool,
 
     /// Enable smart position sizing (consensus-signal-driven).
-    /// When true, order size scales with signal strength:
-    ///   Hold → 0.75×, Buy/Sell → 1.0×, StrongBuy/StrongSell → up to 1.4×
+    /// When true, order size scales with signal strength via signal_size_multiplier:
+    ///   Hold (strength=0.0)            → 1.0× base size (no change)
+    ///   Buy/Sell (strength=0.25–0.5)   → 1.0×–1.5× at multiplier=2.0
+    ///   StrongBuy/Sell (strength=0.5–1.0) → 1.5×–2.0× at multiplier=2.0
     /// All sizes clamped to [min_order_size, max_position_size].
     #[serde(default)]
     pub enable_smart_position_sizing: bool,
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // V5.5 (PR #94 Commit 5a): Consensus Signal Position Sizing
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// Scales how strongly the consensus signal strength multiplies order size.
+    ///
+    /// Formula (in place_grid_orders):
+    ///   multiplier   = 1.0 + signal.strength() * (signal_size_multiplier - 1.0)
+    ///   effective_sz = (base_size * multiplier).clamp(min_order_size, max_position_size)
+    ///
+    /// | signal_size_multiplier | Peak effective at StrongBuy conf=1.0 (strength=1.0) |
+    /// |------------------------|------------------------------------------------------|
+    /// | 1.0 (default)          | 1.0× base — flat, consensus has zero sizing effect   |
+    /// | 1.5                    | 1.5× base at peak conviction                         |
+    /// | 2.0                    | 2.0× base at peak conviction                         |
+    /// | 3.0 (max)              | 3.0× base at peak conviction                         |
+    ///
+    /// Only active when enable_smart_position_sizing = true.
+    /// Validation: must be in [0.5, 3.0] when smart sizing is enabled.
+    /// Default: 1.0 — safe, zero behaviour change even if flag is set.
+    #[serde(default = "default_signal_size_multiplier")]
+    pub signal_size_multiplier: f64,
 
     // ─────────────────────────────────────────────────────────────────────────
     // V5.3 (PR #94 Commit 1): Adaptive Optimizer Tuning
@@ -590,6 +626,16 @@ impl TradingConfig {
         if self.optimizer_interval_cycles == 0 {
             bail!("trading.optimizer_interval_cycles must be > 0 (got 0)");
         }
+        // V5.5: validate signal_size_multiplier range when smart sizing is on
+        if self.enable_smart_position_sizing
+            && !(0.5_f64..=3.0_f64).contains(&self.signal_size_multiplier)
+        {
+            bail!(
+                "trading.signal_size_multiplier must be in [0.5, 3.0] when \
+                 enable_smart_position_sizing=true (got {:.3})",
+                self.signal_size_multiplier
+            );
+        }
         // V5.4: delegate fee_filter validation
         self.fee_filter.validate().context("trading.fee_filter validation failed")?;
         Ok(())
@@ -666,6 +712,8 @@ impl Default for TradingConfig {
             min_orders_to_maintain:          default_min_orders(),
             enable_adaptive_spacing:         false,
             enable_smart_position_sizing:    false,
+            // V5.5 PR #94 Commit 5a
+            signal_size_multiplier:          default_signal_size_multiplier(),
             optimizer_interval_cycles:       default_optimizer_interval_cycles(),
             // V5.4 PR #94 Commit 3
             fee_filter:                      FeeFilterConfig::default(),
@@ -1216,6 +1264,9 @@ fn default_min_fee_threshold_bps()    -> u32    { 8 }
 fn default_max_fee_threshold_bps()    -> u32    { 50 }
 /// SmartFeeFilter: rolling window for moving-average fee baseline.
 fn default_fee_filter_window_secs()   -> u64    { 30 }
+/// Consensus signal size multiplier — 1.0 = flat (safe default, zero behaviour change).
+/// Active only when enable_smart_position_sizing = true.
+fn default_signal_size_multiplier()   -> f64    { 1.0 }
 
 // ═══════════════════════════════════════════════════════════════════════════
 // MAIN CONFIG IMPLEMENTATION
@@ -1291,7 +1342,7 @@ impl Config {
     pub fn display_summary(&self) {
         let border = "═".repeat(78);
         println!("\n{}", border);
-        println!("  🤖 GRIDZBOTZ V5.4 - CONFIGURATION");
+        println!("  🤖 GRIDZBOTZ V5.5 - CONFIGURATION");
         println!("{}\n", border);
 
         println!("📋 BOT: {} v{} [{}]", self.bot.name, self.bot.version, self.bot.environment);
@@ -1333,7 +1384,12 @@ impl Config {
                 self.trading.fee_filter.max_fee_threshold_bps,
                 self.trading.fee_filter.fee_filter_window_secs);
         }
-        println!("   Smart Sizing:     {}", if self.trading.enable_smart_position_sizing { "✅ consensus-driven" } else { "❌" });
+        if self.trading.enable_smart_position_sizing {
+            println!("   Smart Sizing:     ✅ consensus-driven | multiplier={:.2}×",
+                self.trading.signal_size_multiplier);
+        } else {
+            println!("   Smart Sizing:     ❌");
+        }
         println!("   Optimizer Cadence:{} cycles", self.trading.optimizer_interval_cycles);
 
         println!("\n🆕 MARKET INTELLIGENCE:");
@@ -1413,7 +1469,7 @@ impl ConfigBuilder {
             config: Config {
                 bot: BotConfig {
                     name: "GridzBot-Builder".to_string(),
-                    version: "5.4.0".to_string(),
+                    version: "5.5.0".to_string(),
                     environment: "testing".to_string(),
                     execution_mode: "paper".to_string(),
                     instance_id: None,
@@ -1489,6 +1545,14 @@ impl ConfigBuilder {
         self.config.trading.fee_filter.fee_filter_window_secs  = window_secs;
         self
     }
+    /// Enable consensus-signal-driven position sizing with given multiplier.
+    /// multiplier=1.0 → flat (no effect). multiplier=2.0 → up to 2× at peak conviction.
+    /// Validation enforces [0.5, 3.0] range.
+    pub fn signal_size_multiplier(mut self, multiplier: f64) -> Self {
+        self.config.trading.enable_smart_position_sizing = true;
+        self.config.trading.signal_size_multiplier = multiplier;
+        self
+    }
 
     pub fn build(mut self) -> Result<Config> {
         self.config.apply_environment_defaults();
@@ -1502,7 +1566,7 @@ impl Default for ConfigBuilder {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// TESTS — V5.4 FeeFilterConfig
+// TESTS — V5.5 signal_size_multiplier + V5.4 FeeFilterConfig
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[cfg(test)]
@@ -1560,7 +1624,6 @@ min_sol_reserve = 1.0
 
     // ── V5.4 FeeFilterConfig tests ──────────────────────────────────────────
 
-    /// Defaults: enabled=true, min=8, max=50, window=30.
     #[test]
     fn test_fee_filter_config_defaults() {
         let cfg = FeeFilterConfig::default();
@@ -1570,13 +1633,12 @@ min_sol_reserve = 1.0
         assert_eq!(cfg.fee_filter_window_secs, 30);
     }
 
-    /// Validation rejects min >= max.
     #[test]
     fn test_fee_filter_validation_rejects_min_gte_max() {
         let cfg = FeeFilterConfig {
             enable_smart_fee_filter: true,
             min_fee_threshold_bps:   50,
-            max_fee_threshold_bps:   50,  // equal — must bail
+            max_fee_threshold_bps:   50,
             fee_filter_window_secs:  30,
         };
         let err = cfg.validate().unwrap_err();
@@ -1586,7 +1648,6 @@ min_sol_reserve = 1.0
         );
     }
 
-    /// Validation rejects min == 0.
     #[test]
     fn test_fee_filter_validation_rejects_zero_min() {
         let cfg = FeeFilterConfig {
@@ -1598,7 +1659,6 @@ min_sol_reserve = 1.0
         assert!(cfg.validate().is_err());
     }
 
-    /// Serde round-trip — fields survive TOML serialise → deserialise.
     #[test]
     fn test_fee_filter_serde_roundtrip() {
         let cfg = FeeFilterConfig {
@@ -1614,7 +1674,6 @@ min_sol_reserve = 1.0
         assert_eq!(restored.fee_filter_window_secs, 60);
     }
 
-    /// Absent [trading.fee_filter] section → TradingConfig gets defaults.
     #[test]
     fn test_fee_filter_absent_section_gets_defaults() {
         let toml_str = r#"
@@ -1632,7 +1691,6 @@ min_sol_reserve = 1.0
         assert_eq!(cfg.fee_filter.fee_filter_window_secs, 30);
     }
 
-    /// Builder: fee_filter() setter works end-to-end through full validate().
     #[test]
     fn test_builder_fee_filter_setter() {
         let config = ConfigBuilder::new()
@@ -1642,5 +1700,71 @@ min_sol_reserve = 1.0
         assert_eq!(config.trading.fee_filter.min_fee_threshold_bps,  5);
         assert_eq!(config.trading.fee_filter.max_fee_threshold_bps,  30);
         assert_eq!(config.trading.fee_filter.fee_filter_window_secs, 45);
+    }
+
+    // ── V5.5 signal_size_multiplier tests ──────────────────────────────────
+
+    /// Default value is 1.0 — flat, zero sizing effect.
+    #[test]
+    fn test_signal_size_multiplier_default() {
+        let cfg = TradingConfig::default();
+        assert!(
+            (cfg.signal_size_multiplier - 1.0).abs() < 1e-9,
+            "default must be 1.0, got {}", cfg.signal_size_multiplier
+        );
+    }
+
+    /// Absent TOML field → defaults to 1.0 (all 46 existing TOMLs unaffected).
+    #[test]
+    fn test_signal_size_multiplier_absent_toml_defaults() {
+        let toml_str = r#"
+grid_levels = 10
+grid_spacing_percent = 0.15
+min_order_size = 0.1
+max_position_size = 10.0
+min_usdc_reserve = 100.0
+min_sol_reserve = 1.0
+"#;
+        let cfg: TradingConfig = toml::from_str(toml_str).expect("deserialise minimal TOML");
+        assert!(
+            (cfg.signal_size_multiplier - 1.0).abs() < 1e-9,
+            "absent field must default to 1.0"
+        );
+    }
+
+    /// Out-of-range value rejected when smart sizing is enabled.
+    #[test]
+    fn test_signal_size_multiplier_out_of_range_rejected() {
+        let mut cfg = TradingConfig::default();
+        cfg.enable_smart_position_sizing = true;
+        cfg.signal_size_multiplier = 5.0;   // above 3.0 ceiling
+        let err = cfg.validate().unwrap_err();
+        assert!(
+            err.to_string().contains("signal_size_multiplier"),
+            "error must name the field; got: {}", err
+        );
+    }
+
+    /// Out-of-range value is IGNORED when smart sizing is disabled (no validation).
+    #[test]
+    fn test_signal_size_multiplier_ignored_when_sizing_disabled() {
+        let mut cfg = TradingConfig::default();
+        cfg.enable_smart_position_sizing = false;
+        cfg.signal_size_multiplier = 99.0;  // would fail if sizing were on
+        assert!(cfg.validate().is_ok(), "out-of-range multiplier must be ignored when flag=false");
+    }
+
+    /// Builder setter enables smart sizing and sets multiplier end-to-end.
+    #[test]
+    fn test_builder_signal_size_multiplier_setter() {
+        let config = ConfigBuilder::new()
+            .signal_size_multiplier(1.5)
+            .build()
+            .expect("build");
+        assert!(config.trading.enable_smart_position_sizing);
+        assert!(
+            (config.trading.signal_size_multiplier - 1.5).abs() < 1e-9,
+            "multiplier must be 1.5"
+        );
     }
 }
