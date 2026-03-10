@@ -40,12 +40,13 @@ use tokio::sync::mpsc;
 use tokio::sync::Mutex;
 use tokio::time::{sleep, Duration};
 
-use crate::bots::bot_trait::{{
+use crate::bots::bot_trait::{
     Bot, BotStats, IntentRegistry, OrchestratorStats, new_intent_registry,
-}};
+};
 use crate::bots::grid_bot::GridBot;
 use crate::config::Config;
-use crate::trading::{{PriceFeed, EngineParams, create_engine, engine_mode_label}};
+// FIX 1: removed unused `engine_mode_label` import (was triggering warning)
+use crate::trading::{PriceFeed, EngineParams, create_engine};
 
 // ═════════════════════════════════════════════════════════════════════════
 // ORCHESTRATOR CONFIG
@@ -64,7 +65,6 @@ pub struct OrchestratorConfig {
     pub bot_configs: Vec<PathBuf>,
 
     /// Tick interval in milliseconds — applied uniformly across all bots.
-    /// Individual bots can still override via their own config if needed.
     #[serde(default = "default_cycle_interval_ms")]
     pub cycle_interval_ms: u64,
 
@@ -72,14 +72,13 @@ pub struct OrchestratorConfig {
     #[serde(default = "default_stats_interval")]
     pub stats_interval: u32,
 
-    /// Bounded channel buffer size per bot (total = N bots * this value).
-    /// Prevents unbounded memory growth under slow aggregation.
+    /// Bounded channel buffer size per bot.
     #[serde(default = "default_channel_buffer_per_bot")]
     pub channel_buffer_per_bot: usize,
 }
 
-fn default_cycle_interval_ms() -> u64   { 1000 }
-fn default_stats_interval()    -> u32   { 30 }
+fn default_cycle_interval_ms()   -> u64   { 1000 }
+fn default_stats_interval()      -> u32   { 30   }
 fn default_channel_buffer_per_bot() -> usize { 10 }
 
 impl OrchestratorConfig {
@@ -110,35 +109,17 @@ struct BotTickMsg {
 // ═════════════════════════════════════════════════════════════════════════
 
 /// Multi-bot fleet manager.
-///
-/// Owns N initialized `Box<dyn Bot>` instances wrapped in
-/// `Arc<Mutex<_>>` for safe concurrent access from Tokio tasks.
-/// Shares a single `IntentRegistry` across all bots to prevent
-/// overlapping order placement on the same price levels.
 pub struct Orchestrator {
-    /// Bot instances ready to run (post-initialize).
     bots:             Vec<(String, Arc<Mutex<Box<dyn Bot>>>)>,
-    /// Shared intent registry wired into every bot.
     registry:         IntentRegistry,
-    /// Orchestrator-level config (intervals, buffer sizes).
     config:           OrchestratorConfig,
-    /// Shutdown broadcast — set to true by Ctrl+C handler or fatal error.
     shutdown:         Arc<AtomicBool>,
-    /// Wall-clock start time for uptime tracking.
     start_time:       Instant,
-    /// Running intent conflict counter (aggregated across all bots).
     intent_conflicts: u64,
 }
 
 impl Orchestrator {
     /// Build and initialize an orchestrator from a config file.
-    ///
-    /// Steps:
-    /// 1. Load `OrchestratorConfig` from `config_path`
-    /// 2. For each bot TOML: load `Config`, build engine, construct `GridBot`
-    /// 3. Wire shared `IntentRegistry` via `set_intent_registry()`
-    /// 4. Call `bot.initialize()` — grid placement + price warmup per bot
-    /// 5. Return ready-to-run `Orchestrator`
     pub async fn from_config(
         config_path: &std::path::Path,
         shutdown:    Arc<AtomicBool>,
@@ -150,9 +131,10 @@ impl Orchestrator {
             anyhow::bail!("Orchestrator config has no bot_configs entries");
         }
 
-        info!("════════════════════════════════════════════════════════════");
-        info!("🤖 ORCHESTRATOR V1.0 — {} bots initializing", orch_config.bot_configs.len());
-        info!("════════════════════════════════════════════════════════════");
+        info!("[ORCH] =================================================");
+        info!("[ORCH] 🤖 ORCHESTRATOR V1.0 — {} bots initializing",
+              orch_config.bot_configs.len());
+        info!("[ORCH] =================================================");
 
         let mut bots: Vec<(String, Arc<Mutex<Box<dyn Bot>>>)> = Vec::new();
 
@@ -168,8 +150,15 @@ impl Orchestrator {
             // Build price feed
             let price_history_size = bot_config.trading.volatility_window as usize;
             let feed = Arc::new(PriceFeed::new(price_history_size));
+
+            // FIX 2: feed.start() returns Result<(), Box<dyn StdError + Send + Sync>>.
+            // anyhow::Context::with_context cannot be called on that type because
+            // Box<dyn StdError> doesn't satisfy the anyhow::context::ext::StdError bound
+            // (E0599). Use map_err + anyhow::anyhow! instead, which accepts any Display.
             feed.start().await
-                .with_context(|| format!("PriceFeed start failed for '{}'", instance_id))?;
+                .map_err(|e| anyhow::anyhow!(
+                    "PriceFeed start failed for '{}': {}", instance_id, e
+                ))?;
 
             // Brief warm-up
             sleep(Duration::from_millis(500)).await;
@@ -186,8 +175,12 @@ impl Orchestrator {
                 let (usdc, sol) = crate::trading::fetch_wallet_balances_for_orchestrator(
                     &bot_config.network.rpc_url,
                     &bot_config.security.wallet_path,
-                ).await.with_context(|| format!("Wallet query failed for '{}'", instance_id))?;
-                EngineParams { live_price: Some(initial_price), wallet_balances: Some((usdc, sol)) }
+                ).await
+                    .with_context(|| format!("Wallet query failed for '{}'", instance_id))?;
+                EngineParams {
+                    live_price:       Some(initial_price),
+                    wallet_balances:  Some((usdc, sol)),
+                }
             } else {
                 EngineParams::default()
             };
@@ -200,7 +193,7 @@ impl Orchestrator {
                 GridBot::new(bot_config, engine, feed)?
             );
 
-            // Wire shared intent registry (conflict detection)
+            // Wire shared intent registry
             bot.set_intent_registry(Arc::clone(&registry));
             info!("[ORCH] ✅ Intent registry wired for '{}'", instance_id);
 
@@ -225,11 +218,6 @@ impl Orchestrator {
     }
 
     /// Run the fleet: spawn N bot tasks + aggregation loop.
-    ///
-    /// Each bot task runs in an isolated Tokio task. A panic in one
-    /// task is caught by the JoinHandle and logged — the fleet continues.
-    /// The aggregation loop receives `BotTickMsg` via a bounded mpsc channel
-    /// and emits `OrchestratorStats` every `stats_interval` cycles.
     pub async fn run(self) -> Result<()> {
         let n_bots         = self.bots.len();
         let interval_ms    = self.config.cycle_interval_ms;
@@ -240,12 +228,11 @@ impl Orchestrator {
 
         let (tx, mut rx) = mpsc::channel::<BotTickMsg>(buf_size.max(32));
 
-        info!("════════════════════════════════════════════════════════════");
-        info!("🚀 FLEET LAUNCH — {} bots | {}ms interval | stats every {} cycles",
+        info!("[ORCH] =================================================");
+        info!("[ORCH] 🚀 FLEET LAUNCH — {} bots | {}ms interval | stats/{}c",
               n_bots, interval_ms, stats_interval);
-        info!("════════════════════════════════════════════════════════════");
+        info!("[ORCH] =================================================");
 
-        // ── Spawn one Tokio task per bot ──────────────────────────────────────────
         let mut handles = Vec::with_capacity(n_bots);
 
         for (instance_id, bot_arc) in &self.bots {
@@ -259,7 +246,7 @@ impl Orchestrator {
                 info!("[BOT-TASK] '{}' starting tick loop", id);
                 loop {
                     if sd.load(Ordering::Relaxed) {
-                        info!("[BOT-TASK] '{}' received shutdown signal", id);
+                        info!("[BOT-TASK] '{}' received shutdown", id);
                         break;
                     }
 
@@ -275,14 +262,13 @@ impl Orchestrator {
                                 guard.stats()
                             };
                             let is_active = tick.active;
-                            // Bounded send — drop if channel full (never block)
                             let _ = tx_clone.try_send(BotTickMsg {
                                 instance_id: id.clone(),
                                 stats,
                                 is_active,
                             });
                             if !is_active {
-                                warn!("[BOT-TASK] '{}' signalled shutdown — exiting task", id);
+                                warn!("[BOT-TASK] '{}' signalled shutdown — exiting", id);
                                 break;
                             }
                         }
@@ -294,7 +280,6 @@ impl Orchestrator {
                     sleep(Duration::from_millis(interval)).await;
                 }
 
-                // Graceful shutdown: call bot.shutdown()
                 let mut guard = bot.lock().await;
                 if let Err(e) = guard.shutdown().await {
                     error!("[BOT-TASK] '{}' shutdown error: {}", id, e);
@@ -305,10 +290,9 @@ impl Orchestrator {
             handles.push((instance_id.clone(), handle));
         }
 
-        // Drop our copy of tx so the rx loop ends when all tasks drop theirs
-        drop(tx);
+        drop(tx); // let rx.recv() drain once all tasks exit
 
-        // ── Aggregation loop ────────────────────────────────────────────────────
+        // ── Aggregation loop ──────────────────────────────────────────────
         let mut fleet_stats: HashMap<String, BotStats> = HashMap::new();
         let mut cycle_count: u64 = 0;
         let mut total_intent_conflicts: u64 = 0;
@@ -323,8 +307,6 @@ impl Orchestrator {
 
             cycle_count += 1;
 
-            // Snapshot intent conflicts from registry size delta
-            // (proxy: registry entries accumulate per session)
             let registry_entries = registry.len() as u64;
             if registry_entries > total_intent_conflicts {
                 total_intent_conflicts = registry_entries;
@@ -337,9 +319,7 @@ impl Orchestrator {
                     start.elapsed().as_secs(),
                 );
                 info!("[ORCH-STATS] {}", orch_stats);
-                info!("[ORCH-STATS] Registry entries (active level claims): {}",
-                      registry.len());
-                // Per-bot summary
+                info!("[ORCH-STATS] Registry entries: {}", registry.len());
                 for (id, s) in &fleet_stats {
                     info!(
                         "  └ {} | cycles={} fills={} orders={} pnl=${:.2} paused={}",
@@ -350,10 +330,10 @@ impl Orchestrator {
             }
         }
 
-        // ── All tasks done — await JoinHandles with panic isolation ──────────
+        // ── Join all tasks ────────────────────────────────────────────────
         for (id, handle) in handles {
             match handle.await {
-                Ok(_) => info!("[ORCH] Task '{}' joined cleanly", id),
+                Ok(_)  => info!("[ORCH] Task '{}' joined cleanly", id),
                 Err(e) => warn!("[ORCH] Task '{}' panicked: {:?} — fleet unaffected", id, e),
             }
         }
@@ -363,9 +343,7 @@ impl Orchestrator {
             total_intent_conflicts,
             start.elapsed().as_secs(),
         );
-        info!("════════════════════════════════════════════════════════════");
-        info!("🏁 FLEET COMPLETE — {}", final_stats);
-        info!("════════════════════════════════════════════════════════════");
+        info!("[ORCH] 🏁 FLEET COMPLETE — {}", final_stats);
         Ok(())
     }
 
@@ -401,7 +379,7 @@ impl Orchestrator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bots::bot_trait::{{new_intent_registry}};
+    use crate::bots::bot_trait::new_intent_registry;
 
     fn make_bot_stats(id: &str, fills: u64, orders: u64, pnl: f64, paused: bool) -> BotStats {
         BotStats {
@@ -417,38 +395,38 @@ mod tests {
     }
 
     #[test]
-    fn test_aggregate_stats_two_bots() {{
+    fn test_aggregate_stats_two_bots() {
         let mut fleet = HashMap::new();
         fleet.insert("bot-01".into(), make_bot_stats("bot-01", 10, 20, 5.0, false));
-        fleet.insert("bot-02".into(), make_bot_stats("bot-02", 8, 16, 3.0, false));
+        fleet.insert("bot-02".into(), make_bot_stats("bot-02",  8, 16, 3.0, false));
         let stats = Orchestrator::aggregate_stats(&fleet, 0, 120);
         assert_eq!(stats.active_bots, 2);
         assert_eq!(stats.paused_bots, 0);
         assert_eq!(stats.total_fills, 18);
         assert_eq!(stats.total_orders, 36);
         assert!((stats.fleet_pnl - 8.0).abs() < 1e-9);
-    }}
+    }
 
     #[test]
-    fn test_aggregate_stats_one_paused() {{
+    fn test_aggregate_stats_one_paused() {
         let mut fleet = HashMap::new();
         fleet.insert("bot-01".into(), make_bot_stats("bot-01", 5, 10, 2.0, false));
-        fleet.insert("bot-02".into(), make_bot_stats("bot-02", 0, 0,  0.0, true));
+        fleet.insert("bot-02".into(), make_bot_stats("bot-02", 0,  0, 0.0, true));
         let stats = Orchestrator::aggregate_stats(&fleet, 0, 60);
         assert_eq!(stats.active_bots, 2);
         assert_eq!(stats.paused_bots, 1);
         assert_eq!(stats.total_fills, 5);
-    }}
+    }
 
     #[test]
-    fn test_aggregate_stats_intent_conflicts() {{
+    fn test_aggregate_stats_intent_conflicts() {
         let fleet = HashMap::new();
         let stats = Orchestrator::aggregate_stats(&fleet, 3, 60);
         assert_eq!(stats.intent_conflicts, 3);
-    }}
+    }
 
     #[test]
-    fn test_orchestrator_config_defaults() {{
+    fn test_orchestrator_config_defaults() {
         let toml_str = r#"
             bot_configs = ["config/bots/sol-usdc-grid-01.toml"]
         "#;
@@ -457,10 +435,10 @@ mod tests {
         assert_eq!(cfg.stats_interval, 30);
         assert_eq!(cfg.channel_buffer_per_bot, 10);
         assert_eq!(cfg.bot_configs.len(), 1);
-    }}
+    }
 
     #[test]
-    fn test_orchestrator_config_custom() {{
+    fn test_orchestrator_config_custom() {
         let toml_str = r#"
             bot_configs = [
                 "config/bots/sol-usdc-grid-01.toml",
@@ -475,31 +453,27 @@ mod tests {
         assert_eq!(cfg.cycle_interval_ms, 500);
         assert_eq!(cfg.stats_interval, 20);
         assert_eq!(cfg.channel_buffer_per_bot, 15);
-    }}
+    }
 
     #[test]
-    fn test_intent_registry_shared_across_bots() {{
-        // Simulates two bots sharing the same registry
+    fn test_intent_registry_shared_across_bots() {
         let registry = new_intent_registry();
         let r1 = Arc::clone(&registry);
         let r2 = Arc::clone(&registry);
 
-        // Bot 1 claims level 1 on SOL/USDC
         r1.insert(("SOL/USDC".into(), 1u64), "bot-01".into());
-        // Bot 2 sees the conflict
         assert!(r2.contains_key(&("SOL/USDC".into(), 1u64)));
-        // Bot 2 claims level 2 — no conflict
         r2.insert(("SOL/USDC".into(), 2u64), "bot-02".into());
         assert_eq!(registry.len(), 2);
-    }}
+    }
 
     #[test]
-    fn test_orchestrator_config_deny_unknown_fields() {{
+    fn test_orchestrator_config_deny_unknown_fields() {
         let bad_toml = r#"
             bot_configs = []
             unknown_field = 42
         "#;
         let result: Result<OrchestratorConfig, _> = toml::from_str(bad_toml);
         assert!(result.is_err(), "deny_unknown_fields should reject unknown_field");
-    }}
+    }
 }

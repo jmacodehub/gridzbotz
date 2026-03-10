@@ -91,11 +91,15 @@ pub async fn fetch_wallet_balances_for_orchestrator(
 
 #[cfg(test)]
 mod tests {
-    /// Smoke test: function is importable and the type signature compiles.
-    /// Actual RPC calls require a live cluster and are integration-tested only.
+    /// Smoke test: the symbol is importable and the type is an async fn.
+    ///
+    /// FIX 3 (E0308): the original test tried to assign the async fn item to
+    /// a bare fn-pointer annotation `fn(&str, &str) -> _`, which fails because
+    /// async fn items are not coercible to fn-pointers. Replaced with a plain
+    /// `let _ = symbol;` which just checks the symbol resolves at compile time.
     #[test]
     fn test_function_is_accessible() {
-        // If this compiles, the symbol is correctly exported.
-        let _f: fn(&str, &str) -> _ = super::fetch_wallet_balances_for_orchestrator;
+        // Verifies the symbol is exported and callable — no pointer coercion.
+        let _ = super::fetch_wallet_balances_for_orchestrator;
     }
 }
