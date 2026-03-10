@@ -1,5 +1,5 @@
 //! ═════════════════════════════════════════════════════════════════════════
-//! ORCHESTRATOR V1.0 — MULTI-BOT FLEET MANAGER
+//! ORCHESTRATOR V1.1 — MULTI-BOT FLEET MANAGER
 //!
 //! Resolves GAP-3 (P0): Multi-bot orchestrator — runs N independent
 //! bot instances in parallel Tokio tasks with:
@@ -9,6 +9,13 @@
 //!   • Bounded mpsc channel — tick results aggregated without blocking
 //!   • Graceful shutdown via `Arc<AtomicBool>` broadcast
 //!   • Fleet-level `OrchestratorStats` emitted every N cycles
+//!
+//! PR #91 fixes:
+//!   • `intent_conflicts` now summed from `BotStats.intent_conflicts`
+//!     (real conflict events) — was incorrectly reading `registry.len()`
+//!     (which counts successful claims, not conflict events).
+//!   • `registry.len()` logged separately as `claimed_levels` for
+//!     observability without misleading the conflicts metric.
 //!
 //! Architecture:
 //! ```text
@@ -24,7 +31,7 @@
 //!                 └─ aggregation loop: rx.recv() → OrchestratorStats
 //! ```
 //!
-//! March 2026 — V1.0 FLEET COMMANDER 🚀
+//! March 2026 — V1.1 FLEET COMMANDER 🚀
 //! ═════════════════════════════════════════════════════════════════════════
 
 use std::collections::HashMap;
@@ -49,38 +56,21 @@ use crate::trading::{PriceFeed, EngineParams, create_engine};
 
 // ─────────────────────────────────────────────────────────────────────────
 // TYPE ALIAS
-// `Vec<(String, Arc<Mutex<Box<dyn Bot>>>)>` would trigger clippy::type_complexity.
-// `BotEntry` names the intent: an instance_id paired with its locked bot.
 // ─────────────────────────────────────────────────────────────────────────
-/// An owned, concurrently-accessible bot instance.
-/// `String` = instance_id, `Arc<Mutex<Box<dyn Bot>>>` = the running bot.
 type BotEntry = (String, Arc<Mutex<Box<dyn Bot>>>);
 
 // ═════════════════════════════════════════════════════════════════════════
 // ORCHESTRATOR CONFIG
 // ═════════════════════════════════════════════════════════════════════════
 
-/// Top-level orchestrator configuration loaded from `config/orchestrator.toml`.
-///
-/// Each `bot_configs` entry is a path to an individual bot TOML
-/// (e.g. `config/bots/sol-usdc-grid-01.toml`). The orchestrator
-/// loads each independently so bots can have different pairs, spacing,
-/// and capital allocations — new pair = new file, never new code.
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct OrchestratorConfig {
-    /// Paths to individual bot config files.
     pub bot_configs: Vec<PathBuf>,
-
-    /// Tick interval in milliseconds — applied uniformly across all bots.
     #[serde(default = "default_cycle_interval_ms")]
     pub cycle_interval_ms: u64,
-
-    /// How often (in cycles) to emit aggregated fleet stats to logs.
     #[serde(default = "default_stats_interval")]
     pub stats_interval: u32,
-
-    /// Bounded channel buffer size per bot.
     #[serde(default = "default_channel_buffer_per_bot")]
     pub channel_buffer_per_bot: usize,
 }
@@ -90,7 +80,6 @@ fn default_stats_interval()         -> u32   { 30   }
 fn default_channel_buffer_per_bot() -> usize { 10   }
 
 impl OrchestratorConfig {
-    /// Load from a TOML file at `path`.
     pub fn from_file(path: &std::path::Path) -> Result<Self> {
         let content = std::fs::read_to_string(path)
             .with_context(|| format!("Cannot read orchestrator config: {}", path.display()))?;
@@ -104,7 +93,6 @@ impl OrchestratorConfig {
 // BOT TASK MESSAGE
 // ═════════════════════════════════════════════════════════════════════════
 
-/// Message sent from each bot task to the aggregation loop.
 #[derive(Debug)]
 struct BotTickMsg {
     instance_id: String,
@@ -116,31 +104,18 @@ struct BotTickMsg {
 // ORCHESTRATOR
 // ═════════════════════════════════════════════════════════════════════════
 
-/// Multi-bot fleet manager.
-///
-/// Owns N initialized `Box<dyn Bot>` instances wrapped in
-/// `Arc<Mutex<_>>` for safe concurrent access from Tokio tasks.
-/// Shares a single `IntentRegistry` across all bots to prevent
-/// overlapping order placement on the same price levels.
 pub struct Orchestrator {
-    /// Bot instances ready to run (post-initialize).
-    /// Uses `BotEntry = (String, Arc<Mutex<Box<dyn Bot>>>)` alias
-    /// to satisfy clippy::type_complexity gate in lib.rs.
     bots:             Vec<BotEntry>,
-    /// Shared intent registry wired into every bot.
     registry:         IntentRegistry,
-    /// Orchestrator-level config (intervals, buffer sizes).
     config:           OrchestratorConfig,
-    /// Shutdown broadcast — set to true by Ctrl+C handler or fatal error.
     shutdown:         Arc<AtomicBool>,
-    /// Wall-clock start time for uptime tracking.
     start_time:       Instant,
-    /// Running intent conflict counter (aggregated across all bots).
+    /// Lifetime conflict counter — accumulated from BotStats each cycle.
+    /// PR #91: was registry.len() high-water-mark (claimed levels, not events).
     intent_conflicts: u64,
 }
 
 impl Orchestrator {
-    /// Build and initialize an orchestrator from a config file.
     pub async fn from_config(
         config_path: &std::path::Path,
         shutdown:    Arc<AtomicBool>,
@@ -153,7 +128,7 @@ impl Orchestrator {
         }
 
         info!("[ORCH] =================================================");
-        info!("[ORCH] 🤖 ORCHESTRATOR V1.0 — {} bots initializing",
+        info!("[ORCH] 🤖 ORCHESTRATOR V1.1 — {} bots initializing",
               orch_config.bot_configs.len());
         info!("[ORCH] =================================================");
 
@@ -168,7 +143,6 @@ impl Orchestrator {
             let instance_id = bot_config.bot.instance_name().to_string();
             info!("[ORCH] Building bot '{}'", instance_id);
 
-            // Build price feed
             let price_history_size = bot_config.trading.volatility_window as usize;
             let feed = Arc::new(PriceFeed::new(price_history_size));
 
@@ -177,7 +151,6 @@ impl Orchestrator {
                     "PriceFeed start failed for '{}': {}", instance_id, e
                 ))?;
 
-            // Brief warm-up
             sleep(Duration::from_millis(500)).await;
             let initial_price = feed.latest_price().await;
             if initial_price <= 0.0 {
@@ -187,7 +160,6 @@ impl Orchestrator {
                 );
             }
 
-            // Build engine
             let params = if bot_config.bot.is_live() {
                 let (usdc, sol) = crate::trading::fetch_wallet_balances_for_orchestrator(
                     &bot_config.network.rpc_url,
@@ -195,8 +167,8 @@ impl Orchestrator {
                 ).await
                     .with_context(|| format!("Wallet query failed for '{}'", instance_id))?;
                 EngineParams {
-                    live_price:       Some(initial_price),
-                    wallet_balances:  Some((usdc, sol)),
+                    live_price:      Some(initial_price),
+                    wallet_balances: Some((usdc, sol)),
                 }
             } else {
                 EngineParams::default()
@@ -205,16 +177,13 @@ impl Orchestrator {
             let engine = create_engine(&bot_config, params).await
                 .with_context(|| format!("Engine creation failed for '{}'", instance_id))?;
 
-            // Construct bot
             let mut bot: Box<dyn Bot> = Box::new(
                 GridBot::new(bot_config, engine, feed)?
             );
 
-            // Wire shared intent registry
             bot.set_intent_registry(Arc::clone(&registry));
             info!("[ORCH] ✅ Intent registry wired for '{}'", instance_id);
 
-            // Initialize (grid placement)
             bot.initialize().await
                 .with_context(|| format!("Bot::initialize() failed for '{}'", instance_id))?;
             info!("[ORCH] ✅ Bot '{}' initialized — grid placed", instance_id);
@@ -234,7 +203,6 @@ impl Orchestrator {
         })
     }
 
-    /// Run the fleet: spawn N bot tasks + aggregation loop.
     pub async fn run(self) -> Result<()> {
         let n_bots         = self.bots.len();
         let interval_ms    = self.config.cycle_interval_ms;
@@ -310,9 +278,12 @@ impl Orchestrator {
         drop(tx);
 
         // ── Aggregation loop ────────────────────────────────────────────────
+        // PR #91: intent_conflicts is now summed from BotStats.intent_conflicts
+        // (real Occupied-branch hits), NOT from registry.len() which counted
+        // successful level claims — a completely different metric.
+        // registry.len() is still logged separately as `claimed_levels`.
         let mut fleet_stats: HashMap<String, BotStats> = HashMap::new();
         let mut cycle_count: u64 = 0;
-        let mut total_intent_conflicts: u64 = 0;
         let start = Instant::now();
 
         while let Some(msg) = rx.recv().await {
@@ -324,24 +295,28 @@ impl Orchestrator {
 
             cycle_count += 1;
 
-            let registry_entries = registry.len() as u64;
-            if registry_entries > total_intent_conflicts {
-                total_intent_conflicts = registry_entries;
-            }
-
             if cycle_count % stats_interval as u64 == 0 {
+                // Sum real conflict events from each bot's BotStats
+                let total_conflicts: u64 = fleet_stats
+                    .values()
+                    .map(|s| s.intent_conflicts)
+                    .sum();
+
                 let orch_stats = Self::aggregate_stats(
                     &fleet_stats,
-                    total_intent_conflicts,
+                    total_conflicts,
                     start.elapsed().as_secs(),
                 );
                 info!("[ORCH-STATS] {}", orch_stats);
-                info!("[ORCH-STATS] Registry entries: {}", registry.len());
+                // Log claimed_levels separately — distinct from conflict events
+                info!("[ORCH-STATS] claimed_levels={} (active registry entries)",
+                      registry.len());
                 for (id, s) in &fleet_stats {
                     info!(
-                        "  └ {} | cycles={} fills={} orders={} pnl=${:.2} paused={}",
+                        "  └ {} | cycles={} fills={} orders={} pnl=${:.2} paused={} conflicts={}",
                         id, s.total_cycles, s.total_fills,
-                        s.total_orders, s.current_pnl, s.is_paused
+                        s.total_orders, s.current_pnl, s.is_paused,
+                        s.intent_conflicts
                     );
                 }
             }
@@ -355,27 +330,27 @@ impl Orchestrator {
             }
         }
 
+        let final_conflicts: u64 = fleet_stats.values().map(|s| s.intent_conflicts).sum();
         let final_stats = Self::aggregate_stats(
             &fleet_stats,
-            total_intent_conflicts,
+            final_conflicts,
             start.elapsed().as_secs(),
         );
         info!("[ORCH] 🏁 FLEET COMPLETE — {}", final_stats);
         Ok(())
     }
 
-    /// Aggregate per-bot `BotStats` into fleet-level `OrchestratorStats`.
     fn aggregate_stats(
         fleet: &HashMap<String, BotStats>,
         intent_conflicts: u64,
         uptime_secs: u64,
     ) -> OrchestratorStats {
         let mut stats = OrchestratorStats {
-            active_bots:    fleet.len(),
-            paused_bots:    0,
-            total_fills:    0,
-            total_orders:   0,
-            fleet_pnl:      0.0,
+            active_bots:      fleet.len(),
+            paused_bots:      0,
+            total_fills:      0,
+            total_orders:     0,
+            fleet_pnl:        0.0,
             intent_conflicts,
             uptime_secs,
         };
@@ -398,24 +373,25 @@ mod tests {
     use super::*;
     use crate::bots::bot_trait::new_intent_registry;
 
-    fn make_bot_stats(id: &str, fills: u64, orders: u64, pnl: f64, paused: bool) -> BotStats {
+    fn make_bot_stats(id: &str, fills: u64, orders: u64, pnl: f64, paused: bool, conflicts: u64) -> BotStats {
         BotStats {
-            instance_id:  id.into(),
-            bot_type:     "GridBot".into(),
-            total_cycles: 100,
-            total_fills:  fills,
-            total_orders: orders,
-            uptime_secs:  300,
-            is_paused:    paused,
-            current_pnl:  pnl,
+            instance_id:      id.into(),
+            bot_type:         "GridBot".into(),
+            total_cycles:     100,
+            total_fills:      fills,
+            total_orders:     orders,
+            uptime_secs:      300,
+            is_paused:        paused,
+            current_pnl:      pnl,
+            intent_conflicts: conflicts,
         }
     }
 
     #[test]
     fn test_aggregate_stats_two_bots() {
         let mut fleet = HashMap::new();
-        fleet.insert("bot-01".into(), make_bot_stats("bot-01", 10, 20, 5.0, false));
-        fleet.insert("bot-02".into(), make_bot_stats("bot-02",  8, 16, 3.0, false));
+        fleet.insert("bot-01".into(), make_bot_stats("bot-01", 10, 20, 5.0, false, 0));
+        fleet.insert("bot-02".into(), make_bot_stats("bot-02",  8, 16, 3.0, false, 0));
         let stats = Orchestrator::aggregate_stats(&fleet, 0, 120);
         assert_eq!(stats.active_bots, 2);
         assert_eq!(stats.paused_bots, 0);
@@ -427,8 +403,8 @@ mod tests {
     #[test]
     fn test_aggregate_stats_one_paused() {
         let mut fleet = HashMap::new();
-        fleet.insert("bot-01".into(), make_bot_stats("bot-01", 5, 10, 2.0, false));
-        fleet.insert("bot-02".into(), make_bot_stats("bot-02", 0,  0, 0.0, true));
+        fleet.insert("bot-01".into(), make_bot_stats("bot-01", 5, 10, 2.0, false, 0));
+        fleet.insert("bot-02".into(), make_bot_stats("bot-02", 0,  0, 0.0, true,  0));
         let stats = Orchestrator::aggregate_stats(&fleet, 0, 60);
         assert_eq!(stats.active_bots, 2);
         assert_eq!(stats.paused_bots, 1);
@@ -440,6 +416,21 @@ mod tests {
         let fleet = HashMap::new();
         let stats = Orchestrator::aggregate_stats(&fleet, 3, 60);
         assert_eq!(stats.intent_conflicts, 3);
+    }
+
+    #[test]
+    fn test_aggregate_stats_sums_bot_conflicts() {
+        // PR #91: conflicts must be summed from BotStats, not registry.len().
+        let mut fleet = HashMap::new();
+        fleet.insert("bot-01".into(), make_bot_stats("bot-01", 10, 20, 5.0, false, 2));
+        fleet.insert("bot-02".into(), make_bot_stats("bot-02",  8, 16, 3.0, false, 1));
+        // Sum: bot-01 had 2 real conflicts, bot-02 had 1 = 3 total
+        let total_conflicts: u64 = fleet.values().map(|s| s.intent_conflicts).sum();
+        let stats = Orchestrator::aggregate_stats(&fleet, total_conflicts, 120);
+        assert_eq!(
+            stats.intent_conflicts, 3,
+            "Fleet conflicts must sum real events (2+1=3), not registry size"
+        );
     }
 
     #[test]

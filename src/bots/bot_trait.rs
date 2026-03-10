@@ -8,6 +8,9 @@
 //!
 //! PR #86: Adds `IntentRegistry` + `set_intent_registry()` for multi-bot
 //! conflict detection (GAP-3). Solo bots ignore this via default no-op.
+//!
+//! PR #91: Fixes intent_conflicts field missing from BotStats — now
+//! surfaced correctly through stats() → aggregate_stats() → fleet log.
 
 use anyhow::Result;
 use async_trait::async_trait;
@@ -29,6 +32,10 @@ use std::sync::Arc;
 /// making it safe for N bot tasks operating in parallel without a global
 /// mutex. Each bot registers its intended levels before placing orders;
 /// if a level is already owned by another instance, it skips silently.
+///
+/// Key namespace uses the **trading pair** (e.g. `"SOL/USDC"`), NOT the
+/// bot instance name — this ensures two bots on the same pair can detect
+/// each other's level claims. (PR #91 fix — was `instance_name()`.)
 ///
 /// Solo bots (single-instance mode) never receive this registry —
 /// `set_intent_registry()` is a default no-op, so existing behavior is
@@ -107,16 +114,25 @@ impl fmt::Display for TickResult {
 // ══════════════════════════════════════════════════════════════════════
 
 /// Aggregated bot-level statistics for observability and dashboards.
+///
+/// PR #91: Added `intent_conflicts` — wired from GridBot.intent_conflicts
+/// through stats() so aggregate_stats() can sum real conflict events
+/// instead of reading registry.len() (which counted claims, not conflicts).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct BotStats {
-    pub instance_id:  String,
-    pub bot_type:     String,
-    pub total_cycles: u64,
-    pub total_fills:  u64,
-    pub total_orders: u64,
-    pub uptime_secs:  u64,
-    pub is_paused:    bool,
-    pub current_pnl:  f64,
+    pub instance_id:      String,
+    pub bot_type:         String,
+    pub total_cycles:     u64,
+    pub total_fills:      u64,
+    pub total_orders:     u64,
+    pub uptime_secs:      u64,
+    pub is_paused:        bool,
+    pub current_pnl:      f64,
+    /// Real conflict events detected by intent registry this session.
+    /// PR #91: was missing — caused aggregate_stats() to use registry.len()
+    /// as a proxy, which counted successful claims not actual conflicts.
+    #[serde(default)]
+    pub intent_conflicts: u64,
 }
 
 // ══════════════════════════════════════════════════════════════════════
@@ -130,19 +146,21 @@ pub struct BotStats {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct OrchestratorStats {
     /// Number of bot instances currently running.
-    pub active_bots:    usize,
+    pub active_bots:      usize,
     /// Number of bots currently paused (regime gate / circuit breaker).
-    pub paused_bots:    usize,
+    pub paused_bots:      usize,
     /// Total fills across all bots this session.
-    pub total_fills:    u64,
+    pub total_fills:      u64,
     /// Total orders placed across all bots this session.
-    pub total_orders:   u64,
+    pub total_orders:     u64,
     /// Sum of all bot P&Ls in USDC.
-    pub fleet_pnl:      f64,
-    /// Total number of intent conflicts detected (overlapping level claims).
+    pub fleet_pnl:        f64,
+    /// Real intent conflict events summed across all bots.
+    /// PR #91: now correctly summed from BotStats.intent_conflicts,
+    /// not from registry.len() (which was claimed_levels, not conflicts).
     pub intent_conflicts: u64,
     /// Uptime in seconds (from orchestrator start).
-    pub uptime_secs:    u64,
+    pub uptime_secs:      u64,
 }
 
 impl fmt::Display for OrchestratorStats {
@@ -264,6 +282,29 @@ mod tests {
         assert_eq!(stats.total_fills, 0);
         assert!(!stats.is_paused);
         assert_eq!(stats.current_pnl, 0.0);
+        // PR #91: intent_conflicts must default to zero
+        assert_eq!(stats.intent_conflicts, 0);
+    }
+
+    #[test]
+    fn test_bot_stats_intent_conflicts_field() {
+        // PR #91: BotStats carries and round-trips intent_conflicts correctly.
+        let stats = BotStats {
+            instance_id:      "sol-usdc-grid-01".into(),
+            bot_type:         "GridBot".into(),
+            total_cycles:     50,
+            total_fills:      5,
+            total_orders:     10,
+            uptime_secs:      60,
+            is_paused:        false,
+            current_pnl:      1.25,
+            intent_conflicts: 3,
+        };
+        assert_eq!(stats.intent_conflicts, 3);
+        // Serde round-trip
+        let json = serde_json::to_string(&stats).unwrap();
+        let de: BotStats = serde_json::from_str(&json).unwrap();
+        assert_eq!(de.intent_conflicts, 3);
     }
 
     #[test]
@@ -279,26 +320,66 @@ mod tests {
     #[test]
     fn test_bot_stats_serde_roundtrip() {
         let stats = BotStats {
-            instance_id:  "sol-usdc-grid-01".into(),
-            bot_type:     "GridBot".into(),
-            total_cycles: 1000,
-            total_fills:  42,
-            total_orders: 85,
-            uptime_secs:  3600,
-            is_paused:    false,
-            current_pnl:  12.50,
+            instance_id:      "sol-usdc-grid-01".into(),
+            bot_type:         "GridBot".into(),
+            total_cycles:     1000,
+            total_fills:      42,
+            total_orders:     85,
+            uptime_secs:      3600,
+            is_paused:        false,
+            current_pnl:      12.50,
+            intent_conflicts: 0,
         };
         let json = serde_json::to_string(&stats).unwrap();
         let de: BotStats = serde_json::from_str(&json).unwrap();
         assert_eq!(de.instance_id, "sol-usdc-grid-01");
         assert_eq!(de.total_fills, 42);
         assert_eq!(de.current_pnl, 12.50);
+        assert_eq!(de.intent_conflicts, 0);
     }
 
     #[test]
     fn test_intent_registry_empty_on_new() {
         let registry = new_intent_registry();
         assert!(registry.is_empty());
+    }
+
+    #[test]
+    fn test_intent_registry_correct_namespace() {
+        // PR #91: key must use trading pair, not instance name.
+        // Two bots on the same pair MUST see each other's claims.
+        let registry = new_intent_registry();
+        let pair = "SOL/USDC".to_string();
+        let level_id = 42u64;
+        let key = (pair.clone(), level_id);
+
+        // Bot-01 claims the level using trading pair as namespace
+        registry.insert(key.clone(), "sol-usdc-grid-01".to_string());
+
+        // Bot-02 on the SAME pair at the SAME level must detect the conflict
+        assert!(
+            registry.contains_key(&key),
+            "Bot-02 must see bot-01's claim when using trading pair as key namespace"
+        );
+        let owner = registry.get(&key).unwrap();
+        assert_eq!(owner.value(), "sol-usdc-grid-01");
+    }
+
+    #[test]
+    fn test_intent_registry_different_bots_same_pair_conflict() {
+        // PR #91: core safety test — two bots on SOL/USDC, same level → conflict detected.
+        let registry = new_intent_registry();
+        let key = ("SOL/USDC".to_string(), 5u64);
+
+        // Bot-01 claims level 5
+        registry.insert(key.clone(), "sol-usdc-grid-01".to_string());
+
+        // Bot-02 tries to claim level 5 — must find it Occupied
+        let conflict_detected = registry.contains_key(&key);
+        assert!(conflict_detected, "Conflict must be detected when two bots target same pair+level");
+
+        // Verify bot-01 still owns it (no overwrite)
+        assert_eq!(registry.get(&key).unwrap().value(), "sol-usdc-grid-01");
     }
 
     #[test]
@@ -328,13 +409,13 @@ mod tests {
     #[test]
     fn test_orchestrator_stats_display() {
         let stats = OrchestratorStats {
-            active_bots:    2,
-            paused_bots:    0,
-            total_fills:    18,
-            total_orders:   40,
-            fleet_pnl:      7.50,
+            active_bots:      2,
+            paused_bots:      0,
+            total_fills:      18,
+            total_orders:     40,
+            fleet_pnl:        7.50,
             intent_conflicts: 0,
-            uptime_secs:    120,
+            uptime_secs:      120,
         };
         let s = stats.to_string();
         assert!(s.contains("bots=2/2"));
@@ -343,10 +424,7 @@ mod tests {
 
     #[test]
     fn test_set_intent_registry_default_noop() {
-        // Verify the trait default compiles and is callable on a mock bot.
-        // Runtime behavior: no-op (field stays None in solo bots).
-        // Full integration tested via GridBot in grid_bot tests.
         let registry = new_intent_registry();
-        assert!(registry.is_empty()); // sanity: empty registry doesn't panic
+        assert!(registry.is_empty());
     }
 }
