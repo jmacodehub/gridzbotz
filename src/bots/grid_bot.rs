@@ -1,5 +1,17 @@
 //! ═════════════════════════════════════════════════════════════════════════
-//! GRID BOT V5.9 - ELITE AUTONOMOUS TRADING ORCHESTRATOR
+//! GRID BOT V6.0 - ELITE AUTONOMOUS TRADING ORCHESTRATOR
+//!
+//! PR #94 (Commit 5b): Consensus-Signal-Driven Position Sizing WIRED.
+//!    `last_signal_strength: f64` field added to GridBot.
+//!    process_price_update() caches signal.strength() after analyze_all().
+//!    place_grid_orders() computes effective_size:
+//!      multiplier   = 1.0 + last_signal_strength * (signal_size_multiplier - 1.0)
+//!      effective_sz = (order_size * multiplier).clamp(min_order_sol, max_position_size)
+//!    Flag=false OR signal_size_multiplier=1.0 (default) → effective_size == order_size.
+//!    Zero behaviour change for all 46 existing TOMLs.
+//!
+//! PR #94 (Commit 5a): signal_size_multiplier added to TradingConfig.
+//!    Default 1.0, validation [0.5, 3.0] when enable_smart_position_sizing=true.
 //!
 //! PR #94 (Commit 4): SmartFeeFilter call site wired.
 //!    place_grid_orders() now gates each level through
@@ -15,19 +27,10 @@
 //!
 //! PR #93 FIXES:
 //! [fix] P0 #1 (SAFETY): CircuitBreaker wired into GridBot with real NAV P&L.
-//!    Was: CircuitBreaker built in src/risk/ but never instantiated in GridBot.
-//!         Both paper and real bots ran with zero CB protection at bot layer.
-//!    Now: CB field on GridBot, init from config, is_trading_allowed() checked
-//!         every tick, record_trade() called per fill with real wallet NAV,
-//!         trading_paused in get_stats() reflects CB trip state.
 //!
 //! PR #92 FIXES:
 //! [fix] P0 #2 (CORRECTNESS): process_price_update() fill-side detection fixed.
-//!    Was: order_id.to_lowercase().contains("buy") - fragile string sniff.
-//!    Now: fill.side == OrderSide::Buy - reads authoritative FillEvent field.
 //! [fix] P0 #3 (UX): Win Rate display guard added.
-//!    display_status() and GridBotStats::display_summary() print
-//!    "- (no closed trades yet)" when profitable+unprofitable == 0.
 //!
 //! V5.8 CHANGES (PR #86 - Multi-Bot Orchestrator / GAP-3):
 //! [ok] intent_registry: Option<IntentRegistry> field - injected by Orchestrator
@@ -36,12 +39,9 @@
 //! [ok] intent_conflicts: u64 counter - surfaced in BotStats via stats()
 //! [ok] Solo path: intent_registry = None - zero behavior change, zero cost
 //!
-//! PR #91 FIXES:
-//! [fix] Bug 1 (SAFETY): place_grid_orders() key namespace fixed
-//! [fix] Bug 3 (OBSERVABILITY): stats() now returns self.intent_conflicts
-//! [fix] Bug 4 (STATE): reposition_grid() removes registry entries for cancelled levels
-//!
-//! March 2026 - V5.9 CIRCUIT BREAKER WIRED
+//! March 11, 2026 - V6.0: Consensus sizing wired (PR #94 Commit 5b) 📊
+//! March 11, 2026 - V5.9: signal_size_multiplier config (PR #94 Commit 5a) 📐
+//! March 10, 2026 - V5.9: CircuitBreaker wired (PR #93) 🛑
 //! ═════════════════════════════════════════════════════════════════════════
 
 use std::sync::Arc;
@@ -93,6 +93,12 @@ pub struct GridBot {
     /// Kept separately so place_grid_orders() can call the fee filter gate
     /// without routing through StrategyManager fan-out.
     pub grid_rebalancer:    GridRebalancer,
+    /// PR #94 Commit 5b: Cached signal strength from last consensus tick.
+    /// Updated in process_price_update() after every analyze_all() call.
+    /// Used by place_grid_orders() to scale order size when
+    /// enable_smart_position_sizing = true.
+    /// Initialized to 0.0 (Hold equivalent — flat sizing until first analysis).
+    last_signal_strength:   f64,
     feed:                   Arc<PriceFeed>,
     session_start:          Instant,
     last_price:             Option<f64>,
@@ -121,13 +127,16 @@ impl GridBot {
         engine: Arc<dyn TradingEngine + Send + Sync>,
         feed:   Arc<PriceFeed>,
     ) -> Result<Self> {
-        info!("[BOT-V5.9] Initializing GridBot V5.9...");
-        info!("[BOT-V5.9] Engine:    Injected by main.rs (Paper or Real)");
-        info!("[BOT-V5.9] PriceFeed: Owned via Arc - process_tick() autonomous");
-        info!("[BOT-V5.9] Bot Trait: IMPLEMENTED + DISPATCHED (PR #84+#85+#86)");
-        info!("[BOT-V5.9] CircuitBreaker: WIRED (PR #93) - bot-layer protection active");
-        info!("[BOT-V5.9] SmartFeeFilter: WIRED (PR #94 Commit 4) - per-order P&L gate active");
-        info!("[BOT-V5.9] OptimizerCadence: {} cycles (TOML-driven, PR #94 OPT-1)",
+        info!("[BOT-V6.0] Initializing GridBot V6.0...");
+        info!("[BOT-V6.0] Engine:          Injected by main.rs (Paper or Real)");
+        info!("[BOT-V6.0] PriceFeed:       Owned via Arc - process_tick() autonomous");
+        info!("[BOT-V6.0] Bot Trait:       IMPLEMENTED + DISPATCHED (PR #84+#85+#86)");
+        info!("[BOT-V6.0] CircuitBreaker:  WIRED (PR #93) - bot-layer protection active");
+        info!("[BOT-V6.0] SmartFeeFilter:  WIRED (PR #94 Commit 4) - per-order P&L gate active");
+        info!("[BOT-V6.0] ConsensusSizing: {} (PR #94 Commit 5b) | multiplier={:.2}x",
+              if config.trading.enable_smart_position_sizing { "ACTIVE" } else { "disabled" },
+              config.trading.signal_size_multiplier);
+        info!("[BOT-V6.0] OptimizerCadence: {} cycles (TOML-driven, PR #94 OPT-1)",
               config.trading.optimizer_interval_cycles);
 
         let grid_config = GridRebalancerConfig {
@@ -211,7 +220,7 @@ impl GridBot {
 
         let manager = _manager;
 
-        info!("[BOT-V5.9] {} strategies loaded via StrategyRegistryBuilder",
+        info!("[BOT-V6.0] {} strategies loaded via StrategyRegistryBuilder",
               manager.strategies.len());
 
         let grid_state         = GridStateTracker::new();
@@ -221,7 +230,7 @@ impl GridBot {
         let adaptive_optimizer = AdaptiveOptimizer::new(base_spacing, base_size);
         let circuit_breaker    = CircuitBreaker::new(&config);
 
-        info!("[BOT-V5.9] GridBot V5.9 initialization complete");
+        info!("[BOT-V6.0] GridBot V6.0 initialization complete");
 
         Ok(Self {
             manager,
@@ -232,6 +241,8 @@ impl GridBot {
             adaptive_optimizer,
             circuit_breaker,
             grid_rebalancer,
+            // PR #94 Commit 5b: starts at 0.0 = Hold strength = flat sizing
+            last_signal_strength:    0.0,
             feed,
             session_start:           Instant::now(),
             last_price:              None,
@@ -255,7 +266,7 @@ impl GridBot {
     }
 
     async fn initialize_with_price(&mut self) -> Result<()> {
-        info!("[BOT] V5.9 GRID INIT - awaiting live price...");
+        info!("[BOT] V6.0 GRID INIT - awaiting live price...");
 
         let initial_price = self.feed.latest_price().await;
         if initial_price <= 0.0 {
@@ -372,17 +383,49 @@ impl GridBot {
         // PR #91 Bug 1: use trading pair as registry key namespace.
         let pair = self.config.trading_pair();
 
+        // PR #94 Commit 5b: consensus-signal-driven position sizing.
+        //
+        // Formula:
+        //   multiplier   = 1.0 + last_signal_strength × (signal_size_multiplier − 1.0)
+        //   effective_sz = (order_size × multiplier).clamp(min_order_sol, max_position_size)
+        //
+        // Safety invariants:
+        //   • Flag=false          → effective_size == order_size  (zero change)
+        //   • multiplier=1.0 (def)→ effective_size == order_size  (zero change)
+        //   • Hold (strength=0.0) → multiplier=1.0               (zero change)
+        //   • Always clamped to [min_order_sol, max_position_size]
+        let effective_size = if self.config.trading.enable_smart_position_sizing {
+            let multiplier = 1.0
+                + self.last_signal_strength
+                * (self.config.trading.signal_size_multiplier - 1.0);
+            (order_size * multiplier)
+                .clamp(min_order_sol, self.config.trading.max_position_size)
+        } else {
+            order_size
+        };
+
         // PR #94 Commit 4: pre-compute GridStats once for the fee filter.
         // update_price() keeps internal history current; stats() is cheap.
         self.grid_rebalancer.update_price(current_price).await
             .unwrap_or_else(|e| warn!("[BOT] Rebalancer price update failed: {}", e));
         let stats = self.grid_rebalancer.grid_stats().await;
 
-        debug!("[BOT] Grid params: {} levels @ {:.3}% spacing, {:.3} SOL/order",
-               num_levels, grid_spacing * 100.0, order_size);
+        if self.config.trading.enable_smart_position_sizing {
+            debug!(
+                "[BOT] Grid params: {} levels @ {:.3}% spacing | \
+                 base={:.3} SOL effective={:.3} SOL (strength={:.3} mult={:.3}x)",
+                num_levels, grid_spacing * 100.0, order_size, effective_size,
+                self.last_signal_strength,
+                1.0 + self.last_signal_strength
+                    * (self.config.trading.signal_size_multiplier - 1.0),
+            );
+        } else {
+            debug!("[BOT] Grid params: {} levels @ {:.3}% spacing, {:.3} SOL/order",
+                   num_levels, grid_spacing * 100.0, order_size);
+        }
 
-        let mut orders_placed  = 0;
-        let mut orders_failed  = 0;
+        let mut orders_placed   = 0;
+        let mut orders_failed   = 0;
         let mut orders_filtered = 0;
         let buy_levels  = num_levels / 2;
         let sell_levels = num_levels - buy_levels;
@@ -390,9 +433,10 @@ impl GridBot {
         for i in 1..=buy_levels.min(sell_levels) {
             let buy_price  = current_price * (1.0 - grid_spacing * i as f64);
             let sell_price = current_price * (1.0 + grid_spacing * i as f64);
-            let mut level  = self.grid_state.create_level(buy_price, sell_price, order_size).await;
+            // Use effective_size for level tracking so GridState reflects actual order size.
+            let mut level  = self.grid_state.create_level(buy_price, sell_price, effective_size).await;
 
-            // ── Intent registry conflict check (PR #86) ─────────────────────────
+            // ── Intent registry conflict check (PR #86) ────────────────────────────────
             if let Some(registry) = &self.intent_registry {
                 let key = (pair.clone(), level.id);
                 match registry.entry(key) {
@@ -410,7 +454,7 @@ impl GridBot {
                 }
             }
 
-            // ── PR #94 Commit 4: SmartFeeFilter gate ──────────────────────────
+            // ── PR #94 Commit 4: SmartFeeFilter gate ────────────────────────────────
             // Buy side: full P&L check via SmartFeeFilter (Path A) or
             // legacy spread gate (Path B when enable_fee_filtering=false).
             if !self.grid_rebalancer
@@ -423,7 +467,7 @@ impl GridBot {
             }
 
             match self.engine.place_limit_order_with_level(
-                OrderSide::Buy, buy_price, order_size, Some(level.id)
+                OrderSide::Buy, buy_price, effective_size, Some(level.id)
             ).await {
                 Ok(id) => {
                     level.set_buy_order(id);
@@ -449,7 +493,7 @@ impl GridBot {
             }
 
             match self.engine.place_limit_order_with_level(
-                OrderSide::Sell, sell_price, order_size, Some(level.id)
+                OrderSide::Sell, sell_price, effective_size, Some(level.id)
             ).await {
                 Ok(id) => {
                     level.set_sell_order(id);
@@ -482,8 +526,14 @@ impl GridBot {
 
         let signal = self.manager.analyze_all(price, timestamp).await
             .context("Strategy consensus failed")?;
+
+        // PR #94 Commit 5b: cache strength so place_grid_orders() can scale
+        // order size by consensus conviction on the next placement cycle.
+        // strength() returns: Hold=0.0, Buy/Sell=0.25-0.5, StrongBuy/Sell=0.5-1.0
+        self.last_signal_strength = signal.strength();
+
         self.enhanced_metrics.record_signal(true);
-        trace!("[BOT] Signal: {}", signal.display());
+        trace!("[BOT] Signal: {} (strength={:.3})", signal.display(), self.last_signal_strength);
 
         let filled_orders = self.engine.process_price_update(price).await
             .context("Engine tick failed")?;
@@ -567,7 +617,7 @@ impl GridBot {
         let stats  = self.get_stats().await;
         let border = "=".repeat(60);
         println!("\n{}", border);
-        println!("   [BOT] GRID BOT V5.9 - STATUS REPORT");
+        println!("   [BOT] GRID BOT V6.0 - STATUS REPORT");
         println!("{}", border);
         println!("\n[PERFORMANCE]");
         println!("  Total Cycles:      {}", stats.total_cycles);
@@ -579,6 +629,16 @@ impl GridBot {
         println!("  Intent Conflicts:  {}", stats.intent_conflicts);
         println!("  Optimizer Cadence: {} cycles",
                  self.config.trading.optimizer_interval_cycles);
+        // PR #94 Commit 5b: show live signal strength + effective multiplier
+        if self.config.trading.enable_smart_position_sizing {
+            let live_mult = 1.0
+                + self.last_signal_strength
+                * (self.config.trading.signal_size_multiplier - 1.0);
+            println!("  Signal Strength:   {:.3} | sizing {:.3}x (max {:.2}x)",
+                     self.last_signal_strength,
+                     live_mult,
+                     self.config.trading.signal_size_multiplier);
+        }
         let grid_levels = self.grid_state.count().await;
         let filled_buys = self.grid_state.get_levels_with_filled_buys().await.len();
         let total_pnl   = self.grid_state.total_realized_pnl().await;
@@ -752,7 +812,7 @@ pub struct GridBotStats {
 
 impl GridBotStats {
     pub fn display_summary(&self) {
-        println!("\n[STATS] GRID BOT STATISTICS SUMMARY V5.9");
+        println!("\n[STATS] GRID BOT STATISTICS SUMMARY V6.0");
         println!("   Cycles:            {}", self.total_cycles);
         println!("   Trades:            {}", self.successful_trades);
         println!("   Repositions:       {}", self.grid_repositions);
@@ -786,7 +846,7 @@ impl GridBotStats {
         if self.trading_paused {
             println!("   Status:            PAUSED - CB TRIPPED");
         } else {
-            println!("   Status:            V5.9 ACTIVE");
+            println!("   Status:            V6.0 ACTIVE");
         }
     }
 }
@@ -799,6 +859,10 @@ impl GridBotStats {
 mod tests {
     use super::*;
     use crate::risk::circuit_breaker::TripReason;
+
+    // ────────────────────────────────────────────────────────────────────────
+    // Existing tests (carried forward verbatim)
+    // ────────────────────────────────────────────────────────────────────────
 
     #[test]
     fn test_gridbotstats_fields() {
@@ -1087,5 +1151,97 @@ mod tests {
         cb.record_trade(-10.0, 970.0);
         assert!(cb.status().is_tripped);
         assert!(matches!(cb.status().trip_reason, Some(TripReason::ConsecutiveLosses)));
+    }
+
+    // ────────────────────────────────────────────────────────────────────────
+    // PR #94 Commit 5b: consensus-driven sizing formula tests
+    // ────────────────────────────────────────────────────────────────────────
+
+    /// Formula helper — mirrors the exact logic in place_grid_orders()
+    /// so tests remain in sync with the implementation.
+    fn compute_effective_size(
+        enable_smart: bool,
+        order_size: f64,
+        signal_strength: f64,
+        signal_size_multiplier: f64,
+        min_order_sol: f64,
+        max_position_size: f64,
+    ) -> f64 {
+        if enable_smart {
+            let multiplier = 1.0 + signal_strength * (signal_size_multiplier - 1.0);
+            (order_size * multiplier).clamp(min_order_sol, max_position_size)
+        } else {
+            order_size
+        }
+    }
+
+    /// Flag=false → effective_size always equals base order_size, regardless
+    /// of signal strength or multiplier value.
+    #[test]
+    fn test_smart_sizing_disabled_uses_base_size() {
+        let base = 0.1_f64;
+        // Even with a strong signal and large multiplier, flag=false → no change.
+        let effective = compute_effective_size(false, base, 1.0, 2.0, 0.05, 10.0);
+        assert!(
+            (effective - base).abs() < 1e-12,
+            "disabled: expected {base}, got {effective}"
+        );
+    }
+
+    /// Hold signal (strength=0.0) → multiplier=1.0 → effective_size == base_size.
+    /// Proves consensus indifference is truly flat regardless of configured multiplier.
+    #[test]
+    fn test_smart_sizing_hold_signal_no_size_change() {
+        let base = 0.1_f64;
+        // strength=0.0 regardless of configured multiplier → multiplier = 1.0 + 0 × (X-1) = 1.0
+        for multiplier_cfg in [1.0_f64, 1.5, 2.0, 3.0] {
+            let effective = compute_effective_size(true, base, 0.0, multiplier_cfg, 0.05, 10.0);
+            assert!(
+                (effective - base).abs() < 1e-12,
+                "hold signal: expected {base} at mult_cfg={multiplier_cfg}, got {effective}"
+            );
+        }
+    }
+
+    /// StrongBuy at max confidence (strength=1.0) with multiplier=2.0
+    /// should exactly double the base size (within float epsilon), pre-clamp.
+    #[test]
+    fn test_smart_sizing_strong_signal_scales_up() {
+        let base = 0.1_f64;
+        // strength=1.0 (StrongBuy conf=1.0), multiplier_cfg=2.0
+        // expected: (0.1 * (1.0 + 1.0 * 1.0)).clamp(0.05, 10.0) = 0.2
+        let effective = compute_effective_size(true, base, 1.0, 2.0, 0.05, 10.0);
+        assert!(
+            (effective - 0.2_f64).abs() < 1e-12,
+            "strong signal 2x: expected 0.2, got {effective}"
+        );
+    }
+
+    /// Clamp ceiling — even at max strength + max multiplier, effective_size
+    /// never exceeds max_position_size.
+    #[test]
+    fn test_smart_sizing_clamp_respects_max_position() {
+        let base = 5.0_f64;
+        let max  = 8.0_f64;
+        // 5.0 * (1 + 1.0 * 2.0) = 15.0 → clamped to 8.0
+        let effective = compute_effective_size(true, base, 1.0, 3.0, 0.05, max);
+        assert!(
+            (effective - max).abs() < 1e-12,
+            "clamp max: expected {max}, got {effective}"
+        );
+    }
+
+    /// Clamp floor — effective_size never goes below min_order_sol,
+    /// even with a sub-1.0 multiplier config edge case.
+    #[test]
+    fn test_smart_sizing_clamp_respects_min_order() {
+        let base    = 0.1_f64;
+        let min_sol = 0.08_f64;
+        // multiplier_cfg=0.5, strength=1.0 → mult = 1 + 1*(0.5-1) = 0.5 → 0.05 < 0.08 → clamped
+        let effective = compute_effective_size(true, base, 1.0, 0.5, min_sol, 10.0);
+        assert!(
+            (effective - min_sol).abs() < 1e-12,
+            "clamp min: expected {min_sol}, got {effective}"
+        );
     }
 }
