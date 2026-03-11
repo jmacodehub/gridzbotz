@@ -521,7 +521,7 @@ impl GridBot {
         }
 
         // PR #101: periodic heartbeat every stats_interval cycles
-        let interval = self.config.metrics.stats_interval as u64;
+        let interval = self.config.metrics.stats_interval;
         if interval > 0 && self.total_cycles % interval == 0 {
             let perf   = self.engine.get_performance_stats().await;
             let cb_ok  = !self.circuit_breaker.status().is_tripped;
@@ -1025,20 +1025,14 @@ mod tests {
         assert!((s.last_signal_strength - 0.75).abs() < 1e-12);
     }
 
-    // PR #101: TelegramBot field wired in GridBot
     #[test]
     fn test_telegram_disabled_by_default_no_env() {
-        // Without env vars set, from_env() returns a disabled bot
-        // We verify the constructor contract via TelegramBot::new(None, None)
         let bot = crate::utils::TelegramBot::new(None, None);
         assert!(!bot.is_enabled());
     }
 
     #[test]
     fn test_last_cb_tripped_initial_false() {
-        // Edge-detection field starts false — verified via zero_stats logic
-        // (GridBot struct init: last_cb_tripped: false)
-        // We verify the bool default semantics here
         let tripped: bool = false;
         assert!(!tripped);
     }
