@@ -1,5 +1,11 @@
 //! ═══════════════════════════════════════════════════════════════════════════
-//! ⚡ PRIORITY FEE ESTIMATOR V1.0 — Dynamic Compute-Unit Priority Fees
+//! ⚡ PRIORITY FEE ESTIMATOR V1.1 — Dynamic Compute-Unit Priority Fees
+//!
+//! V1.1 CHANGES (feat/priority-fee-quant-log — PR #97 Commit 2):
+//! ✅ test_priority_fee_fallback_on_rpc_error: GAP-4 formally closed.
+//!    Explicitly tests MockFeeSource::failing() → fallback_microlamports.
+//!    Distinguishes from test_fallback_on_empty_samples (generic empty vec)
+//!    by documenting the RPC-error-specific contract and audit trail entry.
 //!
 //! Estimates optimal priority fees for Solana transactions by sampling
 //! recent prioritization fees from the RPC and computing a percentile.
@@ -13,7 +19,7 @@
 //! The estimator is config-driven (PriorityFeeConfig from Commit 4),
 //! thread-safe (Arc<RwLock<CachedFee>>), and designed for multi-bot use.
 //!
-//! March 2026 — V1.0 ⚡
+//! March 2026 — V1.1 ⚡
 //! ═══════════════════════════════════════════════════════════════════════════
 
 use std::sync::Arc;
@@ -88,7 +94,6 @@ impl PriorityFeeEstimator {
     ///
     /// Returns cached value if still within TTL, otherwise recomputes.
     /// Falls back to `fallback_microlamports` if estimation fails.
-
     pub async fn get_priority_fee(&self) -> u64 {
         // Fast path: check cache under read lock
         {
@@ -260,7 +265,7 @@ mod tests {
         PriorityFeeEstimator::new(config, source)
     }
 
-    // ── Percentile math ─────────────────────────────────────────────────
+    // ── Percentile math ───────────────────────────────────────────────────────────────────
 
     #[test]
     fn test_percentile_median_odd() {
@@ -299,7 +304,7 @@ mod tests {
         assert_eq!(PriorityFeeEstimator::percentile(&[], 50), 0);
     }
 
-    // ── Estimator integration ───────────────────────────────────────────
+    // ── Estimator integration ───────────────────────────────────────────────────────────────────
 
     #[tokio::test]
     async fn test_basic_estimation() {
@@ -341,10 +346,37 @@ mod tests {
 
     #[tokio::test]
     async fn test_fallback_on_empty_samples() {
+        // Generic empty-vec path (e.g. RPC returns 0 fee entries for the block window).
+        // See also: test_priority_fee_fallback_on_rpc_error for the RPC-error-specific contract.
         let config = test_config();
         let estimator = make_estimator(config.clone(), vec![]);
         let fee = estimator.get_priority_fee().await;
         assert_eq!(fee, config.fallback_microlamports);
+    }
+
+    /// GAP-4 (PR #97): RPC failure → fallback_microlamports contract.
+    ///
+    /// `MockFeeSource::failing()` simulates `getRecentPrioritizationFees` returning
+    /// an error (or an empty response due to connection failure). The estimator MUST
+    /// return `fallback_microlamports` — never 0, never panic.
+    ///
+    /// This test explicitly documents the RPC-error safety contract and closes
+    /// GAP-4 in the V3 audit trail.
+    #[tokio::test]
+    async fn test_priority_fee_fallback_on_rpc_error() {
+        let config = test_config(); // fallback_microlamports = 5_000
+        let source = Arc::new(MockFeeSource::failing()); // simulates RPC error
+        let estimator = PriorityFeeEstimator::new(config.clone(), source);
+
+        let fee = estimator.get_priority_fee().await;
+
+        assert_eq!(
+            fee,
+            config.fallback_microlamports,
+            "RPC failure must yield fallback_microlamports={}, got {}",
+            config.fallback_microlamports,
+            fee,
+        );
     }
 
     #[tokio::test]
@@ -390,7 +422,6 @@ mod tests {
         samples.extend(vec![20_000u64; 15]);          // 15% at 20K
         samples.extend(vec![100_000u64; 8]);          // 8% at 100K
         samples.extend(vec![500_000u64; 2]);          // 2% at 500K (spam)
-
 
         let mut config = test_config();
         config.percentile = 50;
