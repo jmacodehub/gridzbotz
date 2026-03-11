@@ -1,5 +1,20 @@
 # ═══════════════════════════════════════════════════════════════════════════
-#  🏆 MASTER V5.5.1 — GRIDZBOTZ — CANONICAL CONFIG TEMPLATE
+#  🏆 MASTER V5.6.0 — GRIDZBOTZ — CANONICAL CONFIG TEMPLATE
+#
+#  V5.6.0 (PR #94 — Commits 1-6):
+#  ✅ [trading] optimizer_interval_cycles added (OPT-1, Commits 1+2)
+#     Replaces hardcoded OPTIMIZATION_INTERVAL_CYCLES=50 in grid_bot.rs.
+#     Default: 50 cycles. Tune lower for faster feedback, higher for stability.
+#  ✅ [trading] signal_size_multiplier added (Commits 5a+5b)
+#     Controls how strongly consensus signal strength scales order size.
+#     Default: 1.0 (flat — zero sizing effect even if enable_smart_position_sizing=true)
+#     Formula: effective_size = base_size * (1.0 + strength * (multiplier - 1.0))
+#  ✅ [trading.fee_filter] sub-section added (Commits 3+4)
+#     Per-level fee profitability gate — skips orders whose projected fee
+#     falls outside [min_fee_threshold_bps, max_fee_threshold_bps].
+#  ✅ GridBotStats: 5 new observability fields (Commit 6)
+#     last_signal_strength, orders_filtered_session,
+#     fee_filter_total_checked/passed/blocked surfaced in display_summary()
 #
 #  V5.5.1 (fix/risk-continuous-sl-monitoring — PR #89):
 #  ✅ [risk] enable_trailing_stop added (default: false = fixed stop)
@@ -78,7 +93,7 @@
 # ═══════════════════════════════════════════════════════════════════════════
 [bot]
 name    = "GridzBot-Master"
-version = "5.5.0"    # was 5.4.2 — PR #79 adds priority fees + consecutive loss config
+version = "5.6.0"    # V5.6.0 — PR #94: fee filter + consensus sizing + observability
 environment = "testing"              # testing | development | production
 
 # 🔑 EXECUTION MODE — The single most important knob:
@@ -328,7 +343,114 @@ enable_adaptive_spacing      = false # Stage 4: ATR-driven dynamic spacing
 #    volatility_lookback = 24   # lookback window in hours for multiplier calc
 #    Requires: new fields in TradingConfig, ATR multiplier logic in spacing module
 #    Reference: multi-v5-ai.toml [grid] section (archived Feb 2026)
-enable_smart_position_sizing = false # Stage 4: Confidence-based order sizing
+
+# ─── 🆕 V5.6.0 (PR #94 Commits 5a+5b): Consensus Signal Position Sizing ──
+#
+# enable_smart_position_sizing: master on/off switch.
+#   false (default) → order size is always base min_order_size (safe, zero change)
+#   true            → order size scales with consensus signal conviction
+#
+# signal_size_multiplier: controls the peak sizing multiplier at full conviction.
+#   Formula (in place_grid_orders):
+#     multiplier   = 1.0 + signal_strength × (signal_size_multiplier - 1.0)
+#     effective_sz = (base_size × multiplier).clamp(min_order_size, max_position_size)
+#
+#   signal_strength values per signal type:
+#     Hold                       → 0.0  (no change regardless of multiplier)
+#     Buy / Sell                 → 0.25–0.5
+#     StrongBuy / StrongSell     → 0.5–1.0
+#
+#   Peak sizing table (at StrongBuy/Sell with confidence=1.0, strength=1.0):
+#   ┌──────────────────────────┬──────────────────────────────────────────┐
+#   │ signal_size_multiplier   │ Peak effective size (× base)             │
+#   ├──────────────────────────┼──────────────────────────────────────────┤
+#   │ 1.0 (default)            │ 1.0× — flat, consensus has zero effect   │
+#   │ 1.5                      │ 1.5× at peak conviction                  │
+#   │ 2.0                      │ 2.0× at peak conviction (aggressive)     │
+#   │ 3.0 (max)                │ 3.0× at peak conviction (very aggressive)│
+#   └──────────────────────────┴──────────────────────────────────────────┘
+#
+#   Validation (config/mod.rs): signal_size_multiplier must be in [0.5, 3.0]
+#   when enable_smart_position_sizing = true. Out-of-range → startup bail.
+#
+#   Recommended first step: set multiplier=1.5, run 30min paper test,
+#   check GridBotStats.last_signal_strength + fee_filter_total_passed.
+#
+enable_smart_position_sizing = false # Default: off — safe opt-in
+signal_size_multiplier       = 1.0  # Range [0.5, 3.0] | 1.0 = flat (no effect)
+
+# ─── 🆕 V5.6.0 (PR #94 OPT-1 / Commits 1+2): Adaptive Optimizer Cadence ─
+#
+# How many price-update cycles elapse between AdaptiveOptimizer ticks.
+# The optimizer re-evaluates grid spacing + order size based on recent
+# performance (win-rate, fill-rate, volatility trend).
+#
+# Tuning guide:
+#   10–20  cycles → very reactive (good for volatile markets; higher CPU)
+#   50     cycles → balanced baseline (default)
+#   100    cycles → conservative (stable markets, fewer adjustments)
+#   200+   cycles → near-static (only for highly stable overnight grids)
+#
+# At 100ms cycle_interval_ms:
+#   50 cycles  ≈ every  5 seconds
+#   100 cycles ≈ every 10 seconds
+#   200 cycles ≈ every 20 seconds
+#
+# Replaces the old hardcoded `const OPTIMIZATION_INTERVAL_CYCLES = 50`.
+# All 46 existing TOMLs without this key default to 50 (zero behaviour change).
+#
+optimizer_interval_cycles = 50      # Default: 50 | Must be > 0
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  🔥 FEE FILTER — Per-Level Fee Profitability Gate  (PR #94 Commits 3+4)
+#
+#  Controls which grid levels are placed based on their projected fee cost.
+#  Each candidate order is evaluated before placement:
+#    P&L estimate  = expected_spread - (maker_fee + taker_fee + slippage + impact)
+#  Levels whose estimated fee (BPS) falls outside [min, max] are skipped.
+#
+#  Why this matters:
+#    Too cheap (< min_fee_threshold_bps) → stale quote or bad Jupiter route
+#    Too expensive (> max_fee_threshold_bps) → fee eats entire spread → skip
+#
+#  Tuning guide:
+#   Profile         min_bps   max_bps   window_secs   Notes
+#   ─────────────   ───────   ───────   ───────────   ──────────────────────────
+#   Conservative       8        50          30         Master default (balanced)
+#   Scalper           12        35          15         Tighter — only high quality
+#   Mainnet live       5        60          30         Wider — live spreads vary
+#   Research/R&D       1       100          60         Permissive — explore all
+#
+#  Zero breaking change: omitting this entire section → all defaults apply.
+#  enable_smart_fee_filter = false → all levels placed regardless of fee cost.
+# ═══════════════════════════════════════════════════════════════════════════
+[trading.fee_filter]
+
+# Master on/off switch for the SmartFeeFilter.
+# When false, ALL grid levels are placed regardless of projected fee cost.
+# The [fees] enable_smart_filter flag is the global gate; this is the
+# per-parameter fine-tuning layer on top of it.
+enable_smart_fee_filter = true
+
+# Minimum acceptable fee in basis points (BPS = 0.01%).
+# Levels with estimated fee BELOW this are suspiciously cheap:
+#   → likely a stale Jupiter quote or a route with no real liquidity.
+# Default: 8 BPS (0.08%).
+min_fee_threshold_bps = 8
+
+# Maximum acceptable fee in basis points (BPS = 0.01%).
+# Levels with estimated fee ABOVE this consume the entire spread:
+#   → the trade is unprofitable after fees and is skipped.
+# Default: 50 BPS (0.50%).
+# ⚠️ Values > 500 BPS (5%) generate a startup warning in FeeFilterConfig::validate()
+max_fee_threshold_bps = 50
+
+# Rolling window (seconds) for computing the moving-average fee baseline.
+# Shorter window = more reactive to recent fee spikes.
+# Longer window = smoother, less sensitive to transient anomalies.
+# Default: 30s | Min recommended: 5s (below this → startup warning)
+# ⚠️ Values < 5s generate a startup warning in FeeFilterConfig::validate()
+fee_filter_window_secs = 30
 
 # ═══════════════════════════════════════════════════════════════════════════
 #  🎯 STRATEGIES
