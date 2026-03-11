@@ -15,10 +15,15 @@
 //   ✅ Phase 1: 7 strategy modules wired (mean_reversion, rsi, momentum,
 //      momentum_macd, rsi_enhanced, consensus_wma, fee_filter)
 //   ✅ V5.6 StrategyRegistryBuilder for config-driven registration (GAP-2)
-//   ✅ PR #98: WMAConsensusEngine replaces ConsensusEngine — dynamic
-//      weighted majority with confidence filtering + ROI-adaptive weights.
-//      analyze_all() sequential for deterministic name→signal pairing.
-//      record_fill_for_wma() feeds real P&L back into weight updater.
+//   ✅ PR #98 Commit 1: WMAConsensusEngine replaces ConsensusEngine —
+//      dynamic weighted majority with confidence filtering + ROI-adaptive
+//      weights. analyze_all() sequential for deterministic name→signal
+//      pairing. record_fill_for_wma() feeds real P&L back into updater.
+//   ✅ PR #98 Commit 2a: last_voters tracking in WMAConsensusEngine.
+//      get_last_voters() exposes which strategies cleared confidence gate.
+//   ✅ PR #98 Commit 2b-i: get_last_wma_voters() passthrough on
+//      StrategyManager — lets grid_bot.rs read voter names for P&L
+//      attribution without touching wma_engine internals.
 // ══════════════════════════════════════════════════════════════════════
 
 use anyhow::Result;
@@ -289,13 +294,25 @@ impl StrategyManager {
     /// PR #98 Commit 1: Feed confirmed fill P&L back into WMA weight updater.
     ///
     /// Called by GridBot::process_price_update() after each confirmed fill
-    /// (Commit 2 wires the call site). Enables per-strategy performance
+    /// (Commit 2b-ii wires the call site). Enables per-strategy performance
     /// tracking so WMA weights adapt to real win rate and ROI over time.
     ///
     /// `strategy_name` should match the name registered via add_strategy().
     /// Unknown names are silently ignored by WMAConsensusEngine.
     pub fn record_fill_for_wma(&mut self, strategy_name: &str, pnl: f64) {
         self.wma_engine.record_trade(strategy_name, pnl);
+    }
+
+    /// PR #98 Commit 2b-i: Return the strategy names that cleared the WMA
+    /// confidence gate on the most recent analyze_all() call.
+    ///
+    /// Delegates to WMAConsensusEngine::get_last_voters() — thin passthrough
+    /// so grid_bot.rs never touches wma_engine internals directly.
+    ///
+    /// Empty slice = no strategy cleared the threshold (consensus = Hold).
+    /// In that case no fill should have occurred, so attribution is a no-op.
+    pub fn get_last_wma_voters(&self) -> &[String] {
+        self.wma_engine.get_last_voters()
     }
 
     /// PR #98: Return WMA performance summary for Telegram / Supabase / logs.
@@ -364,7 +381,6 @@ mod tests {
     async fn test_manager_consensus_integration() {
         let ctx = AnalyticsContext::default();
         let mut mgr = StrategyManager::new(ctx);
-        // PR #98: no longer sets mgr.engine.mode — WMA handles consensus
         mgr.add_strategy(GridRebalancer::new(GridRebalancerConfig::default()).unwrap());
         let sig = mgr.analyze_all(100.0, 1).await.unwrap();
         assert!(matches!(
@@ -454,7 +470,6 @@ mod tests {
         let ctx = AnalyticsContext::default();
         let mut mgr = StrategyManager::new(ctx);
         mgr.add_strategy(GridRebalancer::new(GridRebalancerConfig::default()).unwrap());
-        // Strategy registered → WMA has a performance slot for it
         let perf = mgr.wma_engine.get_performance("GridRebalancer");
         assert!(perf.is_some(), "WMA must have a slot for GridRebalancer");
     }
@@ -490,5 +505,32 @@ mod tests {
         let summary = mgr.wma_summary();
         assert!(!summary.is_empty());
         assert!(summary.contains("GridRebalancer"));
+    }
+
+    // ────────────────────────────────────────────────────────────────────────
+    // PR #98 Commit 2b-i: get_last_wma_voters() passthrough tests
+    // ────────────────────────────────────────────────────────────────────────
+
+    /// get_last_wma_voters() returns empty slice before any analyze_all() call.
+    #[test]
+    fn test_get_last_wma_voters_empty_on_init() {
+        let ctx = AnalyticsContext::default();
+        let mut mgr = StrategyManager::new(ctx);
+        mgr.add_strategy(GridRebalancer::new(GridRebalancerConfig::default()).unwrap());
+        assert!(
+            mgr.get_last_wma_voters().is_empty(),
+            "voters must be empty before first analyze_all()"
+        );
+    }
+
+    /// get_last_wma_voters() delegates correctly — same slice as wma_engine.
+    #[test]
+    fn test_get_last_wma_voters_delegates_to_engine() {
+        let ctx = AnalyticsContext::default();
+        let mgr = StrategyManager::new(ctx);
+        // Both accessors must return the same (empty) slice on fresh engine
+        let via_manager = mgr.get_last_wma_voters();
+        let via_engine  = mgr.wma_engine.get_last_voters();
+        assert_eq!(via_manager, via_engine);
     }
 }
