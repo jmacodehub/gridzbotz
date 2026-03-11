@@ -1,5 +1,13 @@
 //! =============================================================================
-//! REAL TRADER ENGINE V3.0
+//! REAL TRADER ENGINE V3.1
+//!
+//! V3.1 CHANGES (feat/priority-fee-quant-log — PR #97 Commit 1):
+//! ✅ build_jupiter_swap(): add quant info! log for priority fee observability.
+//!    GAP-3: fee resolution used debug!() only — invisible at info level in
+//!    production (logging.level = "info" in all production TOMLs).
+//!    New log line (both dynamic and static paths):
+//!      [Quant] priority_fee: mode=dynamic|static fee=X µL/CU max_lamports=Y
+//!    Feeds: prod monitoring today + ML training data in future.
 //!
 //! V3.0 CHANGES (fix/fees-config-reconciliation — PR #96 Commit 1):
 //! ✅ RealTradingConfig::slippage_bps DELETED — was a shadow of
@@ -62,7 +70,7 @@
 //!   - Fee math (maker/taker BPS):   FeesConfig — consumed by paper_trader,
 //!     fee_filter, grid_rebalancer — not needed in real execution path.
 //!
-//! March 2026 — V3.0 🚀
+//! March 2026 — V3.1 🚀
 //! =============================================================================
 
 use anyhow::{bail, Context, Result};
@@ -384,7 +392,7 @@ impl RealTradingEngine {
         initial_balance_sol: f64,
         initial_sol_price_usd: f64,
     ) -> Result<Self> {
-        info!("[RealEngine] Initializing V3.0");
+        info!("[RealEngine] Initializing V3.1");
 
         config.validate()?;
 
@@ -447,7 +455,7 @@ impl RealTradingEngine {
             initial_sol_price_usd,
         ));
 
-        info!("[RealEngine] Initialized V3.0");
+        info!("[RealEngine] Initialized V3.1");
         info!("  Wallet      : {}", keystore.pubkey());
         info!("  NAV         : ${:.2} (SOL @ ${:.4})",
             balance_tracker.initial_balance_usd(), initial_sol_price_usd);
@@ -500,12 +508,7 @@ impl RealTradingEngine {
         // Bails immediately — no swap is built, no network call is made.
         {
             let mut sl = self.stop_loss_manager.write().await;
-            // Take-profit checked first — close at a profit before a loss.
             if sl.should_take_profit(price, price) {
-                // Note: at trade-time, current_price == price (entry == current).
-                // Real continuous monitoring is in process_price_update().
-                // This guard catches the case where a fill arrives at a price
-                // that already satisfies the take-profit threshold.
                 info!("[RealEngine] Trade blocked by take-profit guard @ ${:.4}", price);
                 bail!("[RealEngine] TAKE-PROFIT GUARD: position exit required before new entry");
             }
@@ -557,7 +560,6 @@ impl RealTradingEngine {
                 self.keystore.record_transaction(amount_usdc).await;
                 self.trades.write().await.push(trade);
 
-                // Reset stop-loss manager for the new position entry.
                 self.stop_loss_manager.write().await.reset_for_new_position(price);
 
                 info!("[Order] {:?} confirmed: {}", side, sig);
@@ -607,15 +609,15 @@ impl RealTradingEngine {
             ))?;
 
         // ── Dynamic priority fee ──────────────────────────────────────────────
-        let per_cu_microlamports = match &self.priority_fee_estimator {
+        let (per_cu_microlamports, fee_mode) = match &self.priority_fee_estimator {
             Some(estimator) => {
                 let fee = estimator.get_priority_fee().await;
-                debug!("[Jupiter] Dynamic fee: {} µL/CU", fee);
-                fee
+                debug!("[Jupiter] Dynamic fee resolved: {} µL/CU", fee);
+                (fee, "dynamic")
             }
             None => {
                 debug!("[Jupiter] Static fee: {} µL/CU", self.static_priority_fee);
-                self.static_priority_fee
+                (self.static_priority_fee, "static")
             }
         };
 
@@ -624,9 +626,12 @@ impl RealTradingEngine {
             / 1_000_000;
         let max_lamports = max_lamports.max(MIN_MAX_LAMPORTS);
 
-        debug!(
-            "[Jupiter] Priority cap: {} µL/CU × {}CU = {} max lamports",
-            per_cu_microlamports, JUPITER_ESTIMATED_CU, max_lamports
+        // ✅ PR #97 GAP-3: Quant observability log — visible at info level in production.
+        // Emits fee mode, µL/CU value, and lamports cap on every swap.
+        // Feeds: prod monitoring today + ML training corpus (timestamp from tracing subscriber).
+        info!(
+            "[Quant] priority_fee: mode={} fee={} µL/CU max_lamports={}",
+            fee_mode, per_cu_microlamports, max_lamports
         );
 
         // ✅ PR #96: .with_slippage(self.slippage_bps) — reads from engine field
@@ -684,7 +689,6 @@ impl RealTradingEngine {
     pub async fn auto_take_profit(&self, current_price: f64) -> Result<()> {
         let roi = self.get_roi(current_price).await;
 
-        // ✅ V2.8: self.profit_take_pct replaces deleted config.profit_take_threshold.
         if roi >= self.profit_take_pct {
             let (_, sol)  = self.balance_tracker.get_balances().await;
             let ratio     = self.config.profit_take_ratio.unwrap_or(0.4);
@@ -767,7 +771,7 @@ impl RealTradingEngine {
 
         println!();
         println!("=======================================================");
-        println!("  REAL TRADING ENGINE V3.0 - STATUS");
+        println!("  REAL TRADING ENGINE V3.1 - STATUS");
         println!("=======================================================");
         println!();
         println!("Balances:");
@@ -872,34 +876,12 @@ impl TradingEngine for RealTradingEngine {
         Ok(0)
     }
 
-    /// Continuous SL/TP monitoring — called on every Pyth price tick (10Hz).
-    ///
-    /// Execution order:
-    /// 1. Circuit-breaker cooldown tick (`is_trading_allowed()`).
-    /// 2. NAV reconciliation (P&L → circuit-breaker).
-    /// 3. SL/TP check (only when entry_price > 0.0 — i.e. after first fill):
-    ///    acquire write lock, snapshot stop/profit booleans, drop lock,
-    ///    then call shutdown or take-profit without holding the lock.
-    ///
-    /// Lock safety: write lock held only for two synchronous predicate calls,
-    /// explicitly dropped before any async call. No deadlock risk.
-    ///
-    /// Zero-cost before first fill: `entry_price()` returns 0.0 until
-    /// `reset_for_new_position()` fires on a confirmed trade.
     async fn process_price_update(&self, current_price: f64) -> TradingResult<Vec<FillEvent>> {
-        // Step 1: circuit-breaker cooldown tick.
         let _ = self.circuit_breaker.write().await.is_trading_allowed();
-
-        // Step 2: NAV reconciliation.
         self.reconcile_balances(current_price).await?;
 
-        // Step 3: continuous SL/TP monitoring.
-        // ✅ V2.9 PR #89: entry_price is 0.0 until reset_for_new_position() fires
-        // on a confirmed fill → this block is a no-op before the first trade.
         let entry_price = self.stop_loss_manager.read().await.entry_price();
         if entry_price > 0.0 {
-            // Acquire write lock once — needed to ratchet trailing-stop high.
-            // Snapshot both booleans synchronously, then drop before async work.
             let (stop_triggered, profit_triggered) = {
                 let mut sl = self.stop_loss_manager.write().await;
                 let stop   = sl.should_stop_loss(entry_price, current_price);
@@ -907,7 +889,7 @@ impl TradingEngine for RealTradingEngine {
                     sl.should_take_profit(entry_price, current_price)
                 };
                 (stop, profit)
-            }; // ← write lock released here — safe to call async below
+            };
 
             if stop_triggered {
                 let (sl_pct, _) = self.stop_loss_manager.read().await.thresholds();
@@ -975,10 +957,6 @@ mod tests {
         assert!(config.validate().is_ok());
     }
 
-    // ✅ PR #96: test_slippage_validation REMOVED — RealTradingConfig::slippage_bps
-    // no longer exists. Slippage is owned by ExecutionConfig::max_slippage_bps
-    // and validated there. See test_no_slippage_shadow_on_realconfig below.
-
     #[test]
     fn test_no_shadow_fee_fields() {
         let config = RealTradingConfig::default();
@@ -995,36 +973,16 @@ mod tests {
         );
     }
 
-    /// ✅ V2.8 PR #88: Compile-time regression guard.
-    /// If stop_loss_pct or profit_take_threshold are ever re-added as shadow
-    /// fields on RealTradingConfig this test will fail to compile — which is
-    /// exactly what we want. Do NOT add those fields back.
     #[test]
     fn test_shadow_stop_loss_fields_removed() {
         let config = RealTradingConfig::default();
-        // The following lines must NOT compile if shadow fields exist:
-        // let _ = config.stop_loss_pct;         // ← must NOT exist
-        // let _ = config.profit_take_threshold;  // ← must NOT exist
-        // Absence is guaranteed at compile time.
-        // Only remaining risk fields on config:
         assert!(config.circuit_breaker_loss_pct.is_some());
         assert!(config.profit_take_ratio.is_some());
     }
 
-    /// ✅ PR #96: Compile-time regression guard.
-    /// slippage_bps must NOT exist as a shadow field on RealTradingConfig.
-    /// The field was removed in PR #96 — slippage is owned by the engine
-    /// struct (self.slippage_bps: u16) read from
-    /// global_config.execution.max_slippage_bps at construction.
-    /// If slippage_bps is ever re-added here the struct will fail
-    /// deny_unknown_fields deserialization for any TOML without that key,
-    /// and creates a dual-source ambiguity bug in build_jupiter_swap().
     #[test]
     fn test_no_slippage_shadow_on_realconfig() {
         let config = RealTradingConfig::default();
-        // The following line must NOT compile if the shadow field exists:
-        // let _ = config.slippage_bps; // ← must NOT exist on RealTradingConfig
-        // Verify the struct still holds exactly the right runtime fields:
         assert!(config.max_trade_size_usdc.is_some(),               "max_trade_size_usdc must be Some");
         assert!(config.circuit_breaker_loss_pct.is_some(),          "circuit_breaker_loss_pct must be Some");
         assert!(config.profit_take_ratio.is_some(),                  "profit_take_ratio must be Some");
