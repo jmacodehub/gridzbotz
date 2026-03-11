@@ -33,6 +33,10 @@
 //!   ✅ GATE-3 fix: display shows dollar std-dev, not misleading percentage
 //!   ✅ Resume path now reachable — no more permanent pause deadlock
 //!
+//! PR #98 fix: name() returns "GridRebalancer" (stable WMA HashMap key).
+//! Version info lives in this header and wma_summary() output — never
+//! in a runtime-observable &str used as a P&L attribution key.
+//!
 //! February 28, 2026 - V5.1 | March 2026 - V5.4 🚀
 //! ═════════════════════════════════════════════════════════════════════════
 
@@ -819,7 +823,9 @@ impl Default for GridRebalancerBuilder {
 
 #[async_trait]
 impl Strategy for GridRebalancer {
-    fn name(&self) -> &str { "Grid Rebalancer V5.4" }
+    /// Stable identifier used as a HashMap key in WMAConsensusEngine.
+    /// Version info lives in the file header and wma_summary() output — never here.
+    fn name(&self) -> &str { "GridRebalancer" }
 
     async fn analyze(&mut self, price: f64, _timestamp: i64) -> Result<Signal> {
         self.update_price(price).await.context("Failed to update price")?;
