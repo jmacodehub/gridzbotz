@@ -1,8 +1,9 @@
 //! ═══════════════════════════════════════════════════════════════════════════
-//! PAPER TRADING ENGINE V3.3 - Risk-Free Strategy Testing
+//! PAPER TRADING ENGINE V3.4 - Risk-Free Strategy Testing
 //! Production-Ready | Enhanced | Optimized | Modular
 //! October 16, 2025 — V3.2 February 2026 (fill accumulator + drain_fills)
 //! V3.3 March 2026 — FeesConfig wiring (single source of truth)
+//! V3.4 March 2026 — level_id wired through Order struct to FillEvent (PR #102)
 //! ═══════════════════════════════════════════════════════════════════════════
 //!
 //! Features:
@@ -18,6 +19,7 @@
 //! ✅ V3.1: impl TradingEngine — satisfies Arc<dyn TradingEngine>
 //! ✅ V3.2: drain_fills() — FillEvent accumulator for strategy fan-out
 //! ✅ V3.3: with_fees_config() — FeesConfig as single source of truth
+//! ✅ V3.4: level_id stored on Order, propagated to FillEvent on fill
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
@@ -52,16 +54,20 @@ pub enum OrderType { Limit, Market }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Order {
-    pub id: String,
-    pub side: OrderSide,
-    pub order_type: OrderType,
-    pub status: OrderStatus,
-    pub price: f64,
-    pub size: f64,
+    pub id:          String,
+    pub side:        OrderSide,
+    pub order_type:  OrderType,
+    pub status:      OrderStatus,
+    pub price:       f64,
+    pub size:        f64,
     pub filled_size: f64,
-    pub created_at: i64,
-    pub filled_at: Option<i64>,
-    pub fee_paid: f64,
+    pub created_at:  i64,
+    pub filled_at:   Option<i64>,
+    pub fee_paid:    f64,
+    /// Grid level ID — stamped by place_limit_order_with_level(), survives until fill.
+    /// Propagated to FillEvent so grid_bot can call mark_buy/sell_filled(level_id)
+    /// and the CB receives real P&L deltas instead of always-zero snapshots.
+    pub level_id:    Option<u64>,
 }
 
 impl Order {
@@ -74,6 +80,7 @@ impl Order {
             created_at: chrono::Utc::now().timestamp(),
             filled_at: None,
             fee_paid: 0.0,
+            level_id: None,
         }
     }
 }
@@ -199,7 +206,7 @@ impl PaperTradingEngine {
     /// Override with `.with_fees_config()` or `.with_fees()` + `.with_slippage()`.
     pub fn new(initial_usdc: f64, initial_sol: f64) -> Self {
         let defaults = FeesConfig::default();
-        info!("[PAPER] Initializing Paper Trading Engine V3.3");
+        info!("[PAPER] Initializing Paper Trading Engine V3.4");
         Self {
             wallet: Arc::new(RwLock::new(VirtualWallet::new(initial_usdc, initial_sol))),
             open_orders: Arc::new(RwLock::new(HashMap::new())),
@@ -360,8 +367,8 @@ impl PaperTradingEngine {
                         history.pop_front();
                     }
 
-                    // V3.2: accumulate FillEvent for strategy fan-out
-                    fills.push(FillEvent::new(
+                    // V3.4: propagate level_id from Order to FillEvent
+                    let mut fill = FillEvent::new(
                         order_id.clone(),
                         order.side,
                         execution_price,
@@ -369,11 +376,15 @@ impl PaperTradingEngine {
                         fee,
                         None,
                         ts,
-                    ));
+                    );
+                    if let Some(lid) = order.level_id {
+                        fill = fill.with_level(lid);
+                    }
+                    fills.push(fill);
 
                     filled_orders.push(order_id.clone());
-                    debug!("[FILL] {:?} order filled: {:.4} SOL @ ${:.4} (fee: ${:.4})",
-                        order.side, order.size, execution_price, fee);
+                    debug!("[FILL] {:?} order filled: {:.4} SOL @ ${:.4} (fee: ${:.4}) level:{:?}",
+                        order.side, order.size, execution_price, fee, order.level_id);
                 } else {
                     orders.insert(order_id, order);
                 }
@@ -514,14 +525,25 @@ impl PaperTradingEngine {
 
 #[async_trait]
 impl TradingEngine for PaperTradingEngine {
+    /// Place a limit order and stamp the grid level_id onto the stored Order.
+    ///
+    /// The level_id is persisted in the Order struct (not just the return string)
+    /// so that process_price_update() can propagate it to FillEvent when the
+    /// order fills — enabling the grid bot's state machine and CB to function.
     async fn place_limit_order_with_level(
         &self, side: OrderSide, price: f64, size: f64, grid_level_id: Option<u64>,
     ) -> TradingResult<String> {
         let order_id = self.place_limit_order(side, price, size).await?;
-        Ok(match grid_level_id {
-            Some(level) => format!("{}-L{}", order_id, level),
-            None => order_id,
-        })
+        if let Some(level) = grid_level_id {
+            // Stamp level_id directly onto the stored Order so process_price_update
+            // can read it at fill time. The return string suffix is cosmetic only.
+            if let Some(order) = self.open_orders.write().await.get_mut(&order_id) {
+                order.level_id = Some(level);
+            }
+            Ok(format!("{}-L{}", order_id, level))
+        } else {
+            Ok(order_id)
+        }
     }
 
     async fn cancel_order(&self, order_id: &str) -> TradingResult<()> {
@@ -571,7 +593,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_wallet_new_silent_no_log() {
-        // new_silent must produce the same balances as new() without panicking.
         let w = VirtualWallet::new_silent(500.0, 2.5);
         assert_eq!(w.get_balance("USDC"), 500.0);
         assert_eq!(w.get_balance("SOL"), 2.5);
@@ -624,6 +645,38 @@ mod tests {
         engine.place_limit_order(OrderSide::Buy, 100.0, 1.0).await.unwrap();
         engine.process_price_update(105.0).await.unwrap();
         assert!(engine.drain_fills().await.is_empty());
+    }
+
+    /// V3.4 regression: level_id must survive the place→fill pipeline.
+    /// Before this fix, level_id was encoded only in the return string
+    /// ("ORDER-000001-L7") but the HashMap stored "ORDER-000001".
+    /// process_price_update() iterated HashMap keys and emitted FillEvent
+    /// with level_id = None — grid state machine and CB never received real P&L.
+    #[tokio::test]
+    async fn test_fill_event_carries_level_id() {
+        let engine = PaperTradingEngine::new(10_000.0, 0.0);
+        engine
+            .place_limit_order_with_level(OrderSide::Buy, 100.0, 1.0, Some(7))
+            .await
+            .unwrap();
+        engine.process_price_update(98.0).await.unwrap();
+        let fills = engine.drain_fills().await;
+        assert_eq!(fills.len(), 1);
+        assert_eq!(fills[0].level_id, Some(7), "level_id must survive place→fill");
+    }
+
+    /// level_id = None when placed without a level — no regression on non-grid orders.
+    #[tokio::test]
+    async fn test_fill_event_no_level_id_when_not_set() {
+        let engine = PaperTradingEngine::new(10_000.0, 0.0);
+        engine
+            .place_limit_order_with_level(OrderSide::Buy, 100.0, 1.0, None)
+            .await
+            .unwrap();
+        engine.process_price_update(98.0).await.unwrap();
+        let fills = engine.drain_fills().await;
+        assert_eq!(fills.len(), 1);
+        assert_eq!(fills[0].level_id, None, "level_id must be None when not set");
     }
 
     #[test]
