@@ -15,9 +15,11 @@
 //! Safety First! 🛡️
 //! ═══════════════════════════════════════════════════════════════════════════
 
+
 use crate::Config;
 use std::time::{Duration, Instant};
 use log::{error, warn, info};
+
 
 /// Circuit breaker for emergency trading halt
 #[derive(Debug)]
@@ -27,6 +29,7 @@ pub struct CircuitBreaker {
     max_drawdown_pct: f64,
     max_consecutive_losses: u32,
     cooldown_duration: Duration,
+
 
     // State tracking
     consecutive_losses: u32,
@@ -39,11 +42,13 @@ pub struct CircuitBreaker {
     #[allow(dead_code)]
     last_trade_time: Option<Instant>,
 
+
     // Circuit breaker state
     is_tripped: bool,
     trip_reason: Option<TripReason>,
     trip_time: Option<Instant>,
 }
+
 
 /// Reason why circuit breaker was tripped
 #[derive(Debug, Clone, Copy)]
@@ -52,6 +57,7 @@ pub enum TripReason {
     MaxDrawdown,
     ConsecutiveLosses,
 }
+
 
 impl CircuitBreaker {
     /// Create new circuit breaker from config
@@ -62,11 +68,13 @@ impl CircuitBreaker {
         info!("   Cooldown period:       {}s", config.risk.circuit_breaker_cooldown_secs);
         info!("   Max consecutive loss:  {} trades", config.risk.max_consecutive_losses);
 
+
         Self {
             max_daily_loss_pct: config.risk.max_drawdown_pct,
             max_drawdown_pct: config.risk.circuit_breaker_threshold_pct,
             max_consecutive_losses: config.risk.max_consecutive_losses,
             cooldown_duration: Duration::from_secs(config.risk.circuit_breaker_cooldown_secs),
+
 
             consecutive_losses: 0,
             daily_pnl: 0.0,
@@ -74,11 +82,13 @@ impl CircuitBreaker {
             current_drawdown_pct: 0.0,
             last_trade_time: None,
 
+
             is_tripped: false,
             trip_reason: None,
             trip_time: None,
         }
     }
+
 
     /// Create with custom initial balance (full portfolio NAV in USD).
     /// Pass `initial_usdc + (initial_sol * sol_price_usd)` — NOT just USDC.
@@ -88,11 +98,13 @@ impl CircuitBreaker {
         breaker
     }
 
+
     /// Check if trading is allowed
     pub fn is_trading_allowed(&mut self) -> bool {
         if self.is_tripped {
             if let Some(trip_time) = self.trip_time {
                 let elapsed = trip_time.elapsed();
+
 
                 if elapsed >= self.cooldown_duration {
                     info!("✅ Circuit breaker cooldown complete - resuming trading");
@@ -101,6 +113,7 @@ impl CircuitBreaker {
                 } else {
                     let remaining = self.cooldown_duration - elapsed;
 
+
                     if elapsed.as_secs() % 60 == 0 {
                         warn!("⏸️  Circuit breaker active - {}s remaining", remaining.as_secs());
                         if let Some(reason) = self.trip_reason {
@@ -108,13 +121,16 @@ impl CircuitBreaker {
                         }
                     }
 
+
                     return false;
                 }
             }
         }
 
+
         true
     }
+
 
     /// Record a trade result and update balance.
     ///
@@ -127,8 +143,10 @@ impl CircuitBreaker {
             return;
         }
 
+
         self.daily_pnl += pnl;
         self.last_trade_time = Some(Instant::now());
+
 
         if new_balance > self.peak_balance {
             self.peak_balance = new_balance;
@@ -136,6 +154,7 @@ impl CircuitBreaker {
         } else {
             self.current_drawdown_pct = ((self.peak_balance - new_balance) / self.peak_balance) * 100.0;
         }
+
 
         if pnl < 0.0 {
             self.consecutive_losses += 1;
@@ -148,13 +167,16 @@ impl CircuitBreaker {
             self.consecutive_losses = 0;
         }
 
+
         self.check_trip_conditions();
     }
+
 
     fn check_trip_conditions(&mut self) {
         if self.is_tripped {
             return;
         }
+
 
         if self.peak_balance > 0.0 {
             let daily_loss_pct = (-self.daily_pnl / self.peak_balance) * 100.0;
@@ -167,6 +189,7 @@ impl CircuitBreaker {
             }
         }
 
+
         if self.current_drawdown_pct >= self.max_drawdown_pct {
             error!("🚨 CIRCUIT BREAKER TRIPPED - Maximum drawdown exceeded!");
             error!("   Current DD:   -{:.2}%", self.current_drawdown_pct);
@@ -175,6 +198,7 @@ impl CircuitBreaker {
             self.trip(TripReason::MaxDrawdown);
             return;
         }
+
 
         if self.consecutive_losses >= self.max_consecutive_losses {
             error!("🚨 CIRCUIT BREAKER TRIPPED - Too many consecutive losses!");
@@ -185,16 +209,19 @@ impl CircuitBreaker {
         }
     }
 
+
     fn trip(&mut self, reason: TripReason) {
         self.is_tripped = true;
         self.trip_reason = Some(reason);
         self.trip_time = Some(Instant::now());
+
 
         error!("⚠️  ═══════════════════════════════════════════════════════");
         error!("⚠️  ALL TRADING HALTED FOR {}s", self.cooldown_duration.as_secs());
         error!("⚠️  Reason: {:?}", reason);
         error!("⚠️  ═══════════════════════════════════════════════════════");
     }
+
 
     fn reset(&mut self) {
         info!("🔄 Resetting circuit breaker state");
@@ -204,6 +231,7 @@ impl CircuitBreaker {
         self.consecutive_losses = 0;
     }
 
+
     pub fn reset_daily(&mut self) {
         info!("📅 Resetting daily circuit breaker statistics");
         info!("   Final daily P&L:     {:.2}%",
@@ -211,13 +239,16 @@ impl CircuitBreaker {
         info!("   Consecutive losses:  {}", self.consecutive_losses);
         info!("   Current drawdown:    -{:.2}%", self.current_drawdown_pct);
 
+
         self.daily_pnl = 0.0;
     }
+
 
     pub fn force_trip(&mut self, reason: TripReason) {
         warn!("🚨 Manual circuit breaker trip triggered!");
         self.trip(reason);
     }
+
 
     pub fn status(&self) -> CircuitBreakerStatus {
         CircuitBreakerStatus {
@@ -238,6 +269,7 @@ impl CircuitBreaker {
     }
 }
 
+
 #[derive(Debug, Clone)]
 pub struct CircuitBreakerStatus {
     pub is_tripped: bool,
@@ -247,6 +279,7 @@ pub struct CircuitBreakerStatus {
     pub current_drawdown_pct: f64,
     pub cooldown_remaining: Option<Duration>,
 }
+
 
 impl std::fmt::Display for TripReason {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -258,14 +291,17 @@ impl std::fmt::Display for TripReason {
     }
 }
 
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Tests
 // ═══════════════════════════════════════════════════════════════════════════
+
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::config::*;
+
 
     /// Canonical test config — must stay in sync with the Config struct.
     /// When new fields are added to Config / BotConfig / etc., add them here
@@ -322,6 +358,10 @@ mod tests {
                 min_orders_to_maintain: 5,
                 enable_adaptive_spacing: false,
                 enable_smart_position_sizing: false,
+                // ✅ PR #94 V5.3/V5.4/V5.5: new TradingConfig fields — canonical defaults
+                optimizer_interval_cycles: 50,
+                fee_filter: FeeFilterConfig::default(),
+                signal_size_multiplier: 1.0,
             },
             strategies: StrategiesConfig::default(),
             execution: ExecutionConfig::default(),
@@ -351,20 +391,24 @@ mod tests {
         }
     }
 
+
     #[test]
     fn test_circuit_breaker_creation() {
         let config = test_config();
         let breaker = CircuitBreaker::new(&config);
+
 
         assert!(!breaker.is_tripped);
         assert_eq!(breaker.consecutive_losses, 0);
         assert_eq!(breaker.daily_pnl, 0.0);
     }
 
+
     #[test]
     fn test_consecutive_losses() {
         let config = test_config();
         let mut breaker = CircuitBreaker::with_balance(&config, 10000.0);
+
 
         // Record 4 losses — each is 1% of balance, total 4% < 10% daily limit
         // so only consecutive-loss check is relevant here
@@ -373,15 +417,18 @@ mod tests {
             assert!(!breaker.is_tripped);
         }
 
+
         // 5th loss hits max_consecutive_losses (5) → trip
         breaker.record_trade(-100.0, 9800.0);
         assert!(breaker.is_tripped);
     }
 
+
     #[test]
     fn test_record_trade_noop_when_tripped() {
         let config = test_config();
         let mut breaker = CircuitBreaker::with_balance(&config, 10000.0);
+
 
         // Trip via consecutive losses
         for _ in 0..5 {
@@ -390,6 +437,7 @@ mod tests {
         assert!(breaker.is_tripped);
         let count_at_trip = breaker.consecutive_losses;
 
+
         // Further calls must not increment the counter
         breaker.record_trade(-100.0, 9800.0);
         breaker.record_trade(-100.0, 9700.0);
@@ -397,29 +445,36 @@ mod tests {
             "consecutive_losses must not grow after trip");
     }
 
+
     #[test]
     fn test_profit_resets_streak() {
         let config = test_config();
         let mut breaker = CircuitBreaker::with_balance(&config, 10000.0);
 
+
         for _ in 0..3 {
             breaker.record_trade(-50.0, 9900.0);
         }
 
+
         assert_eq!(breaker.consecutive_losses, 3);
+
 
         breaker.record_trade(100.0, 10000.0);
         assert_eq!(breaker.consecutive_losses, 0);
     }
+
 
     #[test]
     fn test_daily_loss_limit_fires_as_percentage() {
         let config = test_config(); // max_drawdown_pct = 10.0
         let mut breaker = CircuitBreaker::with_balance(&config, 1000.0);
 
+
         // 9% loss — should NOT trip (9 < 10)
         breaker.record_trade(-90.0, 910.0);
         assert!(!breaker.is_tripped, "9% loss should not trip 10% daily limit");
+
 
         // Another 2% loss — total 11% — should trip
         breaker.record_trade(-20.0, 890.0);
