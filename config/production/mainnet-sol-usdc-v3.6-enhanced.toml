@@ -14,6 +14,7 @@
 #    ✅ Jupiter V6 API compatible
 #    ✅ Jito MEV ready (commented, enable when scaling >$500)
 #    ✅ Secrets via env vars (GRIDZBOTZ_* — never hardcode keys!)
+#    ✅ wma_confidence_threshold = 0.65 (PR #100 — explicit, matches historic gate)
 #
 #  Strategy: Grid-only with ATR-driven adaptive spacing
 #  Capital: $50-100 conservative start (scale after 48h validation)
@@ -106,32 +107,17 @@ max_retries                = 4         # ↑ from 3 (extra attempt for stale quo
 
 # ═══════════════════════════════════════════════════════════════════════════
 #  ⚡ PRIORITY FEES — Dynamic Compute-Unit Priority Fee Estimation (PR #79)
-#
-#  When enable_dynamic = true:
-#    1. Samples getRecentPrioritizationFees from Chainstack (150 blocks)
-#    2. Computes Pth percentile → applies multiplier → clamp(min, max)
-#    3. Caches result for cache_ttl_secs (avoids RPC spam)
-#    4. On RPC failure → falls back to fallback_microlamports (100K)
-#    5. Injected into Jupiter's priorityLevelWithMaxLamports cap
-#
-#  Unit: µL/CU (microlamports per compute unit) — NOT total lamports.
-#  Conversion in real_trader.rs: max_lamports = µL/CU × 300K CU / 1M
-#
-#  Cost at defaults (P50 × 1.2, normal network):
-#    ~50K µL/CU → 50K × 300K / 1M = 15K lamports (0.000015 SOL ≈ $0.002)
-#  Cost at max ceiling:
-#    500K µL/CU → 500K × 300K / 1M = 150K lamports (0.00015 SOL ≈ $0.02)
 # ═══════════════════════════════════════════════════════════════════════════
 [priority_fees]
-enable_dynamic         = true          # ✅ ENABLED for production — adapts to congestion
-strategy               = "percentile"  # "percentile" | "fixed"
-percentile             = 50            # P50 = median (safe starting point)
-multiplier             = 1.2           # 20% headroom above computed fee
-min_microlamports      = 1_000         # Floor — ensures tx always has some priority
-max_microlamports      = 500_000       # Ceiling — cap runaway costs ($0.02 max)
-fallback_microlamports = 100_000       # On RPC failure — matches existing static fee
-cache_ttl_secs         = 10            # Re-estimate every 10s (6 samples/min)
-sample_blocks          = 150           # Full 150-block window (~1 min of Solana slots)
+enable_dynamic         = true
+strategy               = "percentile"
+percentile             = 50
+multiplier             = 1.2
+min_microlamports      = 1_000
+max_microlamports      = 500_000
+fallback_microlamports = 100_000
+cache_ttl_secs         = 10
+sample_blocks          = 150
 
 # ═══════════════════════════════════════════════════════════════════════════
 #  💰 PAPER TRADING (Reference Only — Ignored in Live Mode)
@@ -146,66 +132,58 @@ test_duration_hours = 1
 # ═══════════════════════════════════════════════════════════════════════════
 [trading]
 
-# ─── Core Grid (Battle-Tested Baseline) ────────────────────────────────────
-grid_levels          = 20              # 20 levels (10 buy + 10 sell)
+# ─── Core Grid (Battle-Tested Baseline) ──────────────────────────────────────────
+frid_levels          = 20              # 20 levels (10 buy + 10 sell)
 grid_spacing_percent = 0.18            # 0.18% base spacing (battle-tested)
 min_order_size       = 0.05            # 0.05 SOL min (~$4 at $80/SOL)
 max_position_size    = 50.0            # $50 max position
 
-# ─── Reserves ──────────────────────────────────────────────────────────────
-min_usdc_reserve = 20.0                # $20 USDC emergency reserve
-min_sol_reserve  = 0.1                 # 0.1 SOL for fees
+# ─── Reserves ─────────────────────────────────────────────────────────────────────
+min_usdc_reserve = 20.0
+min_sol_reserve  = 0.1
 
-# ─── Dynamic Grid ──────────────────────────────────────────────────────────
+# ─── Dynamic Grid ──────────────────────────────────────────────────────────────────
 enable_dynamic_grid  = true
-volatility_window    = 100             # 100-cycle rolling window
+volatility_window    = 100
 
-# 🆕 V3.6: ATR Dynamic Spacing (from R&D multi-strategy profile)
-# Widens spacing in high-vol (protects from whipsaw)
-# Tightens spacing in low-vol (captures small moves)
-enable_adaptive_spacing = true         # ✅ ENABLED
+enable_adaptive_spacing = true
 
-# Reposition threshold (fire when price drifts >0.3% from anchor)
-reposition_threshold = 0.30            # 0.30% (tighter than v1's 0.50%)
+reposition_threshold = 0.30
 
-# ─── Auto-Rebalancing ──────────────────────────────────────────────────────
+# ─── Auto-Rebalancing ──────────────────────────────────────────────────────────────────
 enable_auto_rebalance    = true
 enable_smart_rebalance   = true
-rebalance_threshold_pct  = 5.0         # Rebalance if imbalance >5%
-rebalance_cooldown_secs  = 120         # 2min cooldown between rebalances
+rebalance_threshold_pct  = 5.0
+rebalance_cooldown_secs  = 120
 
-# ─── Order Management ──────────────────────────────────────────────────────
-max_orders_per_side          = 10      # 10 buy + 10 sell = 20 total
-order_refresh_interval_secs  = 120     # Refresh stale orders every 2min
-enable_market_orders         = false   # Legacy field (Jupiter = atomic AMM swaps)
+# ─── Order Management ────────────────────────────────────────────────────────────────
+max_orders_per_side          = 10
+order_refresh_interval_secs  = 120
+enable_market_orders         = false
 enable_fee_optimization      = true
 
-# ─── Order Lifecycle (Aggressive Refresh from tuned-mar2) ──────────────────
+# ─── Order Lifecycle ──────────────────────────────────────────────────────────────────
 enable_order_lifecycle         = true
-order_max_age_minutes          = 5     # Cancel orders older than 5min
-order_refresh_interval_minutes = 2     # Check every 2min
-min_orders_to_maintain         = 8     # Maintain at least 8 active orders
+order_max_age_minutes          = 5
+order_refresh_interval_minutes = 2
+min_orders_to_maintain         = 8
 
-# ─── Risk Limits ───────────────────────────────────────────────────────────
-min_profit_threshold_pct = 0.25        # Min 0.25% profit after fees
-max_slippage_pct         = 1.5         # Max 1.5% slippage tolerance
+# ─── Risk Limits ────────────────────────────────────────────────────────────────────
+min_profit_threshold_pct = 0.25
+max_slippage_pct         = 1.5
 
-# ─── Price Bounds (Disabled) ───────────────────────────────────────────────
+# ─── Price Bounds (Disabled) ─────────────────────────────────────────────────────────────
 enable_price_bounds = false
-lower_price_bound   = 50.0             # Reference only
-upper_price_bound   = 150.0            # Reference only
+lower_price_bound   = 50.0
+upper_price_bound   = 150.0
 
-# ─── 🔥 Enhanced Regime Gate (V3.6 + PR #80 fix) ──────────────────────────
-# min_volatility_to_trade = single source of truth for vol-floor gating.
-# PR #80: pause_in_very_low_vol disabled — was redundant with min_vol
-# and caused permanent pause before GATE-1 fix (sticky flag, never cleared).
-enable_regime_gate       = true        # ✅ ENABLED
-min_volatility_to_trade  = 0.05        # 0.05% floor (battle-tested)
-#max_volatility_to_trade  = 8.0         # 🆕 8% ceiling (from R&D multi-strategy)
-pause_in_very_low_vol    = false       # 🔧 PR #80: disabled — min_vol handles this
+# ─── 🔥 Enhanced Regime Gate (V3.6 + PR #80 fix) ────────────────────────────────────────
+enable_regime_gate       = true
+min_volatility_to_trade  = 0.05
+pause_in_very_low_vol    = false
 
-# ─── Advanced Features ─────────────────────────────────────────────────────
-enable_smart_position_sizing = true    # Dynamic position sizing based on vol
+# ─── Advanced Features ─────────────────────────────────────────────────────────────────
+enable_smart_position_sizing = true
 
 # ═══════════════════════════════════════════════════════════════════════════
 #  🎯 STRATEGIES — Grid-Only (Add Multi-Strategy After Validation)
@@ -214,19 +192,31 @@ enable_smart_position_sizing = true    # Dynamic position sizing based on vol
 active         = ["grid"]              # Grid-only for initial validation
 consensus_mode = "single"              # Single strategy mode
 
+# ─── WMA Confidence Gate (PR #99 / PR #100) ───────────────────────────────────────
+# Minimum WMA consensus confidence required to act on a signal.
+# In single-strategy mode (grid-only) this gate is effectively a no-op
+# because GridRebalancer always returns confidence = 1.0.
+# Set to 0.65 now so when multi-strategy is enabled this TOML is already
+# tuned and matches the previously hardcoded gate.
+# Tuning guide:
+#   0.50 — lenient  (more signals, more fills, more risk)
+#   0.65 — balanced (historic default, validated in paper trading)
+#   0.75 — strict   (fewer signals, higher quality, less fills)
+#   0.85 — very strict (use only in strong trending markets)
+wma_confidence_threshold = 0.65        # ✅ Explicit — matches historic gate (PR #100)
+
 enable_multi_timeframe       = false
 require_timeframe_alignment  = false
 
-# ─── Strategy 1: Grid Rebalancer ───────────────────────────────────────────
+# ─── Strategy 1: Grid Rebalancer ─────────────────────────────────────────────────────
 [strategies.grid]
 enabled                  = true
 weight                   = 1.0
 min_confidence           = 0.5
-#reposition_threshold_pct = 0.30        # Match trading.reposition_threshold
 
-# ─── Strategy 2-5: Disabled (Enable After Grid-Only Validation) ────────────
+# ─── Strategy 2-5: Disabled (Enable After Grid-Only Validation) ────────────────────
 [strategies.momentum]
-enabled         = false                # Enable after 48h grid-only validation
+enabled         = false
 weight          = 0.8
 min_confidence  = 0.6
 lookback_period = 20
@@ -258,20 +248,20 @@ enabled                    = false
 weight                     = 0.8
 min_confidence             = 0.65
 strong_histogram_threshold = 0.5
-min_warmup_periods         = 26        # NEVER reduce below 26
+min_warmup_periods         = 26
 
 # ═══════════════════════════════════════════════════════════════════════════
-#  🚨 RISK MANAGEMENT — Tightened Circuit Breakers
+#  🚨 RISK MANAGEMENT
 # ═══════════════════════════════════════════════════════════════════════════
 [risk]
-max_position_size_pct         = 30.0   # Max 30% of capital per position
-max_drawdown_pct              = 5.0    # Kill-switch at -5% drawdown
-stop_loss_pct                 = 3.0    # Stop-loss at -3%
-take_profit_pct               = 8.0    # Take-profit at +8%
-enable_circuit_breaker        = true   # ✅ ENABLED
-circuit_breaker_threshold_pct = 4.0    # Trip at -4% (tighter than v1's 8%)
-circuit_breaker_cooldown_secs = 300    # 5min cooldown after trip
-max_consecutive_losses        = 5      # 🆕 PR #79: Trip breaker after 5 straight losses
+max_position_size_pct         = 30.0
+max_drawdown_pct              = 5.0
+stop_loss_pct                 = 3.0
+take_profit_pct               = 8.0
+enable_circuit_breaker        = true
+circuit_breaker_threshold_pct = 4.0
+circuit_breaker_cooldown_secs = 300
+max_consecutive_losses        = 5
 
 [fees]
 maker_fee_bps = 2.0
@@ -282,9 +272,7 @@ enable_smart_filter = false
 market_impact_coefficient = 0.01
 
 # ═══════════════════════════════════════════════════════════════════════════
-#  🪐 JUPITER API — V6 Compatible (NOT YET IN CONFIG STRUCT)
-#  JupiterClient reads these from env vars / hardcoded defaults today.
-#  Wire into Config as JupiterConfig in a future PR.
+#  🪐 JUPITER API
 # ═══════════════════════════════════════════════════════════════════════════
 # [jupiter]
 # api_key = ""
@@ -293,31 +281,27 @@ market_impact_coefficient = 0.01
 # priority_fee_max_lamports = 100000
 # priority_level = "high"
 
-
 # ═══════════════════════════════════════════════════════════════════════════
-#  📡 PYTH PRICE FEED — Hermes V2 HTTP
+#  📡 PYTH PRICE FEED
 # ═══════════════════════════════════════════════════════════════════════════
 [pyth]
 http_endpoint      = "https://hermes.pyth.network"
 feed_ids           = ["0xef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d"]
-update_interval_ms = 500               # 500ms = 2Hz feed
-
-# 🔮 Future: WebSocket feed for <100ms latency
-# ws_endpoint = "wss://hermes.pyth.network/ws"
+update_interval_ms = 500
 
 # ═══════════════════════════════════════════════════════════════════════════
 #  ⚙️  PERFORMANCE
 # ═══════════════════════════════════════════════════════════════════════════
 [performance]
-cycle_interval_ms  = 100               # 100ms = 10Hz cycle rate
-startup_delay_ms   = 2000              # 2s warmup
-request_timeout_ms = 5000              # 5s RPC timeout
+cycle_interval_ms  = 100
+startup_delay_ms   = 2000
+request_timeout_ms = 5000
 
 # ═══════════════════════════════════════════════════════════════════════════
 #  📋 LOGGING
 # ═══════════════════════════════════════════════════════════════════════════
 [logging]
-level               = "info"           # info | debug | trace
+level               = "info"
 file_path           = "logs/mainnet/mainnet-sol-usdc-v3.6.log"
 enable_file_logging = true
 
@@ -326,50 +310,16 @@ enable_file_logging = true
 # ═══════════════════════════════════════════════════════════════════════════
 [metrics]
 enable_metrics = true
-stats_interval = 50                    # Log stats every 50 cycles (~5s)
+stats_interval = 50
 
 # ═══════════════════════════════════════════════════════════════════════════
-#  🗄️  DATABASE (Disabled — CSV Logging Only)
+#  🗄️  DATABASE
 # ═══════════════════════════════════════════════════════════════════════════
 [database]
 enabled = false
 
 # ═══════════════════════════════════════════════════════════════════════════
-#  🔔 ALERTS (Disabled — Manual Monitoring)
+#  🔔 ALERTS — Telegram integration coming in PR #101
 # ═══════════════════════════════════════════════════════════════════════════
 [alerts]
-enabled = false
-
-# ═══════════════════════════════════════════════════════════════════════════
-#  🔮 FUTURE ENHANCEMENTS (From R&D Multi-Strategy Profile)
-#  These are conceptual — require Rust struct additions to wire
-# ═══════════════════════════════════════════════════════════════════════════
-
-# ─── Pattern 1: Price-Deviation Order Refresh (Future) ─────────────────────
-# Currently refresh is TIME-only (order_max_age_minutes).
-# This adds PRICE-DELTA trigger: refresh if price drifts >X% from order price.
-# Rust wiring needed: TradingConfig.refresh_price_deviation field
-#
-# refresh_price_deviation = 0.5        # refresh if price moves >0.5%
-
-# ─── Pattern 2: ATR Multiplier (Future) ────────────────────────────────────
-# Currently ATR spacing multiplier is hardcoded.
-# Expose as config to tune spacing aggressiveness in high-vol regimes.
-# Rust wiring needed: TradingConfig.volatility_multiplier field
-#
-# volatility_multiplier = 1.5          # widen spacing 1.5x in high-vol
-# volatility_lookback   = 24           # 24h window for vol calc
-
-# ─── Pattern 3: Per-Regime Fee Caps (Future) ───────────────────────────────
-# Single global min_profit_threshold_pct is too blunt.
-# Map regime → max fee cap (trending = pay more, choppy = pay less).
-# Rust wiring needed: FeeFilterConfig struct + RegimeClassifier enum
-#
-# [fee_filter]
-# enabled          = true
-# trending_max_fee = 0.20              # 0.20% max fees in trending markets
-# ranging_max_fee  = 0.12              # 0.12% max fees in ranging/sideways
-# volatile_max_fee = 0.25              # 0.25% max fees in volatile regimes
-# choppy_max_fee   = 0.10              # 0.10% max fees in choppy/flat
-
-# ═══════════════════════════════════════════════════════════════════════════
+enabled = false                        # PR #101: Telegram full integration coming
