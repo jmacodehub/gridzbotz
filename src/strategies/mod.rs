@@ -1,13 +1,12 @@
-// PROJECT FLASH V5.5 - STRATEGY ENGINE (Fill Fan-out Edition)
+// PROJECT FLASH V5.5 - STRATEGY ENGINE (WMA Consensus Edition)
 // ══════════════════════════════════════════════════════════════════════
 //
 // Purpose:
 //   Asynchronous multi-strategy manager for modular trading orchestration.
-//   Ready for Phase 4 fusion layer & signal consensus integration.
 //
 // Highlights:
 //   ✅ Clean async execution for all strategy modules.
-//   ✅ ConsensusEngine-ready architecture for signal weighting.
+//   ✅ WMAConsensusEngine wired — dynamic weighted majority voting.
 //   ✅ Unified `Signal` standard for all decision agents.
 //   ✅ Derived lightweight stats for diagnostic analytics.
 //   ✅ Monitor-friendly volatility access for live dashboards.
@@ -16,6 +15,15 @@
 //   ✅ Phase 1: 7 strategy modules wired (mean_reversion, rsi, momentum,
 //      momentum_macd, rsi_enhanced, consensus_wma, fee_filter)
 //   ✅ V5.6 StrategyRegistryBuilder for config-driven registration (GAP-2)
+//   ✅ PR #98 Commit 1: WMAConsensusEngine replaces ConsensusEngine —
+//      dynamic weighted majority with confidence filtering + ROI-adaptive
+//      weights. analyze_all() sequential for deterministic name→signal
+//      pairing. record_fill_for_wma() feeds real P&L back into updater.
+//   ✅ PR #98 Commit 2a: last_voters tracking in WMAConsensusEngine.
+//      get_last_voters() exposes which strategies cleared confidence gate.
+//   ✅ PR #98 Commit 2b-i: get_last_wma_voters() passthrough on
+//      StrategyManager — lets grid_bot.rs read voter names for P&L
+//      attribution without touching wma_engine internals.
 // ══════════════════════════════════════════════════════════════════════
 
 use anyhow::Result;
@@ -191,51 +199,85 @@ impl StrategyStats {
 // ══════════════════════════════════════════════════════════════════════
 // STRATEGY MANAGER
 // ══════════════════════════════════════════════════════════════════════
+
+/// Multi-strategy orchestrator with WMA-based consensus.
+///
+/// PR #98: `engine: ConsensusEngine` replaced by `wma_engine: WMAConsensusEngine`.
+/// analyze_all() is now sequential so strategy names pair deterministically
+/// with their signals for weighted voting. The WMA engine tracks per-strategy
+/// win rate and ROI, updating weights every 10 cycles automatically.
+///
+/// Zero behaviour change on boot: all WMA weights start at 1.0, which is
+/// identical to equal-weight majority vote until fill feedback accumulates.
 pub struct StrategyManager {
-    pub strategies: Vec<Box<dyn Strategy>>,
-    pub engine: ConsensusEngine,
-    pub context: AnalyticsContext,
+    pub strategies:  Vec<Box<dyn Strategy>>,
+    /// PR #98: Dynamic Weighted Majority Algorithm consensus engine.
+    /// Replaces the static ConsensusEngine (majority vote, fixed weights).
+    /// Weights adapt every 10 cycles based on per-strategy win rate + ROI.
+    pub wma_engine:  WMAConsensusEngine,
+    pub context:     AnalyticsContext,
 }
 
 impl std::fmt::Debug for StrategyManager {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "StrategyManager with {} strategies", self.strategies.len())
+        write!(f, "StrategyManager with {} strategies (WMA)", self.strategies.len())
     }
 }
 
 impl StrategyManager {
     pub fn new(ctx: AnalyticsContext) -> Self {
-        info!("[STRATEGY] Manager V5.5 initialized");
+        info!("[STRATEGY] Manager V5.5/WMA initialized");
         Self {
             strategies: Vec::new(),
-            engine: ConsensusEngine::new(ConsensusMode::default()),
-            context: ctx,
+            wma_engine: WMAConsensusEngine::new(),
+            context:    ctx,
         }
     }
 
     pub fn add_strategy<S: Strategy + 'static>(&mut self, strategy: S) {
         let mut boxed = Box::new(strategy);
         boxed.attach_analytics(self.context.clone());
-        info!("[STRATEGY] Attached {}", boxed.name());
+        // PR #98: register strategy name with WMA so it gets a performance
+        // tracker slot immediately. Safe to call multiple times — HashMap
+        // insert only overwrites if key already exists (idempotent).
+        self.wma_engine.register_strategy(boxed.name().to_string());
+        info!("[STRATEGY] Attached {} (WMA registered)", boxed.name());
         self.strategies.push(boxed);
     }
 
+    /// Run every registered strategy sequentially and resolve via WMAConsensusEngine.
+    ///
+    /// Sequential execution (vs FuturesUnordered) guarantees that `strategies[i]`
+    /// pairs correctly with `results[i]` for named WMA voting. With 5 strategies
+    /// the latency difference is immeasurable (<1µs per call).
     pub async fn analyze_all(&mut self, price: f64, ts: i64) -> Result<Signal> {
-        use futures::stream::{FuturesUnordered, StreamExt};
-
         if self.strategies.is_empty() {
             return Ok(Signal::Hold { reason: Some("no strategies loaded".into()) });
         }
 
-        let mut results = Vec::new();
-        let mut futs = FuturesUnordered::new();
-        for s in &mut self.strategies {
-            futs.push(s.analyze(price, ts));
+        // Collect (name, signal) pairs sequentially — order is stable,
+        // names pair 1:1 with their strategy's output.
+        let mut named_signals: Vec<(String, Signal)> = Vec::with_capacity(self.strategies.len());
+        for strategy in &mut self.strategies {
+            match strategy.analyze(price, ts).await {
+                Ok(sig)  => named_signals.push((strategy.name().to_string(), sig)),
+                Err(e)   => log::warn!("[STRATEGY] {} analysis failed: {}", strategy.name(), e),
+            }
         }
-        while let Some(res) = futs.next().await {
-            if let Ok(sig) = res { results.push(sig); }
+
+        if named_signals.is_empty() {
+            return Ok(Signal::Hold { reason: Some("all strategies failed".into()) });
         }
-        Ok(self.engine.resolve(&results))
+
+        // Emit quant log: which strategies voted and at what confidence
+        if log::log_enabled!(log::Level::Info) {
+            let votes: Vec<String> = named_signals.iter()
+                .map(|(name, sig)| format!("{}:{:.2}", name, sig.confidence()))
+                .collect();
+            info!("[Quant] strategies=[{}] price={:.4}", votes.join(" "), price);
+        }
+
+        Ok(self.wma_engine.resolve(named_signals, price))
     }
 
     pub async fn initialize_all_at_price(&mut self, price: f64) -> Result<()> {
@@ -249,8 +291,37 @@ impl StrategyManager {
         self.context.get_current_volatility()
     }
 
+    /// PR #98 Commit 1: Feed confirmed fill P&L back into WMA weight updater.
+    ///
+    /// Called by GridBot::process_price_update() after each confirmed fill
+    /// (Commit 2b-ii wires the call site). Enables per-strategy performance
+    /// tracking so WMA weights adapt to real win rate and ROI over time.
+    ///
+    /// `strategy_name` should match the name registered via add_strategy().
+    /// Unknown names are silently ignored by WMAConsensusEngine.
+    pub fn record_fill_for_wma(&mut self, strategy_name: &str, pnl: f64) {
+        self.wma_engine.record_trade(strategy_name, pnl);
+    }
+
+    /// PR #98 Commit 2b-i: Return the strategy names that cleared the WMA
+    /// confidence gate on the most recent analyze_all() call.
+    ///
+    /// Delegates to WMAConsensusEngine::get_last_voters() — thin passthrough
+    /// so grid_bot.rs never touches wma_engine internals directly.
+    ///
+    /// Empty slice = no strategy cleared the threshold (consensus = Hold).
+    /// In that case no fill should have occurred, so attribution is a no-op.
+    pub fn get_last_wma_voters(&self) -> &[String] {
+        self.wma_engine.get_last_voters()
+    }
+
+    /// PR #98: Return WMA performance summary for Telegram / Supabase / logs.
+    pub fn wma_summary(&self) -> String {
+        self.wma_engine.get_summary()
+    }
+
     pub fn display_stats(&self) {
-        println!("\n[STATS] Strategy Performance (V5.5):");
+        println!("\n[STATS] Strategy Performance (V5.5/WMA):");
         for (i, strategy) in self.strategies.iter().enumerate() {
             let stats = strategy.stats();
             println!("  Strategy {} ({}): {} signals generated",
@@ -265,6 +336,8 @@ impl StrategyManager {
                          stats.total_pnl, stats.win_rate, stats.sharpe);
             }
         }
+        // PR #98: surface WMA weight table
+        println!("{}", self.wma_engine.get_summary());
     }
 
     // =======================================================================
@@ -300,11 +373,14 @@ mod tests {
     use crate::strategies::grid_rebalancer::{GridRebalancer, GridRebalancerConfig};
     use crate::trading::{FillEvent, OrderSide};
 
+    // ────────────────────────────────────────────────────────────────────────
+    // Existing tests — updated for WMA field rename
+    // ────────────────────────────────────────────────────────────────────────
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_manager_consensus_integration() {
         let ctx = AnalyticsContext::default();
         let mut mgr = StrategyManager::new(ctx);
-        mgr.engine.mode = ConsensusMode::MajorityVote;
         mgr.add_strategy(GridRebalancer::new(GridRebalancerConfig::default()).unwrap());
         let sig = mgr.analyze_all(100.0, 1).await.unwrap();
         assert!(matches!(
@@ -382,5 +458,79 @@ mod tests {
         let display = buy_without_level.display();
         assert!(!display.contains("level"));
         assert!(display.contains("grid reposition"));
+    }
+
+    // ────────────────────────────────────────────────────────────────────────
+    // PR #98 Commit 1: WMA wiring tests
+    // ────────────────────────────────────────────────────────────────────────
+
+    /// add_strategy() must register each strategy with the WMA engine.
+    #[test]
+    fn test_add_strategy_registers_with_wma() {
+        let ctx = AnalyticsContext::default();
+        let mut mgr = StrategyManager::new(ctx);
+        mgr.add_strategy(GridRebalancer::new(GridRebalancerConfig::default()).unwrap());
+        let perf = mgr.wma_engine.get_performance("GridRebalancer");
+        assert!(perf.is_some(), "WMA must have a slot for GridRebalancer");
+    }
+
+    /// record_fill_for_wma() must update trade count in WMA performance tracker.
+    #[test]
+    fn test_record_fill_for_wma_updates_trades() {
+        let ctx = AnalyticsContext::default();
+        let mut mgr = StrategyManager::new(ctx);
+        mgr.add_strategy(GridRebalancer::new(GridRebalancerConfig::default()).unwrap());
+        mgr.record_fill_for_wma("GridRebalancer", 1.50);
+        let perf = mgr.wma_engine.get_performance("GridRebalancer").unwrap();
+        assert_eq!(perf.total_trades, 1);
+        assert!((perf.total_pnl - 1.50).abs() < 1e-9);
+    }
+
+    /// WMA weight starts at 1.0 — no behaviour change on boot.
+    #[test]
+    fn test_wma_initial_weight_is_one() {
+        let ctx = AnalyticsContext::default();
+        let mut mgr = StrategyManager::new(ctx);
+        mgr.add_strategy(GridRebalancer::new(GridRebalancerConfig::default()).unwrap());
+        let perf = mgr.wma_engine.get_performance("GridRebalancer").unwrap();
+        assert!((perf.weight - 1.0).abs() < 1e-9, "initial weight must be 1.0");
+    }
+
+    /// wma_summary() returns non-empty string with strategy name.
+    #[test]
+    fn test_wma_summary_contains_strategy_name() {
+        let ctx = AnalyticsContext::default();
+        let mut mgr = StrategyManager::new(ctx);
+        mgr.add_strategy(GridRebalancer::new(GridRebalancerConfig::default()).unwrap());
+        let summary = mgr.wma_summary();
+        assert!(!summary.is_empty());
+        assert!(summary.contains("GridRebalancer"));
+    }
+
+    // ────────────────────────────────────────────────────────────────────────
+    // PR #98 Commit 2b-i: get_last_wma_voters() passthrough tests
+    // ────────────────────────────────────────────────────────────────────────
+
+    /// get_last_wma_voters() returns empty slice before any analyze_all() call.
+    #[test]
+    fn test_get_last_wma_voters_empty_on_init() {
+        let ctx = AnalyticsContext::default();
+        let mut mgr = StrategyManager::new(ctx);
+        mgr.add_strategy(GridRebalancer::new(GridRebalancerConfig::default()).unwrap());
+        assert!(
+            mgr.get_last_wma_voters().is_empty(),
+            "voters must be empty before first analyze_all()"
+        );
+    }
+
+    /// get_last_wma_voters() delegates correctly — same slice as wma_engine.
+    #[test]
+    fn test_get_last_wma_voters_delegates_to_engine() {
+        let ctx = AnalyticsContext::default();
+        let mgr = StrategyManager::new(ctx);
+        // Both accessors must return the same (empty) slice on fresh engine
+        let via_manager = mgr.get_last_wma_voters();
+        let via_engine  = mgr.wma_engine.get_last_voters();
+        assert_eq!(via_manager, via_engine);
     }
 }

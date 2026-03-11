@@ -1,6 +1,15 @@
 //! ═════════════════════════════════════════════════════════════════════════
 //! GRID BOT V6.0 - ELITE AUTONOMOUS TRADING ORCHESTRATOR
 //!
+//! PR #98 Commit 2b-ii: WMA voter P&L attribution wired.
+//!    process_price_update(): snapshot total_realized_pnl once before
+//!    the fill loop to avoid repeated async calls.
+//!    SELL fills only: get_last_wma_voters() → record_fill_for_wma()
+//!    for each voter that cleared the confidence gate this tick.
+//!    BUY fills skipped — no realized P&L until round-trip completes.
+//!    TODO(tech-debt): replace session-cumulative pnl snapshot with
+//!    per-fill delta once level-P&L API is available (follow-up PR).
+//!
 //! PR #94 (Commit 6): GridBotStats observability — Items 1 + 2 telemetry.
 //!    GridBot struct: `orders_filtered_session: u64` added.
 //!    place_grid_orders(): accumulates into self.orders_filtered_session.
@@ -52,6 +61,7 @@
 //! [ok] intent_conflicts: u64 counter - surfaced in BotStats via stats()
 //! [ok] Solo path: intent_registry = None - zero behavior change, zero cost
 //!
+//! March 11, 2026 - V6.0: WMA voter P&L attribution wired (PR #98 Commit 2b-ii) 🤝
 //! March 11, 2026 - V6.0: fix FeeFilterStats field names (PR #94 hotfix) 🔧
 //! March 11, 2026 - V6.0: GridBotStats observability (PR #94 Commit 6) 📊
 //! March 11, 2026 - V6.0: Consensus sizing wired (PR #94 Commit 5b) 📊
@@ -158,6 +168,7 @@ impl GridBot {
               if config.trading.enable_smart_position_sizing { "ACTIVE" } else { "disabled" },
               config.trading.signal_size_multiplier);
         info!("[BOT-V6.0] FeeFilterStats:  WIRED into GridBotStats (PR #94 Commit 6)");
+        info!("[BOT-V6.0] WMAAttribution:  WIRED (PR #98 Commit 2b-ii) - SELL fills → WMA P&L");
         info!("[BOT-V6.0] OptimizerCadence: {} cycles (TOML-driven, PR #94 OPT-1)",
               config.trading.optimizer_interval_cycles);
 
@@ -182,10 +193,6 @@ impl GridBot {
             ..GridRebalancerConfig::default()
         };
 
-        // PR #94 Commit 4: Build a dedicated GridRebalancer with FeesConfig
-        // for the should_place_order() call site in place_grid_orders().
-        // The StrategyManager also gets its own instance via the registry
-        // for signal generation — these are independent, both config-driven.
         let grid_rebalancer = GridRebalancer::with_fees(
             grid_config.clone(),
             config.fees.clone(),
@@ -263,9 +270,7 @@ impl GridBot {
             adaptive_optimizer,
             circuit_breaker,
             grid_rebalancer,
-            // PR #94 Commit 5b: starts at 0.0 = Hold strength = flat sizing
             last_signal_strength:    0.0,
-            // PR #94 Commit 6: session counter — reset to 0 at construction
             orders_filtered_session: 0,
             feed,
             session_start:           Instant::now(),
@@ -404,20 +409,9 @@ impl GridBot {
         let order_size    = self.adaptive_optimizer.current_position_size;
         let num_levels    = self.config.trading.grid_levels;
         let min_order_sol = self.config.trading.min_order_size;
-        // PR #91 Bug 1: use trading pair as registry key namespace.
         let pair = self.config.trading_pair();
 
         // PR #94 Commit 5b: consensus-signal-driven position sizing.
-        //
-        // Formula:
-        //   multiplier   = 1.0 + last_signal_strength × (signal_size_multiplier − 1.0)
-        //   effective_sz = (order_size × multiplier).clamp(min_order_sol, max_position_size)
-        //
-        // Safety invariants:
-        //   • Flag=false          → effective_size == order_size  (zero change)
-        //   • multiplier=1.0 (def)→ effective_size == order_size  (zero change)
-        //   • Hold (strength=0.0) → multiplier=1.0               (zero change)
-        //   • Always clamped to [min_order_sol, max_position_size]
         let effective_size = if self.config.trading.enable_smart_position_sizing {
             let multiplier = 1.0
                 + self.last_signal_strength
@@ -428,8 +422,6 @@ impl GridBot {
             order_size
         };
 
-        // PR #94 Commit 4: pre-compute GridStats once for the fee filter.
-        // update_price() keeps internal history current; stats() is cheap.
         self.grid_rebalancer.update_price(current_price).await
             .unwrap_or_else(|e| warn!("[BOT] Rebalancer price update failed: {}", e));
         let stats = self.grid_rebalancer.grid_stats().await;
@@ -457,10 +449,8 @@ impl GridBot {
         for i in 1..=buy_levels.min(sell_levels) {
             let buy_price  = current_price * (1.0 - grid_spacing * i as f64);
             let sell_price = current_price * (1.0 + grid_spacing * i as f64);
-            // Use effective_size for level tracking so GridState reflects actual order size.
             let mut level  = self.grid_state.create_level(buy_price, sell_price, effective_size).await;
 
-            // ── Intent registry conflict check (PR #86) ────────────────────────────────
             if let Some(registry) = &self.intent_registry {
                 let key = (pair.clone(), level.id);
                 match registry.entry(key) {
@@ -478,9 +468,6 @@ impl GridBot {
                 }
             }
 
-            // ── PR #94 Commit 4: SmartFeeFilter gate ────────────────────────────────
-            // Buy side: full P&L check via SmartFeeFilter (Path A) or
-            // legacy spread gate (Path B when enable_fee_filtering=false).
             if !self.grid_rebalancer
                 .should_place_order(OrderSide::Buy, buy_price, min_order_sol, &stats)
                 .await
@@ -505,7 +492,6 @@ impl GridBot {
                 }
             }
 
-            // Sell side filter
             if !self.grid_rebalancer
                 .should_place_order(OrderSide::Sell, sell_price, min_order_sol, &stats)
                 .await
@@ -532,8 +518,6 @@ impl GridBot {
             self.grid_state.update_level(level).await;
         }
 
-        // PR #94 Commit 6: accumulate per-call filtered count into session counter
-        // so GridBotStats can surface it without reaching into place_grid_orders().
         self.orders_filtered_session += orders_filtered as u64;
 
         info!("[BOT] Placed {} orders ({} pairs), {} filtered, {} failed",
@@ -555,9 +539,6 @@ impl GridBot {
         let signal = self.manager.analyze_all(price, timestamp).await
             .context("Strategy consensus failed")?;
 
-        // PR #94 Commit 5b: cache strength so place_grid_orders() can scale
-        // order size by consensus conviction on the next placement cycle.
-        // strength() returns: Hold=0.0, Buy/Sell=0.25-0.5, StrongBuy/Sell=0.5-1.0
         self.last_signal_strength = signal.strength();
 
         self.enhanced_metrics.record_signal(true);
@@ -576,9 +557,24 @@ impl GridBot {
         if !filled_orders.is_empty() {
             info!("[BOT] {} orders filled at ${:.4}", filled_orders.len(), price);
             self.successful_trades += filled_orders.len() as u64;
+
+            // PR #98 Commit 2b-ii: snapshot realized P&L once for the whole
+            // fill batch — avoids N async calls inside the loop.
+            //
+            // Attribution logic:
+            //   SELL fills only — a SELL completes the buy→sell round-trip,
+            //   which is when grid P&L is realized. BUY fills have no realized
+            //   P&L yet; attributing them would corrupt WMA win-rate tracking.
+            //
+            // P&L source: grid_state.total_realized_pnl() is the session
+            // cumulative. Positive session = WMA win; negative = loss.
+            // TODO(tech-debt): replace with per-fill delta once level-P&L
+            // API is available (follow-up PR after #98).
+            let realized_pnl_snapshot = self.grid_state.total_realized_pnl().await;
+
             for fill in &filled_orders {
-                let is_buy = fill.side == OrderSide::Buy;
-                let pnl    = self.grid_state.total_realized_pnl().await;
+                let is_buy    = fill.side == OrderSide::Buy;
+                let pnl       = realized_pnl_snapshot;
                 let fill_size = self.adaptive_optimizer.current_position_size;
                 self.total_fills_tracked += 1;
                 info!("[FILL] #{}: {} {} @ ${:.4} | size: {:.4} | P&L: ${:.2} | ts: {}",
@@ -587,6 +583,24 @@ impl GridBot {
                       fill.order_id, price, fill_size, pnl, timestamp);
                 self.enhanced_metrics.record_trade(is_buy, pnl, timestamp);
                 self.circuit_breaker.record_trade(pnl, new_nav);
+
+                // PR #98 Commit 2b-ii: attribute P&L to WMA voters on SELL fills.
+                // SELL = grid round-trip complete — real P&L event.
+                // BUY fills skipped: open position, no realized P&L yet.
+                if fill.side == OrderSide::Sell {
+                    let voters: Vec<String> = self.manager
+                        .get_last_wma_voters()
+                        .to_vec();
+                    for voter in &voters {
+                        self.manager.record_fill_for_wma(voter, realized_pnl_snapshot);
+                    }
+                    if !voters.is_empty() {
+                        debug!(
+                            "[WMA-ATTR] SELL fill attributed to {} voters | P&L snapshot: ${:.4}",
+                            voters.len(), realized_pnl_snapshot
+                        );
+                    }
+                }
             }
         }
 
@@ -618,9 +632,6 @@ impl GridBot {
         let current_price = self.last_price.unwrap_or(0.0);
         let cb_status     = self.circuit_breaker.status();
 
-        // PR #94 Commit 6: pull fee filter counters from GridRebalancer.
-        // fee_filter_stats() is sync — safe to call from async context.
-        // FIX (hotfix): FeeFilterStats fields are total_checks/trades_passed/trades_filtered.
         let (fee_checked, fee_passed, fee_blocked) = self.grid_rebalancer
             .fee_filter_stats()
             .map(|s| (s.total_checks, s.trades_passed, s.trades_filtered))
@@ -647,7 +658,6 @@ impl GridBot {
             optimization_count:      self.adaptive_optimizer.adjustment_count,
             total_fills_tracked:     self.total_fills_tracked,
             intent_conflicts:        self.intent_conflicts,
-            // PR #94 Commit 6: observability fields
             last_signal_strength:     self.last_signal_strength,
             orders_filtered_session:  self.orders_filtered_session,
             fee_filter_total_checked: fee_checked,
@@ -672,7 +682,6 @@ impl GridBot {
         println!("  Intent Conflicts:  {}", stats.intent_conflicts);
         println!("  Optimizer Cadence: {} cycles",
                  self.config.trading.optimizer_interval_cycles);
-        // PR #94 Commit 5b: show live signal strength + effective multiplier
         if self.config.trading.enable_smart_position_sizing {
             let live_mult = 1.0
                 + self.last_signal_strength
@@ -689,8 +698,6 @@ impl GridBot {
         println!("  Active Levels:     {}", grid_levels);
         println!("  Filled Buys:       {}", filled_buys);
         println!("  Realized P&L:      ${:.2}", total_pnl);
-        // PR #94 Commit 4: Surface SmartFeeFilter stats in status report.
-        // FIX (hotfix): use correct FeeFilterStats field names.
         if let Some(ffs) = self.grid_rebalancer.fee_filter_stats() {
             println!("\n[FEE FILTER]");
             println!("  Total Checked:     {}", ffs.total_checks);
@@ -854,19 +861,11 @@ pub struct GridBotStats {
     pub optimization_count:      u64,
     pub total_fills_tracked:     u64,
     pub intent_conflicts:        u64,
-    // ── PR #94 Commit 6: Items 1+2 observability ─────────────────────────
-    /// Cached consensus signal strength from the last process_price_update() tick.
-    /// Hold = 0.0, Buy/Sell = 0.25–0.5, StrongBuy/Sell = 0.5–1.0.
-    /// Lets orchestrator/Telegram/Supabase read conviction without touching GridBot.
+    // ── PR #94 Commit 6: Items 1+2 observability ────────────────────────────────────
     pub last_signal_strength:       f64,
-    /// Session-lifetime count of grid levels skipped by SmartFeeFilter.
-    /// Accumulated across all place_grid_orders() calls since bot start.
     pub orders_filtered_session:    u64,
-    /// Total grid levels evaluated by the SmartFeeFilter since bot start.
     pub fee_filter_total_checked:   u64,
-    /// Total grid levels that passed the SmartFeeFilter profitability gate.
     pub fee_filter_total_passed:    u64,
-    /// Total grid levels blocked by the SmartFeeFilter (unprofitable).
     pub fee_filter_total_blocked:   u64,
 }
 
@@ -899,10 +898,8 @@ impl GridBotStats {
         println!("   Max Drawdown:      {:.2}%", self.max_drawdown);
         println!("   Signal Exec Rate:  {:.2}%", self.signal_execution_ratio);
         println!("   Grid Efficiency:   {:.2}%", self.grid_efficiency * 100.0);
-        // PR #94 Commit 6: signal sizing observability
         println!("\n[SIGNAL SIZING]");
         println!("   Signal Strength:   {:.3}", self.last_signal_strength);
-        // PR #94 Commit 6: fee filter observability
         println!("\n[FEE FILTER]");
         println!("   Orders Filtered:   {}", self.orders_filtered_session);
         println!("   Total Checked:     {}", self.fee_filter_total_checked);
@@ -937,10 +934,6 @@ mod tests {
     use super::*;
     use crate::risk::circuit_breaker::TripReason;
 
-    // ────────────────────────────────────────────────────────────────────────
-    // Helper: zero-value GridBotStats for tests that only care about
-    // specific fields. Avoids repeating 24 fields in every test.
-    // ────────────────────────────────────────────────────────────────────────
     fn zero_stats() -> GridBotStats {
         GridBotStats {
             total_cycles:            0,
@@ -970,10 +963,6 @@ mod tests {
             fee_filter_total_blocked: 0,
         }
     }
-
-    // ────────────────────────────────────────────────────────────────────────
-    // Existing tests (carried forward — use zero_stats() helper)
-    // ────────────────────────────────────────────────────────────────────────
 
     #[test]
     fn test_gridbotstats_fields() {
@@ -1248,12 +1237,6 @@ mod tests {
         assert!(matches!(cb.status().trip_reason, Some(TripReason::ConsecutiveLosses)));
     }
 
-    // ────────────────────────────────────────────────────────────────────────
-    // PR #94 Commit 5b: consensus-driven sizing formula tests
-    // ────────────────────────────────────────────────────────────────────────
-
-    /// Formula helper — mirrors the exact logic in place_grid_orders()
-    /// so tests remain in sync with the implementation.
     fn compute_effective_size(
         enable_smart: bool,
         order_size: f64,
@@ -1274,10 +1257,7 @@ mod tests {
     fn test_smart_sizing_disabled_uses_base_size() {
         let base = 0.1_f64;
         let effective = compute_effective_size(false, base, 1.0, 2.0, 0.05, 10.0);
-        assert!(
-            (effective - base).abs() < 1e-12,
-            "disabled: expected {base}, got {effective}"
-        );
+        assert!((effective - base).abs() < 1e-12);
     }
 
     #[test]
@@ -1285,10 +1265,8 @@ mod tests {
         let base = 0.1_f64;
         for multiplier_cfg in [1.0_f64, 1.5, 2.0, 3.0] {
             let effective = compute_effective_size(true, base, 0.0, multiplier_cfg, 0.05, 10.0);
-            assert!(
-                (effective - base).abs() < 1e-12,
-                "hold signal: expected {base} at mult_cfg={multiplier_cfg}, got {effective}"
-            );
+            assert!((effective - base).abs() < 1e-12,
+                "hold signal: expected {base} at mult_cfg={multiplier_cfg}, got {effective}");
         }
     }
 
@@ -1296,10 +1274,7 @@ mod tests {
     fn test_smart_sizing_strong_signal_scales_up() {
         let base = 0.1_f64;
         let effective = compute_effective_size(true, base, 1.0, 2.0, 0.05, 10.0);
-        assert!(
-            (effective - 0.2_f64).abs() < 1e-12,
-            "strong signal 2x: expected 0.2, got {effective}"
-        );
+        assert!((effective - 0.2_f64).abs() < 1e-12);
     }
 
     #[test]
@@ -1307,10 +1282,7 @@ mod tests {
         let base = 5.0_f64;
         let max  = 8.0_f64;
         let effective = compute_effective_size(true, base, 1.0, 3.0, 0.05, max);
-        assert!(
-            (effective - max).abs() < 1e-12,
-            "clamp max: expected {max}, got {effective}"
-        );
+        assert!((effective - max).abs() < 1e-12);
     }
 
     #[test]
@@ -1318,17 +1290,9 @@ mod tests {
         let base    = 0.1_f64;
         let min_sol = 0.08_f64;
         let effective = compute_effective_size(true, base, 1.0, 0.5, min_sol, 10.0);
-        assert!(
-            (effective - min_sol).abs() < 1e-12,
-            "clamp min: expected {min_sol}, got {effective}"
-        );
+        assert!((effective - min_sol).abs() < 1e-12);
     }
 
-    // ────────────────────────────────────────────────────────────────────────
-    // PR #94 Commit 6: GridBotStats observability field tests
-    // ────────────────────────────────────────────────────────────────────────
-
-    /// New fields default to zero — orchestrator consumers get safe baseline.
     #[test]
     fn test_gridbotstats_fee_filter_fields_zero_default() {
         let stats = zero_stats();
@@ -1339,7 +1303,6 @@ mod tests {
         assert!((stats.last_signal_strength - 0.0).abs() < 1e-12);
     }
 
-    /// Fee filter counters are independently settable and correctly read back.
     #[test]
     fn test_gridbotstats_fee_filter_fields_populated() {
         let stats = GridBotStats {
@@ -1353,23 +1316,18 @@ mod tests {
         assert_eq!(stats.fee_filter_total_passed,   95);
         assert_eq!(stats.fee_filter_total_blocked,  25);
         assert_eq!(stats.orders_filtered_session,   25);
-        // Invariant: checked == passed + blocked
         assert_eq!(
             stats.fee_filter_total_passed + stats.fee_filter_total_blocked,
             stats.fee_filter_total_checked
         );
     }
 
-    /// Signal strength field carries the cached consensus value end-to-end.
     #[test]
     fn test_gridbotstats_signal_strength_field() {
         let stats = GridBotStats {
             last_signal_strength: 0.75,
             ..zero_stats()
         };
-        assert!(
-            (stats.last_signal_strength - 0.75).abs() < 1e-12,
-            "expected 0.75, got {}", stats.last_signal_strength
-        );
+        assert!((stats.last_signal_strength - 0.75).abs() < 1e-12);
     }
 }

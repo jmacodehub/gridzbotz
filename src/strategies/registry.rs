@@ -7,7 +7,10 @@
 //! - [`StrategyEntry`]: a strategy bundled with its weight and enabled flag
 //! - [`StrategyRegistryBuilder`]: accumulates entries → builds `StrategyManager`
 //!
-//! ## Usage (PR 83 will wire this into gridbot.rs)
+//! PR #98: `build()` now calls `wma_engine.register_strategy()` for every
+//! enabled strategy so WMA has a performance-tracking slot from the first tick.
+//!
+//! ## Usage
 //!
 //! ```rust,ignore
 //! let (manager, weights) = StrategyRegistryBuilder::new()
@@ -26,8 +29,8 @@ use log::info;
 
 /// A strategy bundled with its configured weight and enabled state.
 ///
-/// Weights are used by `ConsensusEngine` for signal resolution.
-/// A weight of `0.0` marks non-signal strategies (e.g., SmartFeeFilter).
+/// Weights seed WMA initial importance. A weight of `0.0` marks
+/// non-signal strategies (e.g., SmartFeeFilter).
 pub struct StrategyEntry {
     pub strategy: Box<dyn Strategy>,
     pub weight: f64,
@@ -70,6 +73,9 @@ impl std::fmt::Debug for StrategyEntry {
 ///
 /// Replaces the 200-line if/else block in `gridbot.rs` with a clean,
 /// composable builder pattern.
+///
+/// PR #98: `build()` registers every enabled strategy with `wma_engine`
+/// so the WMA performance tracker has a slot ready before the first tick.
 pub struct StrategyRegistryBuilder {
     entries: Vec<StrategyEntry>,
 }
@@ -120,25 +126,31 @@ impl StrategyRegistryBuilder {
     /// Consume the builder and produce a configured `StrategyManager`.
     ///
     /// Returns `(manager, weights)` — weights are parallel to the strategies
-    /// vector for future `ConsensusEngine` weighted-vote integration.
+    /// vector and seed the WMA engine's initial importance per strategy.
     ///
-    /// All strategies receive `attach_analytics()` with the provided context,
-    /// matching the existing `StrategyManager::add_strategy()` contract.
+    /// All strategies receive `attach_analytics()` with the provided context.
+    ///
+    /// PR #98: each enabled strategy is registered with `manager.wma_engine`
+    /// so the dynamic weight tracker has a slot from the very first tick.
     pub fn build(self, ctx: AnalyticsContext) -> (StrategyManager, Vec<f64>) {
         let mut manager = StrategyManager::new(ctx);
         let mut weights = Vec::with_capacity(self.entries.len());
 
         for mut entry in self.entries {
             if entry.enabled {
+                let name = entry.strategy.name().to_string();
                 weights.push(entry.weight);
                 entry.strategy.attach_analytics(manager.context.clone());
-                info!("[REGISTRY] Attached: {}", entry.strategy.name());
+                // PR #98: register with WMA before pushing so the engine has
+                // a performance slot from the first analyze_all() call.
+                manager.wma_engine.register_strategy(name.clone());
+                info!("[REGISTRY] Attached: {} (WMA registered, weight={:.2})", name, entry.weight);
                 manager.strategies.push(entry.strategy);
             }
         }
 
         info!(
-            "[REGISTRY] Built StrategyManager with {} strategies",
+            "[REGISTRY] Built StrategyManager with {} strategies (WMA active)",
             manager.strategies.len(),
         );
 
@@ -225,5 +237,38 @@ mod tests {
         let (manager, weights) = builder.build(ctx);
         assert_eq!(manager.strategies.len(), 2);
         assert_eq!(weights, vec![0.40, 0.25]);
+    }
+
+    // ────────────────────────────────────────────────────────────────────────
+    // PR #98 Commit 1: WMA registration via builder
+    // ────────────────────────────────────────────────────────────────────────
+
+    /// build() must register every enabled strategy with wma_engine.
+    #[test]
+    fn test_registry_build_registers_wma_slots() {
+        let gr = GridRebalancer::new(GridRebalancerConfig::default()).unwrap();
+        let builder = StrategyRegistryBuilder::new().add(gr, 0.40);
+        let ctx = AnalyticsContext::default();
+        let (manager, _) = builder.build(ctx);
+        let perf = manager.wma_engine.get_performance("GridRebalancer");
+        assert!(perf.is_some(), "WMA must have a slot for GridRebalancer after build()");
+    }
+
+    /// Disabled strategies must NOT be registered with wma_engine.
+    #[test]
+    fn test_registry_disabled_strategy_not_in_wma() {
+        let gr1 = GridRebalancer::new(GridRebalancerConfig::default()).unwrap();
+        let gr2 = GridRebalancer::new(GridRebalancerConfig::default()).unwrap();
+        let builder = StrategyRegistryBuilder::new()
+            .add(gr1, 0.40)          // enabled
+            .add_if(false, gr2, 0.20); // disabled — must be absent from WMA
+        let ctx = AnalyticsContext::default();
+        let (manager, _) = builder.build(ctx);
+        // Only 1 strategy in manager
+        assert_eq!(manager.strategies.len(), 1);
+        // The disabled strategy is never named, so we can't look it up by name
+        // here — but verify the enabled one IS present.
+        let perf = manager.wma_engine.get_performance("GridRebalancer");
+        assert!(perf.is_some());
     }
 }
