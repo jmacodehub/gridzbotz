@@ -18,8 +18,10 @@
 //!    weight = 0.6 * confidence + 0.4 * roi_performance
 //!    ```
 //! 
-//! 3. **Confidence Filtering:**
-//!    - Only vote if confidence > 0.65
+//! 3. **Confidence Filtering (config-driven since PR #99):**
+//!    - Only vote if confidence >= `wma_confidence_threshold` (TOML key)
+//!    - Default 0.65 preserved via `WMAConsensusEngine::new()`
+//!    - Override at construction via `WMAConsensusEngine::with_min_confidence()`
 //!    - Reduces false signals by 30-50%
 //! 
 //! 4. **Weighted Voting:**
@@ -52,7 +54,12 @@ use std::collections::HashMap;
 // CONFIGURATION
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Minimum confidence to participate in voting
+// NOTE (PR #99 Commit 2): MIN_CONFIDENCE is the historic hard-wired default
+// preserved so WMAConsensusEngine::new() keeps its pre-PR #99 behaviour.
+// New construction path: WMAConsensusEngine::with_min_confidence(threshold)
+// receives the value from config.strategies.wma_confidence_threshold.
+// TODO(tech-debt): Remove this constant once all call sites use
+//   with_min_confidence() and ::new() is deleted — follow-up PR.
 const MIN_CONFIDENCE: f64 = 0.65;
 
 /// Weight update frequency (every N cycles)
@@ -165,6 +172,13 @@ impl From<&Signal> for SignalType {
 
 /// Dynamic Weighted Majority Algorithm consensus engine.
 ///
+/// Construction paths:
+/// - `WMAConsensusEngine::new()` — preserves historic default (0.65 gate).
+///   Used by tests that don't have a config handle.
+/// - `WMAConsensusEngine::with_min_confidence(threshold)` — config-driven
+///   path. Called by `StrategyManager::new_with_confidence()` (PR #99 Commit 2)
+///   with `config.strategies.wma_confidence_threshold`.
+///
 /// PR #98 Commit 2a: adds `last_voters` — the names of strategies that
 /// cleared the confidence gate on the most recent `resolve()` call.
 /// Exposed via `get_last_voters()` so StrategyManager (Commit 2b) can
@@ -181,15 +195,24 @@ pub struct WMAConsensusEngine {
 }
 
 impl WMAConsensusEngine {
+    /// Create engine with the historic default confidence gate (0.65).
+    ///
+    /// Preserved for tests and any call sites not yet migrated to the
+    /// config-driven path. Behaviour identical to pre-PR #99.
+    /// TODO(tech-debt): Migrate remaining call sites to with_min_confidence()
+    ///   and remove this constructor — follow-up PR.
     pub fn new() -> Self {
-        Self {
-            performances: HashMap::new(),
-            cycles: 0,
-            min_confidence: MIN_CONFIDENCE,
-            last_voters: Vec::new(),
-        }
+        Self::with_min_confidence(MIN_CONFIDENCE)
     }
     
+    /// Create engine with a config-driven confidence gate.
+    ///
+    /// PR #99 Commit 2: This is the canonical construction path.
+    /// Called by `StrategyManager::new_with_confidence()` with
+    /// `config.strategies.wma_confidence_threshold`.
+    ///
+    /// `min_confidence` is validated upstream in `StrategiesConfig::validate()`
+    /// to be in `[0.0, 1.0]` — no re-validation needed here.
     pub fn with_min_confidence(min_confidence: f64) -> Self {
         Self {
             performances: HashMap::new(),
@@ -375,6 +398,11 @@ impl WMAConsensusEngine {
         summary.push_str(&format!("\n\nTotal Cycles: {}\n", self.cycles));
         summary
     }
+
+    /// Expose the active confidence gate value — useful for logging/display.
+    pub fn min_confidence(&self) -> f64 {
+        self.min_confidence
+    }
 }
 
 impl Default for WMAConsensusEngine {
@@ -397,7 +425,67 @@ mod tests {
         assert_eq!(engine.min_confidence, MIN_CONFIDENCE);
         assert!(engine.last_voters.is_empty(), "last_voters must start empty");
     }
-    
+
+    /// PR #99 Commit 2: with_min_confidence() stores the provided value.
+    #[test]
+    fn test_with_min_confidence_stores_value() {
+        let engine = WMAConsensusEngine::with_min_confidence(0.50);
+        assert!(
+            (engine.min_confidence - 0.50).abs() < 1e-9,
+            "min_confidence must be 0.50, got {}", engine.min_confidence
+        );
+    }
+
+    /// PR #99 Commit 2: min_confidence() accessor returns stored value.
+    #[test]
+    fn test_min_confidence_accessor() {
+        let engine = WMAConsensusEngine::with_min_confidence(0.72);
+        assert!(
+            (engine.min_confidence() - 0.72).abs() < 1e-9,
+            "accessor must return 0.72"
+        );
+    }
+
+    /// PR #99 Commit 2: signals below config-driven threshold are filtered.
+    #[test]
+    fn test_config_driven_threshold_filters_low_confidence() {
+        let mut engine = WMAConsensusEngine::with_min_confidence(0.80);
+        engine.register_strategy("Grid".to_string());
+
+        let signals = vec![(
+            "Grid".to_string(),
+            Signal::Buy {
+                price: 100.0, size: 1.0, confidence: 0.70,
+                reason: "grid".into(), level_id: None,
+            },
+        )];
+        let result = engine.resolve(signals, 100.0);
+        assert!(
+            matches!(result, Signal::Hold { .. }),
+            "signal below 0.80 threshold must be filtered to Hold"
+        );
+    }
+
+    /// PR #99 Commit 2: signals at or above config-driven threshold are admitted.
+    #[test]
+    fn test_config_driven_threshold_admits_sufficient_confidence() {
+        let mut engine = WMAConsensusEngine::with_min_confidence(0.60);
+        engine.register_strategy("Grid".to_string());
+
+        let signals = vec![(
+            "Grid".to_string(),
+            Signal::Buy {
+                price: 100.0, size: 1.0, confidence: 0.75,
+                reason: "grid".into(), level_id: None,
+            },
+        )];
+        let result = engine.resolve(signals, 100.0);
+        assert!(
+            result.is_bullish(),
+            "signal above 0.60 threshold must cast a vote"
+        );
+    }
+
     #[test]
     fn test_strategy_registration() {
         let mut engine = WMAConsensusEngine::new();
