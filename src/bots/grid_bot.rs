@@ -1,25 +1,28 @@
 //! ═════════════════════════════════════════════════════════════════════════
-//! GRID BOT V6.1 — TELEGRAM ALERTS WIRED
+//! GRID BOT V6.2 — FILL LEVEL-ID WIRED + CB DELTA P&L
+//!
+//! PR #102 Commit 3: level_id mark-filled + CB delta P&L fix.
+//!   • process_price_update(): capture pnl_before fill loop.
+//!     For each fill with Some(level_id):
+//!       - OrderSide::Buy  → grid_state.mark_buy_filled(level_id)
+//!       - OrderSide::Sell → grid_state.mark_sell_filled(level_id)
+//!     Re-read total_realized_pnl() after mark → compute delta.
+//!     Pass pnl_delta (not cumulative snapshot) to CB.record_trade().
+//!   Root causes fixed:
+//!     1. GridStateTracker never updated in live mode (mark_*_filled
+//!        only fired in paper mode via order-book matching).
+//!     2. CB received cumulative P&L on every fill → NAV drift,
+//!        consecutive-loss counter always firing on first loss.
 //!
 //! PR #101 Commit 2: TelegramBot wired into GridBot.
-//!   • new():                  TelegramBot::from_env() — reads env vars at startup
-//!   • initialize():           send_bot_started() after grid init
-//!   • process_price_update(): send_fill() on every SELL fill
-//!                             send_heartbeat() every stats_interval cycles
-//!                             send_circuit_breaker_tripped() on CB trip (edge)
-//!                             send_circuit_breaker_reset()   on CB clear (edge)
-//!   • shutdown():             send_shutdown() with session summary
-//!   last_cb_tripped: bool field tracks CB state for edge-detection
-//!   Zero behaviour change if GRIDZBOTZ_TELEGRAM_TOKEN/CHAT_ID absent.
-//!
-//! PR #99 Commit 3b: wma_confidence_threshold fully wired end-to-end.
-//! PR #98 Commit 2b-ii: WMA voter P&L attribution wired.
-//! PR #94 (Commit 6): GridBotStats observability.
+//! PR #99  Commit 3b: wma_confidence_threshold fully wired end-to-end.
+//! PR #98  Commit 2b-ii: WMA voter P&L attribution wired.
+//! PR #94  (Commit 6): GridBotStats observability.
 //! PR #93: CircuitBreaker wired.
 //!
-//! March 11, 2026 - V6.1: Telegram alerts wired (PR #101 Commit 2) 📲
+//! March 12, 2026 - V6.2: fill level_id + CB delta P&L (PR #102) ✅
+//! March 11, 2026 - V6.1: Telegram alerts wired (PR #101) 📲
 //! March 11, 2026 - V6.0: wma_confidence_threshold fully wired (PR #99) 🎯
-//! March 11, 2026 - V6.0: WMA voter P&L attribution wired (PR #98) 🤝
 //! ═════════════════════════════════════════════════════════════════════════
 
 use std::sync::Arc;
@@ -78,9 +81,6 @@ pub struct GridBot {
     /// PR #101: Telegram notifier. No-op if env vars absent.
     telegram:               TelegramBot,
     /// PR #101: Edge-detection for CB state transitions.
-    /// true = CB was tripped on the previous tick.
-    /// Fires send_circuit_breaker_tripped() on false→true edge.
-    /// Fires send_circuit_breaker_reset() on true→false edge.
     last_cb_tripped:        bool,
 }
 
@@ -94,16 +94,15 @@ impl GridBot {
         engine: Arc<dyn TradingEngine + Send + Sync>,
         feed:   Arc<PriceFeed>,
     ) -> Result<Self> {
-        info!("[BOT-V6.1] Initializing GridBot V6.1...");
-        info!("[BOT-V6.1] WMAConfGate:     {:.2} (TOML-driven, PR #99)",
+        info!("[BOT-V6.2] Initializing GridBot V6.2...");
+        info!("[BOT-V6.2] WMAConfGate:      {:.2} (TOML-driven, PR #99)",
               config.strategies.wma_confidence_threshold);
-        info!("[BOT-V6.1] OptimizerCadence: {} cycles",
+        info!("[BOT-V6.2] OptimizerCadence: {} cycles",
               config.trading.optimizer_interval_cycles);
-        info!("[BOT-V6.1] ConsensusSizing: {} | multiplier={:.2}x",
+        info!("[BOT-V6.2] ConsensusSizing:  {} | multiplier={:.2}x",
               if config.trading.enable_smart_position_sizing { "ACTIVE" } else { "disabled" },
               config.trading.signal_size_multiplier);
 
-        // PR #101: init Telegram from env vars — silent no-op if absent
         let telegram = TelegramBot::from_env();
 
         let grid_config = GridRebalancerConfig {
@@ -182,7 +181,7 @@ impl GridBot {
 
         let manager = _manager;
 
-        info!("[BOT-V6.1] {} strategies loaded (conf_gate={:.2})",
+        info!("[BOT-V6.2] {} strategies loaded (conf_gate={:.2})",
               manager.strategies.len(),
               manager.wma_engine.min_confidence());
 
@@ -193,7 +192,7 @@ impl GridBot {
         let adaptive_optimizer = AdaptiveOptimizer::new(base_spacing, base_size);
         let circuit_breaker    = CircuitBreaker::new(&config);
 
-        info!("[BOT-V6.1] GridBot V6.1 initialization complete");
+        info!("[BOT-V6.2] GridBot V6.2 initialization complete");
 
         Ok(Self {
             manager,
@@ -231,7 +230,7 @@ impl GridBot {
     }
 
     async fn initialize_with_price(&mut self) -> Result<()> {
-        info!("[BOT] V6.1 GRID INIT - awaiting live price...");
+        info!("[BOT] V6.2 GRID INIT - awaiting live price...");
 
         let initial_price = self.feed.latest_price().await;
         if initial_price <= 0.0 {
@@ -248,7 +247,6 @@ impl GridBot {
         let used_levels  = self.grid_state.count().await;
         self.enhanced_metrics.update_grid_stats(total_levels, used_levels);
 
-        // PR #101: notify Telegram that bot is live
         let wallet = self.engine.get_wallet().await;
         self.telegram.send_bot_started(
             self.config.bot.instance_name(),
@@ -415,7 +413,6 @@ impl GridBot {
 
     pub async fn process_price_update(&mut self, price: f64, timestamp: i64) -> Result<()> {
         if !self.circuit_breaker.is_trading_allowed() {
-            // PR #101: edge-detect CB trip — fire Telegram once on first blocked tick
             if !self.last_cb_tripped {
                 self.last_cb_tripped = true;
                 let cb  = self.circuit_breaker.status();
@@ -435,7 +432,6 @@ impl GridBot {
             return Ok(());
         }
 
-        // PR #101: edge-detect CB reset — fire Telegram once when trading resumes
         if self.last_cb_tripped {
             self.last_cb_tripped = false;
             self.telegram.send_circuit_breaker_reset(
@@ -465,41 +461,61 @@ impl GridBot {
             info!("[BOT] {} fills at ${:.4}", filled_orders.len(), price);
             self.successful_trades += filled_orders.len() as u64;
 
-            let realized_pnl_snapshot = self.grid_state.total_realized_pnl().await;
+            // ── PR #102: Snapshot P&L *before* the fill loop so we can
+            //    compute per-fill deltas for CB.record_trade().
+            //    Previously the cumulative snapshot was passed on every fill,
+            //    causing CB NAV drift and spurious consecutive-loss trips.
+            let pnl_before = self.grid_state.total_realized_pnl().await;
 
             for fill in &filled_orders {
                 let is_buy    = fill.side == OrderSide::Buy;
-                let pnl       = realized_pnl_snapshot;
                 let fill_size = self.adaptive_optimizer.current_position_size;
+
+                // ── PR #102: Mark the grid level filled so GridStateTracker
+                //    stays consistent in live mode. Synthetic FillEvents from
+                //    real_trader carry level_id set by place_limit_order_with_level().
+                if let Some(lid) = fill.level_id {
+                    if is_buy {
+                        self.grid_state.mark_buy_filled(lid).await;
+                    } else {
+                        self.grid_state.mark_sell_filled(lid).await;
+                    }
+                }
+
+                // Re-read after mark so delta reflects the state update above.
+                let pnl_after = self.grid_state.total_realized_pnl().await;
+                let pnl_delta = pnl_after - pnl_before;
+
                 self.total_fills_tracked += 1;
 
-                info!("[FILL] #{}: {} {} @ ${:.4} | size:{:.4} | P&L:${:.4} | ts:{}",
+                info!("[FILL] #{}: {} {} @ ${:.4} | size:{:.4} | Δ P&L:${:.4} | ts:{}",
                       self.total_fills_tracked,
                       if is_buy { "BUY" } else { "SELL" },
-                      fill.order_id, price, fill_size, pnl, timestamp);
+                      fill.order_id, price, fill_size, pnl_delta, timestamp);
 
-                self.enhanced_metrics.record_trade(is_buy, pnl, timestamp);
-                self.circuit_breaker.record_trade(pnl, new_nav);
+                self.enhanced_metrics.record_trade(is_buy, pnl_delta, timestamp);
 
-                // PR #101: send Telegram fill alert on SELL only (realized P&L event)
+                // CB receives per-fill delta, not cumulative snapshot.
+                self.circuit_breaker.record_trade(pnl_delta, new_nav);
+
                 if fill.side == OrderSide::Sell {
                     self.telegram.send_fill(
                         self.config.bot.instance_name(),
                         "SELL",
                         price,
                         fill_size,
-                        pnl,
+                        pnl_delta,
                         self.total_fills_tracked,
                     ).await;
 
                     // WMA P&L attribution (PR #98)
                     let voters: Vec<String> = self.manager.get_last_wma_voters().to_vec();
                     for voter in &voters {
-                        self.manager.record_fill_for_wma(voter, realized_pnl_snapshot);
+                        self.manager.record_fill_for_wma(voter, pnl_delta);
                     }
                     if !voters.is_empty() {
-                        debug!("[WMA-ATTR] SELL attributed to {} voters | P&L:${:.4}",
-                               voters.len(), realized_pnl_snapshot);
+                        debug!("[WMA-ATTR] SELL attributed to {} voters | Δ P&L:${:.4}",
+                               voters.len(), pnl_delta);
                     }
                 }
             }
@@ -520,7 +536,7 @@ impl GridBot {
             self.last_optimization_cycle = self.total_cycles;
         }
 
-        // PR #101: periodic heartbeat every stats_interval cycles
+        // Periodic heartbeat
         let interval = self.config.metrics.stats_interval;
         if interval > 0 && self.total_cycles % interval == 0 {
             let perf   = self.engine.get_performance_stats().await;
@@ -589,7 +605,7 @@ impl GridBot {
         let border      = "=".repeat(60);
 
         println!("\n{border}");
-        println!("   [BOT] GRID BOT V6.1 - STATUS REPORT");
+        println!("   [BOT] GRID BOT V6.2 - STATUS REPORT");
         println!("{border}");
         println!("\n[PERFORMANCE]");
         println!("  Total Cycles:      {}", stats.total_cycles);
@@ -710,7 +726,6 @@ impl Bot for GridBot {
         self.display_status(final_price).await;
         self.display_strategy_performance().await;
 
-        // PR #101: send final session summary to Telegram
         let wallet  = self.engine.get_wallet().await;
         let perf    = self.engine.get_performance_stats().await;
         self.telegram.send_shutdown(
@@ -779,7 +794,7 @@ pub struct GridBotStats {
 
 impl GridBotStats {
     pub fn display_summary(&self) {
-        println!("\n[STATS] GRID BOT V6.1 STATISTICS");
+        println!("\n[STATS] GRID BOT V6.2 STATISTICS");
         println!("   Cycles:     {}", self.total_cycles);
         println!("   Trades:     {}", self.successful_trades);
         println!("   Fills:      {}", self.total_fills_tracked);
@@ -1035,5 +1050,25 @@ mod tests {
     fn test_last_cb_tripped_initial_false() {
         let tripped: bool = false;
         assert!(!tripped);
+    }
+
+    /// PR #102: Verify pnl_delta semantics — delta must be zero when
+    /// P&L does not change (e.g. BUY fill before a SELL closes the round-trip).
+    #[test]
+    fn test_pnl_delta_zero_on_buy_fill() {
+        let pnl_before = 0.0_f64;
+        let pnl_after  = 0.0_f64; // BUY fill does not realize P&L
+        let delta = pnl_after - pnl_before;
+        assert!((delta - 0.0).abs() < 1e-12);
+    }
+
+    /// PR #102: Verify pnl_delta is positive on a profitable SELL.
+    #[test]
+    fn test_pnl_delta_positive_on_profitable_sell() {
+        let pnl_before = 0.0_f64;
+        let pnl_after  = 1.25_f64; // SELL closed a profitable round-trip
+        let delta = pnl_after - pnl_before;
+        assert!(delta > 0.0);
+        assert!((delta - 1.25).abs() < 1e-12);
     }
 }

@@ -1,5 +1,11 @@
 # ═══════════════════════════════════════════════════════════════════════════
-#  🚀 GRIDZBOTZ MAINNET V3.6 ENHANCED — SOL/USDC PRODUCTION
+#  🚀 GRIDZBOTZ MAINNET V3.7 — SOL/USDC PRODUCTION
+#
+#  ✅ V3.7 (PR #102): Fill level_id wired + CB delta P&L fix
+#    GridStateTracker.mark_buy/sell_filled() now called in live mode.
+#    CB receives per-fill P&L delta (not cumulative snapshot).
+#    RealTradingEngine emits synthetic FillEvents from confirmed Jupiter swaps.
+#    GridBot V6.2 | RealTradingEngine V3.2
 #
 #  ✅ V3.6 + PR #99 + PR #100 + PR #101:
 #    ATR Dynamic Spacing, Dual vol gates, Tighter retries
@@ -11,11 +17,11 @@
 # ═══════════════════════════════════════════════════════════════════════════
 
 [bot]
-name            = "GridzBot-Mainnet-V3.6"
-version         = "3.6.1"
+name            = "GridzBot-Mainnet-V3.7"
+version         = "3.7.0"
 environment     = "production"
 execution_mode  = "live"
-instance_id     = "mainnet-sol-usdc-v3.6"
+instance_id     = "mainnet-sol-usdc-v3.7"
 
 [network]
 cluster    = "mainnet-beta"
@@ -164,7 +170,7 @@ request_timeout_ms = 5000
 
 [logging]
 level               = "info"
-file_path           = "logs/mainnet/mainnet-sol-usdc-v3.6.log"
+file_path           = "logs/mainnet/mainnet-sol-usdc-v3.7.log"
 enable_file_logging = true
 
 [metrics]
@@ -189,7 +195,7 @@ enabled = false
 #
 #  You will receive:
 #    🚀 Bot started (pair, capital, spacing, WMA gate, mode)
-#    💰 Every SELL fill (price, size, P&L, fill #)
+#    💰 Every SELL fill (price, size, Δ P&L, fill #)
 #    🚨 Circuit breaker tripped (reason, drawdown, cooldown)
 #    ✅ Circuit breaker reset (trading resumed)
 #    📊 Heartbeat every 50 cycles ~5s (NAV, P&L, ROI, win rate)
