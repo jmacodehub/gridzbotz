@@ -251,6 +251,10 @@ mod tests {
                 min_orders_to_maintain: 5,
                 enable_adaptive_spacing: false,
                 enable_smart_position_sizing: false,
+                // ✅ PR #94 V5.3/V5.4/V5.5: new TradingConfig fields — canonical defaults
+                optimizer_interval_cycles: 50,
+                fee_filter: FeeFilterConfig::default(),
+                signal_size_multiplier: 1.0,
             },
             strategies: StrategiesConfig::default(),
             execution: ExecutionConfig::default(),
