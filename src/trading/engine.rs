@@ -1,9 +1,10 @@
 //! ═══════════════════════════════════════════════════════════════════════════
-//! 🏭 ENGINE FACTORY V2.2 — Config-Driven Engine Selection
+//! 🏗️ ENGINE FACTORY V2.3 — Config-Driven Engine Selection
 //!
 //! PR #72 — Phase 2: Engine Wiring
 //! PR #77 — Phase 4: FeesConfig Wiring (single source of truth)
 //! PR #79 — Commit 1: Update from_execution_config → from_config
+//! PR #96 — Commit 3: Fix slippage log to read config.execution.max_slippage_bps
 //!
 //! The single entry point for creating a TradingEngine from config.
 //! Reads `bot.execution_mode` and returns the correct engine:
@@ -31,7 +32,12 @@
 //!    Passing only ExecutionConfig was insufficient — silently left rpc_url
 //!    as None and jupiter_api_key as None, causing live mode failures.
 //!
-//! March 2026 — V2.2 🚀
+//! V2.3 CHANGES (PR #96 Commit 3):
+//! ✅ from_config_live() slippage log: real_config.slippage_bps.unwrap_or(50)
+//!    → config.execution.max_slippage_bps (canonical source, no unwrap needed).
+//!    RealTradingConfig::slippage_bps was deleted in PR #96 Commit 1.
+//!
+//! March 2026 — V2.3 🚀
 //! ═══════════════════════════════════════════════════════════════════════════
 
 use std::sync::Arc;
@@ -101,7 +107,7 @@ pub async fn create_engine(
     let mode = config.bot.execution_mode.as_str();
 
     info!(
-        "[{}] 🏭 Engine Factory V2.2: creating engine for mode='{}'",
+        "[{}] 🏗️ Engine Factory V2.3: creating engine for mode='{}'",
         instance, mode
     );
 
@@ -196,7 +202,7 @@ fn from_config_paper(config: &Config) -> Result<PaperTradingEngine> {
 async fn from_config_live(config: &Config, params: &EngineParams) -> Result<RealTradingEngine> {
     let instance = config.bot.instance_name();
 
-    // ── Step 1: Resolve wallet balances ──────────────────────────────────────
+    // ── Step 1: Resolve wallet balances ────────────────────────────────────
     let (initial_usdc, initial_sol) = match params.wallet_balances {
         Some((usdc, sol)) => {
             info!("[{}] 💰 Using pre-fetched on-chain balances: ${:.2} USDC + {:.4} SOL",
@@ -213,7 +219,7 @@ async fn from_config_live(config: &Config, params: &EngineParams) -> Result<Real
         }
     };
 
-    // ── Step 2: Resolve live SOL price ───────────────────────────────────────
+    // ── Step 2: Resolve live SOL price ────────────────────────────────────
     let sol_price = match params.live_price {
         Some(price) if price > 0.0 => {
             info!("[{}] 📡 Using pre-fetched SOL price: ${:.4}", instance, price);
@@ -234,7 +240,7 @@ async fn from_config_live(config: &Config, params: &EngineParams) -> Result<Real
 
     info!("[{}] 💰 SOL price: ${:.4}", instance, sol_price);
 
-    // ── Step 3: Capital safety check ($10 minimum) ──────────────────────────
+    // ── Step 3: Capital safety check ($10 minimum) ──────────────────────
     let capital_usd = initial_usdc + (initial_sol * sol_price);
     if capital_usd < 10.0 {
         bail!(
@@ -246,7 +252,7 @@ async fn from_config_live(config: &Config, params: &EngineParams) -> Result<Real
     }
     info!("[{}] 💵 Total capital: ${:.2} USD", instance, capital_usd);
 
-    // ── Step 4: Build RealTradingConfig + KeystoreConfig ─────────────────────
+    // ── Step 4: Build RealTradingConfig + KeystoreConfig ─────────────────
     // ✅ V2.2 (PR #79): from_config(config) wires rpc_url + jupiter_api_key.
     //    Previously from_execution_config(&config.execution) left both as None,
     //    causing silent public RPC fallback and swap failures at runtime.
@@ -258,11 +264,13 @@ async fn from_config_live(config: &Config, params: &EngineParams) -> Result<Real
         max_daily_volume_usdc:       None,
     };
 
+    // ✅ PR #96 V2.3: Read slippage from canonical source (config.execution.max_slippage_bps).
+    //    real_config.slippage_bps was deleted in PR #96 Commit 1 — do not re-add.
     info!("[{}]    Slippage: {:.4}%", instance,
-          real_config.slippage_bps.unwrap_or(50) as f64 / 100.0);
+          config.execution.max_slippage_bps as f64 / 100.0);
     info!("[{}]    Keypair:  {}", instance, config.security.wallet_path);
 
-    // ── Step 5: Construct engine ─────────────────────────────────────────────
+    // ── Step 5: Construct engine ──────────────────────────────────────
     let engine = RealTradingEngine::new(
         real_config,
         config,

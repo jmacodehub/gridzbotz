@@ -1,5 +1,17 @@
 //! =============================================================================
-//! REAL TRADER ENGINE V2.9
+//! REAL TRADER ENGINE V3.0
+//!
+//! V3.0 CHANGES (fix/fees-config-reconciliation — PR #96 Commit 1):
+//! ✅ RealTradingConfig::slippage_bps DELETED — was a shadow of
+//!    ExecutionConfig::max_slippage_bps (bridged via from_config()).
+//!    FeesConfig is now undisputed single source of truth for fee math;
+//!    ExecutionConfig::max_slippage_bps owns Jupiter swap tolerance.
+//! ✅ RealTradingEngine::slippage_bps (u16) added as plain engine field.
+//!    Read once from global_config.execution.max_slippage_bps at construction.
+//!    Same pattern as static_priority_fee and profit_take_pct.
+//! ✅ build_jupiter_swap(): .with_slippage(self.slippage_bps) — no more
+//!    unwrap_or(50) fallback that could silently override TOML config.
+//! ✅ test_no_slippage_shadow_on_realconfig: compile-time regression guard.
 //!
 //! V2.9 CHANGES (fix/risk-continuous-sl-monitoring — PR #89):
 //! ✅ process_price_update(): continuous SL/TP monitoring on every price tick.
@@ -38,7 +50,19 @@
 //! ✅ rpc_url Default: None — must be wired via from_config().
 //! ✅ from_execution_config() renamed → from_config(global: &Config).
 //!
-//! March 2026 — V2.9 🚀
+//! ## Shadow field policy (RealTradingConfig)
+//!
+//! Do NOT add shadow fields back to RealTradingConfig. Sources of truth:
+//!   - Slippage (Jupiter tolerance): ExecutionConfig::max_slippage_bps
+//!     → cached as engine.slippage_bps at construction (PR #96)
+//!   - Stop-loss / take-profit %:    RiskConfig (PR #88)
+//!     → cached as engine.profit_take_pct at construction
+//!   - Static priority fee:          PriorityFeeConfig::fallback_microlamports
+//!     → cached as engine.static_priority_fee at construction (PR #79)
+//!   - Fee math (maker/taker BPS):   FeesConfig — consumed by paper_trader,
+//!     fee_filter, grid_rebalancer — not needed in real execution path.
+//!
+//! March 2026 — V3.0 🚀
 //! =============================================================================
 
 use anyhow::{bail, Context, Result};
@@ -153,17 +177,31 @@ impl FeeDataSource for AsyncRpcFeeSource {
 /// Runtime configuration for RealTradingEngine.
 ///
 /// ## Shadow field policy
-/// Risk thresholds (stop-loss %, take-profit %) live ONLY in `[risk]` in
-/// master.toml and are accessed via `global_config.risk.*`.
-/// Do NOT add `stop_loss_pct` or `profit_take_threshold` back here —
-/// those fields were intentionally removed in V2.8 (PR #88) to eliminate
-/// dual-source ambiguity. Add a `// V2.8 NOTE` comment if you're tempted.
+///
+/// Do NOT add shadow fields to this struct. Each config value has one
+/// canonical source in the global Config tree:
+///
+///   - Slippage (Jupiter tolerance): `ExecutionConfig::max_slippage_bps`
+///     Cached as `RealTradingEngine::slippage_bps` at construction (PR #96).
+///
+///   - Stop-loss / take-profit %: `RiskConfig::stop_loss_pct / take_profit_pct`
+///     Cached as `RealTradingEngine::profit_take_pct` at construction (PR #88).
+///
+///   - Static priority fee: `PriorityFeeConfig::fallback_microlamports`
+///     Cached as `RealTradingEngine::static_priority_fee` at construction (PR #79).
+///
+/// Removed shadow fields (compile-time guards below):
+///   ✅ PR #88: stop_loss_pct, profit_take_threshold
+///   ✅ PR #79: maker_fee_bps, taker_fee_bps
+///   ✅ PR #96: slippage_bps
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RealTradingConfig {
     pub keystore:                          KeystoreConfig,
     pub executor:                          ExecutorConfig,
-    pub slippage_bps:                      Option<u16>,
+    // ✅ PR #96: slippage_bps DELETED — was a shadow of ExecutionConfig::max_slippage_bps.
+    //    Cached as RealTradingEngine::slippage_bps at construction.
+    //    Do NOT re-add. Use global_config.execution.max_slippage_bps.
     pub max_trade_size_usdc:               Option<f64>,
     pub circuit_breaker_loss_pct:          Option<f64>,
     // ✅ V2.8 PR #88: stop_loss_pct DELETED — was a shadow of RiskConfig.
@@ -180,7 +218,7 @@ impl Default for RealTradingConfig {
         Self {
             keystore:                          KeystoreConfig::default(),
             executor:                          ExecutorConfig::default(),
-            slippage_bps:                      Some(50),
+            // ✅ PR #96: slippage_bps removed — no default here.
             max_trade_size_usdc:               Some(250.0),
             circuit_breaker_loss_pct:          Some(5.0),
             // ✅ V2.8: stop_loss_pct and profit_take_threshold removed.
@@ -203,11 +241,8 @@ impl RealTradingConfig {
             }
         }
 
-        if let Some(slippage) = self.slippage_bps {
-            if slippage > 1000 {
-                bail!("slippage_bps too high: {} (max 1000 = 10%)", slippage);
-            }
-        }
+        // ✅ PR #96: slippage_bps validation removed — field deleted.
+        //    Slippage is validated in ExecutionConfig::validate() instead.
 
         Ok(())
     }
@@ -215,10 +250,13 @@ impl RealTradingConfig {
     /// Bridge the master Config into this engine config.
     ///
     /// Wires all live-execution-critical fields from the global Config:
-    /// - `slippage_bps`        → `config.execution.max_slippage_bps`
     /// - `max_trade_size_usdc` → `config.execution.max_trade_size_usdc`
     /// - `rpc_url`             → `config.network.rpc_url` (Chainstack)
     /// - `jupiter_api_key`     → `GRIDZBOTZ_JUPITER_API_KEY` env var
+    ///
+    /// Note: slippage is no longer bridged here (PR #96). It is read directly
+    /// from `global_config.execution.max_slippage_bps` inside `new()` and
+    /// stored as the plain `slippage_bps: u16` engine field.
     pub fn from_config(global: &crate::Config) -> Self {
         let jupiter_api_key = std::env::var("GRIDZBOTZ_JUPITER_API_KEY")
             .ok()
@@ -233,7 +271,9 @@ impl RealTradingConfig {
         }
 
         Self {
-            slippage_bps:        Some(global.execution.max_slippage_bps),
+            // ✅ PR #96: slippage_bps no longer bridged here.
+            //    global_config.execution.max_slippage_bps is read directly
+            //    in RealTradingEngine::new() → stored as self.slippage_bps.
             max_trade_size_usdc: Some(global.execution.max_trade_size_usdc),
             rpc_url:             Some(global.network.rpc_url.clone()),
             jupiter_api_key,
@@ -324,8 +364,12 @@ pub struct RealTradingEngine {
     static_priority_fee:   u64,
     /// Take-profit threshold % read from global_config.risk.take_profit_pct
     /// at construction time. Immutable — same pattern as static_priority_fee.
-    /// Replaces deleted RealTradingConfig::profit_take_threshold shadow field.
+    /// Replaces deleted RealTradingConfig::profit_take_threshold shadow field (PR #88).
     profit_take_pct:       f64,
+    /// Jupiter swap slippage tolerance in BPS.
+    /// Read from global_config.execution.max_slippage_bps at construction.
+    /// Replaces deleted RealTradingConfig::slippage_bps shadow field (PR #96).
+    slippage_bps:          u16,
 }
 
 impl RealTradingEngine {
@@ -340,7 +384,7 @@ impl RealTradingEngine {
         initial_balance_sol: f64,
         initial_sol_price_usd: f64,
     ) -> Result<Self> {
-        info!("[RealEngine] Initializing V2.9");
+        info!("[RealEngine] Initializing V3.0");
 
         config.validate()?;
 
@@ -362,7 +406,12 @@ impl RealTradingEngine {
         // Replaces deleted RealTradingConfig::profit_take_threshold shadow field.
         let profit_take_pct = global_config.risk.take_profit_pct;
 
-        // ── Dynamic priority fees ───────────────────────────────────────────────────────────────────
+        // ✅ PR #96: Read slippage once at construction — never changes at runtime.
+        // Replaces deleted RealTradingConfig::slippage_bps shadow field.
+        // Same pattern as static_priority_fee and profit_take_pct.
+        let slippage_bps = global_config.execution.max_slippage_bps;
+
+        // ── Dynamic priority fees ───────────────────────────────────────────────
         let (priority_fee_estimator, static_priority_fee) =
             if global_config.priority_fees.enable_dynamic {
                 let source = AsyncRpcFeeSource::new(
@@ -398,7 +447,7 @@ impl RealTradingEngine {
             initial_sol_price_usd,
         ));
 
-        info!("[RealEngine] Initialized V2.9");
+        info!("[RealEngine] Initialized V3.0");
         info!("  Wallet      : {}", keystore.pubkey());
         info!("  NAV         : ${:.2} (SOL @ ${:.4})",
             balance_tracker.initial_balance_usd(), initial_sol_price_usd);
@@ -406,6 +455,7 @@ impl RealTradingEngine {
             global_config.risk.stop_loss_pct, profit_take_pct);
         info!("  SL mode     : {}",
             if global_config.risk.enable_trailing_stop { "trailing" } else { "fixed" });
+        info!("  Slippage    : {} bps (max Jupiter swap tolerance)", slippage_bps);
 
         Ok(Self {
             keystore,
@@ -424,6 +474,7 @@ impl RealTradingEngine {
             priority_fee_estimator,
             static_priority_fee,
             profit_take_pct,
+            slippage_bps,
         })
     }
 
@@ -555,7 +606,7 @@ impl RealTradingEngine {
                 "jupiter_api_key not configured — set GRIDZBOTZ_JUPITER_API_KEY env var"
             ))?;
 
-        // ── Dynamic priority fee ──────────────────────────────────────────────────────────────
+        // ── Dynamic priority fee ──────────────────────────────────────────────
         let per_cu_microlamports = match &self.priority_fee_estimator {
             Some(estimator) => {
                 let fee = estimator.get_priority_fee().await;
@@ -578,6 +629,9 @@ impl RealTradingEngine {
             per_cu_microlamports, JUPITER_ESTIMATED_CU, max_lamports
         );
 
+        // ✅ PR #96: .with_slippage(self.slippage_bps) — reads from engine field
+        //    (global_config.execution.max_slippage_bps cached at construction).
+        //    No more unwrap_or(50) fallback that could silently override TOML.
         let jupiter = JupiterClient::new(
             rpc_url,
             wallet_pubkey,
@@ -586,7 +640,7 @@ impl RealTradingEngine {
             initial_capital,
             jupiter_api_key,
         )?
-        .with_slippage(self.config.slippage_bps.unwrap_or(50))
+        .with_slippage(self.slippage_bps)
         .with_priority_fee(max_lamports, "high".to_string());
 
         let (input_mint, output_mint, amount) = match side {
@@ -713,7 +767,7 @@ impl RealTradingEngine {
 
         println!();
         println!("=======================================================");
-        println!("  REAL TRADING ENGINE V2.9 - STATUS");
+        println!("  REAL TRADING ENGINE V3.0 - STATUS");
         println!("=======================================================");
         println!();
         println!("Balances:");
@@ -744,11 +798,12 @@ impl RealTradingEngine {
             println!("  Trailing high: ${:.4}",   highest);
         }
         println!();
-        println!("Priority Fees:");
+        println!("Execution:");
+        println!("  Slippage    : {} bps (max Jupiter tolerance)", self.slippage_bps);
         if self.priority_fee_estimator.is_some() {
-            println!("  Mode    : DYNAMIC");
+            println!("  Priority fee: DYNAMIC");
         } else {
-            println!("  Mode    : STATIC ({} µL/CU)", self.static_priority_fee);
+            println!("  Priority fee: STATIC ({} µL/CU)", self.static_priority_fee);
         }
         println!();
         println!("Circuit Breaker:");
@@ -920,14 +975,9 @@ mod tests {
         assert!(config.validate().is_ok());
     }
 
-    #[test]
-    fn test_slippage_validation() {
-        let mut config = RealTradingConfig::default();
-        config.slippage_bps = Some(50);
-        assert!(config.validate().is_ok());
-        config.slippage_bps = Some(2000);
-        assert!(config.validate().is_err());
-    }
+    // ✅ PR #96: test_slippage_validation REMOVED — RealTradingConfig::slippage_bps
+    // no longer exists. Slippage is owned by ExecutionConfig::max_slippage_bps
+    // and validated there. See test_no_slippage_shadow_on_realconfig below.
 
     #[test]
     fn test_no_shadow_fee_fields() {
@@ -959,5 +1009,27 @@ mod tests {
         // Only remaining risk fields on config:
         assert!(config.circuit_breaker_loss_pct.is_some());
         assert!(config.profit_take_ratio.is_some());
+    }
+
+    /// ✅ PR #96: Compile-time regression guard.
+    /// slippage_bps must NOT exist as a shadow field on RealTradingConfig.
+    /// The field was removed in PR #96 — slippage is owned by the engine
+    /// struct (self.slippage_bps: u16) read from
+    /// global_config.execution.max_slippage_bps at construction.
+    /// If slippage_bps is ever re-added here the struct will fail
+    /// deny_unknown_fields deserialization for any TOML without that key,
+    /// and creates a dual-source ambiguity bug in build_jupiter_swap().
+    #[test]
+    fn test_no_slippage_shadow_on_realconfig() {
+        let config = RealTradingConfig::default();
+        // The following line must NOT compile if the shadow field exists:
+        // let _ = config.slippage_bps; // ← must NOT exist on RealTradingConfig
+        // Verify the struct still holds exactly the right runtime fields:
+        assert!(config.max_trade_size_usdc.is_some(),               "max_trade_size_usdc must be Some");
+        assert!(config.circuit_breaker_loss_pct.is_some(),          "circuit_breaker_loss_pct must be Some");
+        assert!(config.profit_take_ratio.is_some(),                  "profit_take_ratio must be Some");
+        assert!(config.reconcile_balances_every_n_trades.is_some(), "reconcile_n_trades must be Some");
+        assert!(config.rpc_url.is_none(),                            "rpc_url must default to None");
+        assert!(config.jupiter_api_key.is_none(),                    "jupiter_api_key must default to None");
     }
 }

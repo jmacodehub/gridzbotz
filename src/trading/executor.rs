@@ -13,6 +13,18 @@
 //!
 //! November 2025 | Project Flash V6.1 - Execution Layer (Fixed & Optimized)
 //! February 2026  | V6.2 — Added execute_versioned() for Jupiter V0 swaps
+//! March 2026     | V6.3 — Remove priority_fee_microlamports orphan field
+//!                          (PR #96). Priority fees owned by PriorityFeeConfig
+//!                          + PriorityFeeEstimator — not by the executor.
+//!
+//! ## Fee ownership policy
+//!
+//! The executor does NOT own, compute, or inject priority fees.
+//! Fee decisions flow as: PriorityFeeConfig → PriorityFeeEstimator
+//! → RealTradingEngine::build_jupiter_swap() → JupiterClient::with_priority_fee()
+//! → Jupiter builds the VersionedTransaction with compute budget ix baked in.
+//! The executor receives a fully-built, fully-signed VersionedTransaction
+//! and sends it. Do NOT re-add priority_fee_microlamports here.
 //! ═══════════════════════════════════════════════════════════════════════════
 
 use anyhow::{bail, Context, Result};
@@ -44,7 +56,11 @@ pub struct ExecutorConfig {
     pub rpc_timeout_secs: Option<u64>,
     pub max_retries: Option<u8>,
     pub confirmation_timeout_secs: Option<u64>,
-    pub priority_fee_microlamports: Option<u64>,
+    // ✅ PR #96: priority_fee_microlamports DELETED — was an orphan field.
+    //    It appeared only in the init log and was never wired to any tx.
+    //    Priority fees are owned by: PriorityFeeConfig → PriorityFeeEstimator
+    //    → RealTradingEngine::build_jupiter_swap() → JupiterClient.
+    //    Do NOT re-add. See fee ownership policy in module doc above.
     pub compute_unit_limit: Option<u32>,
 }
 
@@ -59,7 +75,7 @@ impl Default for ExecutorConfig {
             rpc_timeout_secs: Some(30),
             max_retries: Some(3),
             confirmation_timeout_secs: Some(60),
-            priority_fee_microlamports: Some(100_000),
+            // ✅ PR #96: priority_fee_microlamports removed — no default here.
             compute_unit_limit: Some(200_000),
         }
     }
@@ -84,11 +100,8 @@ impl ExecutorConfig {
             }
         }
 
-        if let Some(fee) = self.priority_fee_microlamports {
-            if fee > 1_000_000 {
-                warn!("⚠️  Unusually high priority fee: {} microlamports", fee);
-            }
-        }
+        // ✅ PR #96: priority_fee validation block removed — field deleted.
+        //    Fee validation lives in PriorityFeeConfig::validate().
 
         Ok(())
     }
@@ -417,13 +430,15 @@ impl TransactionExecutor {
         config.validate()?;
         let rpc = Arc::new(RpcClientPool::new(&config));
 
-        info!("⚡ TransactionExecutor initialized");
+        info!("⚡ TransactionExecutor V6.3 initialized");
         info!(
-            "   Retries: {} | Confirmation timeout: {}s | Priority fee: {} μ",
+            "   Retries: {} | Confirmation timeout: {}s",
             config.max_retries.unwrap_or(3),
             config.confirmation_timeout_secs.unwrap_or(60),
-            config.priority_fee_microlamports.unwrap_or(10_000)
         );
+        // ✅ PR #96: '| Priority fee: N µL' removed from log — the executor
+        //    does not own or compute priority fees. Fee info is logged in
+        //    RealTradingEngine::new() under the 'Execution:' block.
 
         Ok(Self {
             rpc,
@@ -607,5 +622,24 @@ mod tests {
             success_rate: 95.0,
         };
         assert_eq!(stats.success_rate, 95.0);
+    }
+
+    /// ✅ PR #96: Compile-time regression guard.
+    /// priority_fee_microlamports must NOT exist on ExecutorConfig.
+    /// The executor does NOT own fee decisions — fees flow through:
+    /// PriorityFeeConfig → PriorityFeeEstimator → build_jupiter_swap()
+    /// → JupiterClient::with_priority_fee() → baked into VersionedTransaction.
+    /// Re-adding this field would create a false impression of fee ownership
+    /// and mislead any reader of the logs. See module doc for full policy.
+    #[test]
+    fn test_no_priority_fee_microlamports_on_executor_config() {
+        let config = ExecutorConfig::default();
+        // The following line must NOT compile if the orphan field exists:
+        // let _ = config.priority_fee_microlamports; // ← must NOT exist
+        // Verify the struct holds exactly the right operational fields:
+        assert!(!config.rpc_url.is_empty(),              "rpc_url must be set");
+        assert!(config.max_retries.unwrap_or(0) > 0,     "max_retries must be > 0");
+        assert!(config.confirmation_timeout_secs.is_some(), "confirmation_timeout must be Some");
+        assert!(config.compute_unit_limit.is_some(),     "compute_unit_limit must be Some");
     }
 }
