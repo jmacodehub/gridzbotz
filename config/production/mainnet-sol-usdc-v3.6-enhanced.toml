@@ -1,113 +1,39 @@
 # ═══════════════════════════════════════════════════════════════════════════
 #  🚀 GRIDZBOTZ MAINNET V3.6 ENHANCED — SOL/USDC PRODUCTION
 #
-#  Base: mainnet-sol-usdc-v1.toml (battle-tested)
-#  Enhancements: R&D multi-strategy learnings + V3.6 fixes
-#
-#  🆕 V3.6 Enhancements:
-#    ✅ ATR Dynamic Spacing (adapts to volatility real-time)
-#    ✅ Dual volatility gates (0.05% floor, 8% ceiling from R&D)
-#    ✅ Tighter retry logic (4 attempts, 500ms from PR #65)
-#    ✅ QuickNode fallback RPC (auto-failover from Chainstack)
-#    ✅ Enhanced regime detection (multi-strategy profile)
-#    ✅ All master.toml canonical fields preserved
-#    ✅ Jupiter V6 API compatible
-#    ✅ Jito MEV ready (commented, enable when scaling >$500)
-#    ✅ Secrets via env vars (GRIDZBOTZ_* — never hardcode keys!)
-#    ✅ wma_confidence_threshold = 0.65 (PR #100 — explicit, matches historic gate)
-#
-#  Strategy: Grid-only with ATR-driven adaptive spacing
-#  Capital: $50-100 conservative start (scale after 48h validation)
-#
-#  Expected Performance (normal vol 0.1-0.5%):
-#    - Fills: 10-30 per day
-#    - Target ROI: +0.5-2.0% daily
-#    - Max drawdown: <5%
-#    - Success rate: >90%
-#    - Exec time: 300-800ms
-#
-#  Secrets Setup (REQUIRED before first run):
-#    1. cp .env.example .env
-#    2. Add your real keys to .env
-#    3. source .env  (or use dotenv in your shell)
-#    4. cargo run --release -- --config config/production/mainnet-sol-usdc-v3.6-enhanced.toml
+#  ✅ V3.6 + PR #99 + PR #100 + PR #101:
+#    ATR Dynamic Spacing, Dual vol gates, Tighter retries
+#    QuickNode fallback, Enhanced regime detection
+#    wma_confidence_threshold = 0.65 (PR #100)
+#    Telegram alerts fully wired (PR #101)
 #
 #  Run: cargo run --release -- --config config/production/mainnet-sol-usdc-v3.6-enhanced.toml
 # ═══════════════════════════════════════════════════════════════════════════
 
-
-# ═══════════════════════════════════════════════════════════════════════════
-#  🤖 BOT CORE
-# ═══════════════════════════════════════════════════════════════════════════
 [bot]
 name            = "GridzBot-Mainnet-V3.6"
-version         = "3.6.0"
+version         = "3.6.1"
 environment     = "production"
-execution_mode  = "live"               # 🔥 LIVE TRADING
+execution_mode  = "live"
 instance_id     = "mainnet-sol-usdc-v3.6"
 
-# ═══════════════════════════════════════════════════════════════════════════
-#  🌐 NETWORK — Chainstack Primary + QuickNode Fallback
-#
-#  🔐 SECURITY: RPC URL loaded from env var GRIDZBOTZ_RPC_URL
-#     The value below is a SAFE PLACEHOLDER — override via .env
-#     resolve_secrets() in src/config/secrets.rs handles the swap
-# ═══════════════════════════════════════════════════════════════════════════
 [network]
-cluster    = "mainnet-beta"            # 🔥 MAINNET
-rpc_url    = "https://api.mainnet-beta.solana.com"  # ← PLACEHOLDER (override via GRIDZBOTZ_RPC_URL)
-commitment = "confirmed"               # confirmed | finalized
+cluster    = "mainnet-beta"
+rpc_url    = "https://api.mainnet-beta.solana.com"
+commitment = "confirmed"
 
-# 🆕 V3.6: QuickNode fallback (auto-failover if Chainstack >150ms or fails)
-# Override via GRIDZBOTZ_FALLBACK_RPC_URL env var
-# fallback_rpc_urls = []
-
-# 🔮 Future: WebSocket subscription for sub-100ms price feed
-# ws_url = "wss://solana-mainnet.core.chainstack.com/YOUR_WS_KEY"
-
-# ═══════════════════════════════════════════════════════════════════════════
-#  🔐 SECURITY
-#
-#  🔐 WALLET PATH loaded from env var GRIDZBOTZ_WALLET_PATH
-#     The value below is a SAFE DEFAULT — override via .env
-# ═══════════════════════════════════════════════════════════════════════════
 [security]
-wallet_path      = "~/.config/solana/id.json"  # ← DEFAULT (override via GRIDZBOTZ_WALLET_PATH)
+wallet_path      = "~/.config/solana/id.json"
 require_password = false
 
-# 🛡️ Daily safety caps (reset at 00:00 UTC)
-#max_daily_trades      = 100            # Max 100 trades/day
-#max_daily_volume_usdc = 500.0          # Max $500 volume/day
-
-# ═══════════════════════════════════════════════════════════════════════════
-#  ⚡ EXECUTION — Live Trading Knobs
-# ═══════════════════════════════════════════════════════════════════════════
 [execution]
-# Hard safety caps — whichever hits first wins
-max_trade_sol          = 0.5           # Max 0.5 SOL per trade
-max_trade_size_usdc    = 50.0          # Max $50 per trade (conservative start)
-
-# Priority fee (100k microlamports = 0.0001 SOL)
+max_trade_sol          = 0.5
+max_trade_size_usdc    = 50.0
 priority_fee_microlamports = 100000
-
-# Slippage (150 bps = 1.5% max)
 max_slippage_bps           = 150
-
-# RPC timeouts
 confirmation_timeout_secs  = 60
+max_retries                = 4
 
-# 🆕 V3.6: Tighter retry logic (from PR #65)
-max_retries                = 4         # ↑ from 3 (extra attempt for stale quotes)
-#retry_delay_ms             = 500       # ↓ from 2000ms (faster fresh quote)
-
-# 🛡️ Jito MEV Protection — DISABLED for initial live run
-# Enable when scaling above $500 capital (tips $0.01-0.10 per tx)
-# jito_enabled     = true
-# jito_tip_lamports = 100000           # 0.0001 SOL tip (~$0.01 at $100/SOL)
-
-# ═══════════════════════════════════════════════════════════════════════════
-#  ⚡ PRIORITY FEES — Dynamic Compute-Unit Priority Fee Estimation (PR #79)
-# ═══════════════════════════════════════════════════════════════════════════
 [priority_fees]
 enable_dynamic         = true
 strategy               = "percentile"
@@ -119,114 +45,72 @@ fallback_microlamports = 100_000
 cache_ttl_secs         = 10
 sample_blocks          = 150
 
-# ═══════════════════════════════════════════════════════════════════════════
-#  💰 PAPER TRADING (Reference Only — Ignored in Live Mode)
-# ═══════════════════════════════════════════════════════════════════════════
 [paper_trading]
 initial_usdc = 200.0
 initial_sol  = 1.0
 test_duration_hours = 1
 
-# ═══════════════════════════════════════════════════════════════════════════
-#  📊 TRADING — Grid + ATR Dynamic Spacing
-# ═══════════════════════════════════════════════════════════════════════════
 [trading]
-
-# ─── Core Grid (Battle-Tested Baseline) ──────────────────────────────────────────
-frid_levels          = 20              # 20 levels (10 buy + 10 sell)
-grid_spacing_percent = 0.18            # 0.18% base spacing (battle-tested)
-min_order_size       = 0.05            # 0.05 SOL min (~$4 at $80/SOL)
-max_position_size    = 50.0            # $50 max position
-
-# ─── Reserves ─────────────────────────────────────────────────────────────────────
+grid_levels          = 20
+grid_spacing_percent = 0.18
+min_order_size       = 0.05
+max_position_size    = 50.0
 min_usdc_reserve = 20.0
 min_sol_reserve  = 0.1
-
-# ─── Dynamic Grid ──────────────────────────────────────────────────────────────────
 enable_dynamic_grid  = true
 volatility_window    = 100
-
 enable_adaptive_spacing = true
-
 reposition_threshold = 0.30
-
-# ─── Auto-Rebalancing ──────────────────────────────────────────────────────────────────
 enable_auto_rebalance    = true
 enable_smart_rebalance   = true
 rebalance_threshold_pct  = 5.0
 rebalance_cooldown_secs  = 120
-
-# ─── Order Management ────────────────────────────────────────────────────────────────
 max_orders_per_side          = 10
 order_refresh_interval_secs  = 120
 enable_market_orders         = false
 enable_fee_optimization      = true
-
-# ─── Order Lifecycle ──────────────────────────────────────────────────────────────────
 enable_order_lifecycle         = true
 order_max_age_minutes          = 5
 order_refresh_interval_minutes = 2
 min_orders_to_maintain         = 8
-
-# ─── Risk Limits ────────────────────────────────────────────────────────────────────
 min_profit_threshold_pct = 0.25
 max_slippage_pct         = 1.5
-
-# ─── Price Bounds (Disabled) ─────────────────────────────────────────────────────────────
 enable_price_bounds = false
 lower_price_bound   = 50.0
 upper_price_bound   = 150.0
-
-# ─── 🔥 Enhanced Regime Gate (V3.6 + PR #80 fix) ────────────────────────────────────────
 enable_regime_gate       = true
 min_volatility_to_trade  = 0.05
 pause_in_very_low_vol    = false
-
-# ─── Advanced Features ─────────────────────────────────────────────────────────────────
 enable_smart_position_sizing = true
 
-# ═══════════════════════════════════════════════════════════════════════════
-#  🎯 STRATEGIES — Grid-Only (Add Multi-Strategy After Validation)
-# ═══════════════════════════════════════════════════════════════════════════
 [strategies]
-active         = ["grid"]              # Grid-only for initial validation
-consensus_mode = "single"              # Single strategy mode
+active         = ["grid"]
+consensus_mode = "single"
 
-# ─── WMA Confidence Gate (PR #99 / PR #100) ───────────────────────────────────────
-# Minimum WMA consensus confidence required to act on a signal.
-# In single-strategy mode (grid-only) this gate is effectively a no-op
-# because GridRebalancer always returns confidence = 1.0.
-# Set to 0.65 now so when multi-strategy is enabled this TOML is already
-# tuned and matches the previously hardcoded gate.
-# Tuning guide:
-#   0.50 — lenient  (more signals, more fills, more risk)
-#   0.65 — balanced (historic default, validated in paper trading)
-#   0.75 — strict   (fewer signals, higher quality, less fills)
-#   0.85 — very strict (use only in strong trending markets)
-wma_confidence_threshold = 0.65        # ✅ Explicit — matches historic gate (PR #100)
+# WMA confidence gate — 0.65 = balanced (historic default, paper-validated)
+# 0.50 lenient | 0.65 balanced | 0.75 strict | 0.85 very strict
+wma_confidence_threshold = 0.65
 
 enable_multi_timeframe       = false
 require_timeframe_alignment  = false
 
-# ─── Strategy 1: Grid Rebalancer ─────────────────────────────────────────────────────
 [strategies.grid]
-enabled                  = true
-weight                   = 1.0
-min_confidence           = 0.5
+enabled       = true
+weight        = 1.0
+min_confidence = 0.5
 
-# ─── Strategy 2-5: Disabled (Enable After Grid-Only Validation) ────────────────────
 [strategies.momentum]
-enabled         = false
-weight          = 0.8
-min_confidence  = 0.6
+enabled = false
+weight  = 0.8
+min_confidence = 0.6
 lookback_period = 20
-threshold       = 0.02
+threshold = 0.02
 
 [strategies.mean_reversion]
-enabled            = false
-weight             = 0.7
-min_confidence     = 0.6
-sma_period         = 20
+enabled = false
+weight  = 0.7
+min_confidence = 0.6
+sma_period = 20
 std_dev_multiplier = 2.0
 strong_buy_threshold  = 5.0
 buy_threshold         = 2.5
@@ -234,25 +118,22 @@ strong_sell_threshold = 5.0
 sell_threshold        = 2.5
 
 [strategies.rsi]
-enabled              = false
-weight               = 0.9
-min_confidence       = 0.7
-period               = 14
+enabled = false
+weight  = 0.9
+min_confidence = 0.7
+period = 14
 oversold_threshold   = 30.0
 overbought_threshold = 70.0
 extreme_oversold     = 20.0
 extreme_overbought   = 80.0
 
 [strategies.momentum_macd]
-enabled                    = false
-weight                     = 0.8
-min_confidence             = 0.65
+enabled = false
+weight  = 0.8
+min_confidence = 0.65
 strong_histogram_threshold = 0.5
-min_warmup_periods         = 26
+min_warmup_periods = 26
 
-# ═══════════════════════════════════════════════════════════════════════════
-#  🚨 RISK MANAGEMENT
-# ═══════════════════════════════════════════════════════════════════════════
 [risk]
 max_position_size_pct         = 30.0
 max_drawdown_pct              = 5.0
@@ -271,55 +152,50 @@ min_profit_multiplier = 2.0
 enable_smart_filter = false
 market_impact_coefficient = 0.01
 
-# ═══════════════════════════════════════════════════════════════════════════
-#  🪐 JUPITER API
-# ═══════════════════════════════════════════════════════════════════════════
-# [jupiter]
-# api_key = ""
-# api_endpoint = "https://api.jup.ag"
-# default_slippage_bps = 50
-# priority_fee_max_lamports = 100000
-# priority_level = "high"
-
-# ═══════════════════════════════════════════════════════════════════════════
-#  📡 PYTH PRICE FEED
-# ═══════════════════════════════════════════════════════════════════════════
 [pyth]
 http_endpoint      = "https://hermes.pyth.network"
 feed_ids           = ["0xef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d"]
 update_interval_ms = 500
 
-# ═══════════════════════════════════════════════════════════════════════════
-#  ⚙️  PERFORMANCE
-# ═══════════════════════════════════════════════════════════════════════════
 [performance]
 cycle_interval_ms  = 100
 startup_delay_ms   = 2000
 request_timeout_ms = 5000
 
-# ═══════════════════════════════════════════════════════════════════════════
-#  📋 LOGGING
-# ═══════════════════════════════════════════════════════════════════════════
 [logging]
 level               = "info"
 file_path           = "logs/mainnet/mainnet-sol-usdc-v3.6.log"
 enable_file_logging = true
 
-# ═══════════════════════════════════════════════════════════════════════════
-#  📈 METRICS
-# ═══════════════════════════════════════════════════════════════════════════
 [metrics]
 enable_metrics = true
 stats_interval = 50
 
-# ═══════════════════════════════════════════════════════════════════════════
-#  🗄️  DATABASE
-# ═══════════════════════════════════════════════════════════════════════════
 [database]
 enabled = false
 
 # ═══════════════════════════════════════════════════════════════════════════
-#  🔔 ALERTS — Telegram integration coming in PR #101
+#  🔔 ALERTS — Telegram Mobile Notifications (PR #101)
+#
+#  Setup (one-time, ~2 minutes):
+#    1. Open Telegram → search @BotFather → /newbot
+#    2. Copy the token it gives you
+#    3. Start a chat with your bot, send /start
+#    4. Visit: https://api.telegram.org/botYOUR_TOKEN/getUpdates
+#       Find "chat":{"id":XXXXXXXXX} — that is your chat_id
+#    5. Add to your .env:
+#         export GRIDZBOTZ_TELEGRAM_TOKEN=YOUR_TOKEN
+#         export GRIDZBOTZ_TELEGRAM_CHAT_ID=YOUR_CHAT_ID
+#
+#  You will receive:
+#    🚀 Bot started (pair, capital, spacing, WMA gate, mode)
+#    💰 Every SELL fill (price, size, P&L, fill #)
+#    🚨 Circuit breaker tripped (reason, drawdown, cooldown)
+#    ✅ Circuit breaker reset (trading resumed)
+#    📊 Heartbeat every 50 cycles ~5s (NAV, P&L, ROI, win rate)
+#    🏁 Shutdown summary (uptime, fills, P&L, ROI, win rate)
+#
+#  If env vars are absent — silent no-op, zero impact on trading.
 # ═══════════════════════════════════════════════════════════════════════════
 [alerts]
-enabled = false                        # PR #101: Telegram full integration coming
+enabled = true                         # ✅ PR #101: Telegram wired — set env vars to activate
