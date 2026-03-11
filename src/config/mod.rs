@@ -1,5 +1,12 @@
 //! ═══════════════════════════════════════════════════════════════════════════
-//! 🎛️  UNIFIED CONFIGURATION SYSTEM V5.5 - GRIDZBOTZ
+//! 🎛️  UNIFIED CONFIGURATION SYSTEM V5.6 - GRIDZBOTZ
+//!
+//! V5.6 ADDITIONS (PR #99 — Commit 1):
+//! ✅ StrategiesConfig: wma_confidence_threshold added
+//!    - Config-driven WMA confidence gate (was hardcoded 0.65 in consensus_wma.rs)
+//!    - Default: 0.50 — permissive, matches strategies.grid.min_confidence
+//!    - Validation: must be in [0.0, 1.0]
+//!    - Zero breaking changes — all 46 TOMLs parse unchanged (serde default)
 //!
 //! V5.5 ADDITIONS (PR #94 — Commit 5a):
 //! ✅ TradingConfig: signal_size_multiplier added
@@ -39,6 +46,7 @@
 //! V5.0 ADDITIONS (Stage 1 — Feb 23, 2026):
 //! ✅ execution_mode, instance_id, ExecutionConfig, BotConfig helpers
 //!
+//! March 11, 2026 - V5.6: wma_confidence_threshold added (PR #99 Commit 1) 🎯
 //! March 11, 2026 - V5.5: signal_size_multiplier added (PR #94 Commit 5a) 📐
 //! March 10, 2026 - V5.4: FeeFilterConfig added (PR #94 Commit 3) 🔥
 //! March 10, 2026 - V5.3: optimizer_interval_cycles added (PR #94 OPT-1) ⚙️
@@ -785,6 +793,29 @@ pub struct StrategiesConfig {
     pub enable_multi_timeframe: bool,
     #[serde(default)]
     pub require_timeframe_alignment: bool,
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // PR #99 Commit 1: WMA Confidence Gate (config-driven)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// Minimum confidence a strategy's signal must carry to participate
+    /// in the WMA weighted vote.
+    ///
+    /// Only strategies whose `Signal::confidence()` >= this value cast a vote.
+    /// Strategies below the gate contribute a Hold (weight zeroed for that cycle).
+    ///
+    /// Tuning guide:
+    ///   0.50 -> permissive  (single-strategy mode, paper/dev)
+    ///   0.65 -> balanced    (multi-strategy production default)
+    ///   0.75 -> conservative (high-conviction signals only)
+    ///
+    /// Default: 0.50 — matches `strategies.grid.min_confidence`.
+    /// All 46 existing TOMLs without this key get 0.50 (serde default).
+    /// Zero behaviour change for configs already passing 0.65 signals.
+    ///
+    /// Validation: must be in [0.0, 1.0].
+    #[serde(default = "default_wma_confidence_threshold")]
+    pub wma_confidence_threshold: f64,
 }
 
 impl StrategiesConfig {
@@ -806,6 +837,13 @@ impl StrategiesConfig {
         if total_weight == 0.0 {
             bail!("No strategies are enabled");
         }
+        // PR #99 Commit 1: validate WMA confidence gate range
+        if !(0.0_f64..=1.0_f64).contains(&self.wma_confidence_threshold) {
+            bail!(
+                "strategies.wma_confidence_threshold must be in [0.0, 1.0] (got {:.3})",
+                self.wma_confidence_threshold
+            );
+        }
         Ok(())
     }
 }
@@ -822,6 +860,8 @@ impl Default for StrategiesConfig {
             momentum_macd: MomentumMACDStrategyConfig::default(),
             enable_multi_timeframe: false,
             require_timeframe_alignment: false,
+            // PR #99 Commit 1: WMA confidence gate — permissive default
+            wma_confidence_threshold: default_wma_confidence_threshold(),
         }
     }
 }
@@ -1267,6 +1307,9 @@ fn default_fee_filter_window_secs()   -> u64    { 30 }
 /// Consensus signal size multiplier — 1.0 = flat (safe default, zero behaviour change).
 /// Active only when enable_smart_position_sizing = true.
 fn default_signal_size_multiplier()   -> f64    { 1.0 }
+/// PR #99 Commit 1: WMA confidence gate default — 0.50 (permissive, matches grid.min_confidence).
+/// Production multi-strategy configs should set wma_confidence_threshold = 0.65 in their TOML.
+fn default_wma_confidence_threshold() -> f64    { 0.50 }
 
 // ═══════════════════════════════════════════════════════════════════════════
 // MAIN CONFIG IMPLEMENTATION
@@ -1342,7 +1385,7 @@ impl Config {
     pub fn display_summary(&self) {
         let border = "═".repeat(78);
         println!("\n{}", border);
-        println!("  🤖 GRIDZBOTZ V5.5 - CONFIGURATION");
+        println!("  🤖 GRIDZBOTZ V5.6 - CONFIGURATION");
         println!("{}\n", border);
 
         println!("📋 BOT: {} v{} [{}]", self.bot.name, self.bot.version, self.bot.environment);
@@ -1410,6 +1453,7 @@ impl Config {
         println!("\n🎯 STRATEGIES:");
         println!("   Active:           {}", self.strategies.active.join(", "));
         println!("   Mode:             {}", self.strategies.consensus_mode);
+        println!("   WMA Conf Gate:    {:.2}", self.strategies.wma_confidence_threshold);
         if self.strategies.rsi.enabled {
             println!("   RSI:              period={} oversold={:.0} overbought={:.0} extreme={:.0}/{:.0}",
                 self.strategies.rsi.period, self.strategies.rsi.oversold_threshold,
@@ -1469,7 +1513,7 @@ impl ConfigBuilder {
             config: Config {
                 bot: BotConfig {
                     name: "GridzBot-Builder".to_string(),
-                    version: "5.5.0".to_string(),
+                    version: "5.6.0".to_string(),
                     environment: "testing".to_string(),
                     execution_mode: "paper".to_string(),
                     instance_id: None,
@@ -1546,11 +1590,18 @@ impl ConfigBuilder {
         self
     }
     /// Enable consensus-signal-driven position sizing with given multiplier.
-    /// multiplier=1.0 → flat (no effect). multiplier=2.0 → up to 2× at peak conviction.
+    /// multiplier=1.0 -> flat (no effect). multiplier=2.0 -> up to 2x at peak conviction.
     /// Validation enforces [0.5, 3.0] range.
     pub fn signal_size_multiplier(mut self, multiplier: f64) -> Self {
         self.config.trading.enable_smart_position_sizing = true;
         self.config.trading.signal_size_multiplier = multiplier;
+        self
+    }
+    /// PR #99 Commit 1: Set WMA confidence gate for multi-strategy voting.
+    /// threshold=0.50 -> permissive (paper/dev). threshold=0.65 -> production balanced.
+    /// threshold=0.75 -> conservative (high-conviction only).
+    pub fn wma_confidence_threshold(mut self, threshold: f64) -> Self {
+        self.config.strategies.wma_confidence_threshold = threshold;
         self
     }
 
@@ -1566,7 +1617,7 @@ impl Default for ConfigBuilder {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// TESTS — V5.5 signal_size_multiplier + V5.4 FeeFilterConfig
+// TESTS — V5.6 wma_confidence_threshold + V5.5 signal_size_multiplier
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[cfg(test)]
@@ -1704,7 +1755,6 @@ min_sol_reserve = 1.0
 
     // ── V5.5 signal_size_multiplier tests ──────────────────────────────────
 
-    /// Default value is 1.0 — flat, zero sizing effect.
     #[test]
     fn test_signal_size_multiplier_default() {
         let cfg = TradingConfig::default();
@@ -1714,7 +1764,6 @@ min_sol_reserve = 1.0
         );
     }
 
-    /// Absent TOML field → defaults to 1.0 (all 46 existing TOMLs unaffected).
     #[test]
     fn test_signal_size_multiplier_absent_toml_defaults() {
         let toml_str = r#"
@@ -1732,12 +1781,11 @@ min_sol_reserve = 1.0
         );
     }
 
-    /// Out-of-range value rejected when smart sizing is enabled.
     #[test]
     fn test_signal_size_multiplier_out_of_range_rejected() {
         let mut cfg = TradingConfig::default();
         cfg.enable_smart_position_sizing = true;
-        cfg.signal_size_multiplier = 5.0;   // above 3.0 ceiling
+        cfg.signal_size_multiplier = 5.0;
         let err = cfg.validate().unwrap_err();
         assert!(
             err.to_string().contains("signal_size_multiplier"),
@@ -1745,16 +1793,14 @@ min_sol_reserve = 1.0
         );
     }
 
-    /// Out-of-range value is IGNORED when smart sizing is disabled (no validation).
     #[test]
     fn test_signal_size_multiplier_ignored_when_sizing_disabled() {
         let mut cfg = TradingConfig::default();
         cfg.enable_smart_position_sizing = false;
-        cfg.signal_size_multiplier = 99.0;  // would fail if sizing were on
+        cfg.signal_size_multiplier = 99.0;
         assert!(cfg.validate().is_ok(), "out-of-range multiplier must be ignored when flag=false");
     }
 
-    /// Builder setter enables smart sizing and sets multiplier end-to-end.
     #[test]
     fn test_builder_signal_size_multiplier_setter() {
         let config = ConfigBuilder::new()
@@ -1765,6 +1811,74 @@ min_sol_reserve = 1.0
         assert!(
             (config.trading.signal_size_multiplier - 1.5).abs() < 1e-9,
             "multiplier must be 1.5"
+        );
+    }
+
+    // ── PR #99 Commit 1: wma_confidence_threshold tests ────────────────────
+
+    /// Default value is 0.50 — permissive, matches grid.min_confidence.
+    #[test]
+    fn test_wma_confidence_threshold_default() {
+        let cfg = StrategiesConfig::default();
+        assert!(
+            (cfg.wma_confidence_threshold - 0.50).abs() < 1e-9,
+            "default must be 0.50, got {}", cfg.wma_confidence_threshold
+        );
+    }
+
+    /// Value above 1.0 must be rejected.
+    #[test]
+    fn test_wma_confidence_threshold_above_one_rejected() {
+        let mut cfg = StrategiesConfig::default();
+        cfg.wma_confidence_threshold = 1.1;
+        let err = cfg.validate().unwrap_err();
+        assert!(
+            err.to_string().contains("wma_confidence_threshold"),
+            "error must name the field; got: {}", err
+        );
+    }
+
+    /// Negative value must be rejected.
+    #[test]
+    fn test_wma_confidence_threshold_negative_rejected() {
+        let mut cfg = StrategiesConfig::default();
+        cfg.wma_confidence_threshold = -0.1;
+        assert!(cfg.validate().is_err());
+    }
+
+    /// Boundary values 0.0 and 1.0 must be accepted.
+    #[test]
+    fn test_wma_confidence_threshold_boundary_values_accepted() {
+        let mut cfg = StrategiesConfig::default();
+        cfg.wma_confidence_threshold = 0.0;
+        assert!(cfg.validate().is_ok(), "0.0 must be valid");
+        cfg.wma_confidence_threshold = 1.0;
+        assert!(cfg.validate().is_ok(), "1.0 must be valid");
+    }
+
+    /// ConfigBuilder setter wires through to strategies config.
+    #[test]
+    fn test_builder_wma_confidence_threshold_setter() {
+        let config = ConfigBuilder::new()
+            .wma_confidence_threshold(0.65)
+            .build()
+            .expect("build");
+        assert!(
+            (config.strategies.wma_confidence_threshold - 0.65).abs() < 1e-9,
+            "threshold must be 0.65"
+        );
+    }
+
+    /// Serde roundtrip — field survives serialise → deserialise.
+    #[test]
+    fn test_wma_confidence_threshold_serde_roundtrip() {
+        let mut cfg = StrategiesConfig::default();
+        cfg.wma_confidence_threshold = 0.72;
+        let toml_str = toml::to_string(&cfg).expect("serialise");
+        let restored: StrategiesConfig = toml::from_str(&toml_str).expect("deserialise");
+        assert!(
+            (restored.wma_confidence_threshold - 0.72).abs() < 1e-9,
+            "roundtrip must preserve 0.72"
         );
     }
 }
