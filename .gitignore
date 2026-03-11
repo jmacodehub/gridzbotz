@@ -79,3 +79,15 @@ src/bin/
 test_*.sh
 quick_*.sh
 temp_*.sh
+
+# Runtime output — never commit contents, only folder structure
+logs/*
+!logs/.gitkeep
+fills/*
+!fills/.gitkeep
+results/*
+!results/.gitkeep
+metrics/*
+!metrics/.gitkeep
+analysis/*
+!analysis/.gitkeep
