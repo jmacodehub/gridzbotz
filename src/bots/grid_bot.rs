@@ -1,6 +1,12 @@
 //! ═════════════════════════════════════════════════════════════════════════
 //! GRID BOT V6.0 - ELITE AUTONOMOUS TRADING ORCHESTRATOR
 //!
+//! PR #99 Commit 3b: wma_confidence_threshold fully wired end-to-end.
+//!    GridBot::new(): build_with_confidence(ctx, config.strategies
+//!      .wma_confidence_threshold) replaces build(ctx).
+//!    TOML key propagates: config → StrategyRegistryBuilder
+//!      → StrategyManager → WMAConsensusEngine — no hardcoded gate.
+//!
 //! PR #98 Commit 2b-ii: WMA voter P&L attribution wired.
 //!    process_price_update(): snapshot total_realized_pnl once before
 //!    the fill loop to avoid repeated async calls.
@@ -61,6 +67,7 @@
 //! [ok] intent_conflicts: u64 counter - surfaced in BotStats via stats()
 //! [ok] Solo path: intent_registry = None - zero behavior change, zero cost
 //!
+//! March 11, 2026 - V6.0: wma_confidence_threshold fully wired (PR #99 Commit 3b) 🎯
 //! March 11, 2026 - V6.0: WMA voter P&L attribution wired (PR #98 Commit 2b-ii) 🤝
 //! March 11, 2026 - V6.0: fix FeeFilterStats field names (PR #94 hotfix) 🔧
 //! March 11, 2026 - V6.0: GridBotStats observability (PR #94 Commit 6) 📊
@@ -169,6 +176,9 @@ impl GridBot {
               config.trading.signal_size_multiplier);
         info!("[BOT-V6.0] FeeFilterStats:  WIRED into GridBotStats (PR #94 Commit 6)");
         info!("[BOT-V6.0] WMAAttribution:  WIRED (PR #98 Commit 2b-ii) - SELL fills → WMA P&L");
+        // PR #99 Commit 3b: conf gate is now fully TOML-driven.
+        info!("[BOT-V6.0] WMAConfGate:     {:.2} (TOML-driven, PR #99)",
+              config.strategies.wma_confidence_threshold);
         info!("[BOT-V6.0] OptimizerCadence: {} cycles (TOML-driven, PR #94 OPT-1)",
               config.trading.optimizer_interval_cycles);
 
@@ -204,6 +214,11 @@ impl GridBot {
         ).context("Failed to create GridRebalancer for StrategyManager")?;
 
         let analytics_ctx = AnalyticsContext::default();
+
+        // PR #99 Commit 3b: build_with_confidence() replaces build().
+        // Passes config.strategies.wma_confidence_threshold all the way into
+        // WMAConsensusEngine::with_min_confidence() so the confidence gate is
+        // fully TOML-driven. Validated in [0.0, 1.0] by StrategiesConfig::validate().
         let (_manager, _weights) = StrategyRegistryBuilder::new()
             .add(
                 grid_rebalancer_for_manager,
@@ -245,12 +260,16 @@ impl GridBot {
                 }),
                 config.strategies.momentum_macd.weight,
             )
-            .build(analytics_ctx);
+            .build_with_confidence(
+                analytics_ctx,
+                config.strategies.wma_confidence_threshold,
+            );
 
         let manager = _manager;
 
-        info!("[BOT-V6.0] {} strategies loaded via StrategyRegistryBuilder",
-              manager.strategies.len());
+        info!("[BOT-V6.0] {} strategies loaded via StrategyRegistryBuilder (conf_gate={:.2})",
+              manager.strategies.len(),
+              manager.wma_engine.min_confidence());
 
         let grid_state         = GridStateTracker::new();
         let enhanced_metrics   = EnhancedMetrics::new();
@@ -682,6 +701,8 @@ impl GridBot {
         println!("  Intent Conflicts:  {}", stats.intent_conflicts);
         println!("  Optimizer Cadence: {} cycles",
                  self.config.trading.optimizer_interval_cycles);
+        // PR #99: show active WMA conf gate in status report
+        println!("  WMA Conf Gate:     {:.2}", self.manager.wma_engine.min_confidence());
         if self.config.trading.enable_smart_position_sizing {
             let live_mult = 1.0
                 + self.last_signal_strength
@@ -861,7 +882,7 @@ pub struct GridBotStats {
     pub optimization_count:      u64,
     pub total_fills_tracked:     u64,
     pub intent_conflicts:        u64,
-    // ── PR #94 Commit 6: Items 1+2 observability ────────────────────────────────────
+    // ── PR #94 Commit 6: Items 1+2 observability ───────────────────────────────────────────
     pub last_signal_strength:       f64,
     pub orders_filtered_session:    u64,
     pub fee_filter_total_checked:   u64,
