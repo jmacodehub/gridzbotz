@@ -52,6 +52,7 @@
 //! [ok] intent_conflicts: u64 counter - surfaced in BotStats via stats()
 //! [ok] Solo path: intent_registry = None - zero behavior change, zero cost
 //!
+//! March 11, 2026 - V6.0: fix FeeFilterStats field names (PR #94 hotfix) 🔧
 //! March 11, 2026 - V6.0: GridBotStats observability (PR #94 Commit 6) 📊
 //! March 11, 2026 - V6.0: Consensus sizing wired (PR #94 Commit 5b) 📊
 //! March 11, 2026 - V5.9: signal_size_multiplier config (PR #94 Commit 5a) 📐
@@ -619,9 +620,10 @@ impl GridBot {
 
         // PR #94 Commit 6: pull fee filter counters from GridRebalancer.
         // fee_filter_stats() is sync — safe to call from async context.
+        // FIX (hotfix): FeeFilterStats fields are total_checks/trades_passed/trades_filtered.
         let (fee_checked, fee_passed, fee_blocked) = self.grid_rebalancer
             .fee_filter_stats()
-            .map(|s| (s.total_checked, s.total_passed, s.total_blocked))
+            .map(|s| (s.total_checks, s.trades_passed, s.trades_filtered))
             .unwrap_or((0, 0, 0));
 
         GridBotStats {
@@ -687,15 +689,16 @@ impl GridBot {
         println!("  Active Levels:     {}", grid_levels);
         println!("  Filled Buys:       {}", filled_buys);
         println!("  Realized P&L:      ${:.2}", total_pnl);
-        // PR #94 Commit 4: Surface SmartFeeFilter stats in status report
+        // PR #94 Commit 4: Surface SmartFeeFilter stats in status report.
+        // FIX (hotfix): use correct FeeFilterStats field names.
         if let Some(ffs) = self.grid_rebalancer.fee_filter_stats() {
             println!("\n[FEE FILTER]");
-            println!("  Total Checked:     {}", ffs.total_checked);
-            println!("  Passed:            {}", ffs.total_passed);
-            println!("  Blocked:           {}", ffs.total_blocked);
+            println!("  Total Checked:     {}", ffs.total_checks);
+            println!("  Passed:            {}", ffs.trades_passed);
+            println!("  Blocked:           {}", ffs.trades_filtered);
             println!("  Pass Rate:         {:.1}%",
-                     if ffs.total_checked > 0 {
-                         ffs.total_passed as f64 / ffs.total_checked as f64 * 100.0
+                     if ffs.total_checks > 0 {
+                         ffs.trades_passed as f64 / ffs.total_checks as f64 * 100.0
                      } else { 100.0 });
         }
         println!("\n[PORTFOLIO]");
