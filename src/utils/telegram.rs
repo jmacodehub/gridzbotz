@@ -13,19 +13,19 @@
 //! calls are silent no-ops. Zero config required for paper trading.
 //!
 //! Message types:
-//!   send_bot_started()           — 🚀 startup confirmation
-//!   send_fill()                  — 💰 every fill event
+//!   send_bot_started()             — 🚀 startup confirmation
+//!   send_fill()                    — 💰 every SELL fill
 //!   send_circuit_breaker_tripped() — 🚨 CB trip (URGENT)
-//!   send_circuit_breaker_reset() — ✅ CB cooldown elapsed
-//!   send_shutdown()              — 🏁 graceful shutdown summary
-//!   send_heartbeat()             — 📊 periodic P&L heartbeat
-//!   send_alert()                 — 🚨 generic alert (legacy)
-//!   send_test_complete()         — 🎉 paper test done (legacy)
+//!   send_circuit_breaker_reset()   — ✅ CB cooldown elapsed
+//!   send_shutdown()                — 🏁 graceful shutdown summary
+//!   send_heartbeat()               — 📊 periodic P&L heartbeat
+//!   send_alert()                   — 🚨 generic alert (legacy)
+//!   send_test_complete()           — 🎉 paper test done (legacy)
 //! ═══════════════════════════════════════════════════════════════════════
 
 use reqwest::Client;
 use serde_json::json;
-use tracing::{debug, warn};
+use log::{debug, warn};
 
 // ═══════════════════════════════════════════════════════════════════════
 // STRUCT
@@ -67,10 +67,10 @@ impl TelegramBot {
         let chat_id = std::env::var("GRIDZBOTZ_TELEGRAM_CHAT_ID").ok();
         let enabled = token.is_some() && chat_id.is_some();
         if enabled {
-            tracing::info!("[TELEGRAM] Enabled — alerts will fire to chat {}",
+            log::info!("[TELEGRAM] Enabled — alerts will fire to chat {}",
                 chat_id.as_deref().unwrap_or("?"));
         } else {
-            tracing::info!("[TELEGRAM] Disabled — set GRIDZBOTZ_TELEGRAM_TOKEN + \
+            log::info!("[TELEGRAM] Disabled — set GRIDZBOTZ_TELEGRAM_TOKEN + \
                 GRIDZBOTZ_TELEGRAM_CHAT_ID to enable mobile alerts");
         }
         Self {
@@ -112,11 +112,11 @@ impl TelegramBot {
         self.fire(&msg).await;
     }
 
-    /// 💰 Fill event — sent on every completed order fill.
+    /// 💰 Fill event — sent on every completed SELL fill (realized P&L).
     pub async fn send_fill(
         &self,
         instance_id: &str,
-        side:        &str,   // "BUY" | "SELL"
+        side:        &str,
         price:       f64,
         size_sol:    f64,
         pnl:         f64,
@@ -143,10 +143,10 @@ impl TelegramBot {
     /// 🚨 Circuit breaker tripped — URGENT alert.
     pub async fn send_circuit_breaker_tripped(
         &self,
-        instance_id:  &str,
-        reason:       &str,
-        drawdown_pct: f64,
-        pnl:          f64,
+        instance_id:   &str,
+        reason:        &str,
+        drawdown_pct:  f64,
+        pnl:           f64,
         cooldown_secs: u64,
     ) {
         if !self.enabled { return; }
@@ -165,10 +165,7 @@ impl TelegramBot {
     }
 
     /// ✅ Circuit breaker reset — trading resumed.
-    pub async fn send_circuit_breaker_reset(
-        &self,
-        instance_id: &str,
-    ) {
+    pub async fn send_circuit_breaker_reset(&self, instance_id: &str) {
         if !self.enabled { return; }
         let msg = format!(
             "✅ *Circuit Breaker Reset*\n\
@@ -196,12 +193,12 @@ impl TelegramBot {
         let msg = format!(
             "🏁 *Bot Shutdown* — `{instance_id}`\n\
              \n\
-             Uptime:  `{uptime_min}m`\n\
-             Fills:   `{total_fills}`\n\
-             Orders:  `{total_orders}`\n\
-             P&L:     {pnl_emoji} *${pnl:.2}*\n\
-             ROI:     `{roi_pct:.2}%`\n\
-             Win Rate:`{win_rate:.1}%`"
+             Uptime:   `{uptime_min}m`\n\
+             Fills:    `{total_fills}`\n\
+             Orders:   `{total_orders}`\n\
+             P&L:      {pnl_emoji} *${pnl:.2}*\n\
+             ROI:      `{roi_pct:.2}%`\n\
+             Win Rate: `{win_rate:.1}%`"
         );
         self.fire(&msg).await;
     }
@@ -209,17 +206,17 @@ impl TelegramBot {
     /// 📊 Periodic heartbeat — NAV + P&L snapshot every N cycles.
     pub async fn send_heartbeat(
         &self,
-        instance_id:  &str,
-        price:        f64,
-        nav:          f64,
-        pnl:          f64,
-        roi_pct:      f64,
-        fills:        u64,
-        win_rate:     f64,
-        cb_ok:        bool,
+        instance_id: &str,
+        price:       f64,
+        nav:         f64,
+        pnl:         f64,
+        roi_pct:     f64,
+        fills:       u64,
+        win_rate:    f64,
+        cb_ok:       bool,
     ) {
         if !self.enabled { return; }
-        let status = if cb_ok { "✅ OK" } else { "🚨 TRIPPED" };
+        let status  = if cb_ok { "✅ OK" } else { "🚨 TRIPPED" };
         let pnl_str = if pnl >= 0.0 {
             format!("+${pnl:.2}")
         } else {
@@ -228,13 +225,13 @@ impl TelegramBot {
         let msg = format!(
             "📊 *Heartbeat* — `{instance_id}`\n\
              \n\
-             SOL:     `${price:.4}`\n\
-             NAV:     `${nav:.2}`\n\
-             P&L:     *{pnl_str}*\n\
-             ROI:     `{roi_pct:.2}%`\n\
-             Fills:   `{fills}`\n\
-             Win Rate:`{win_rate:.1}%`\n\
-             CB:      {status}"
+             SOL:      `${price:.4}`\n\
+             NAV:      `${nav:.2}`\n\
+             P&L:      *{pnl_str}*\n\
+             ROI:      `{roi_pct:.2}%`\n\
+             Fills:    `{fills}`\n\
+             Win Rate: `{win_rate:.1}%`\n\
+             CB:       {status}"
         );
         self.fire(&msg).await;
     }
@@ -328,8 +325,6 @@ mod tests {
         assert!(!bot.is_enabled());
     }
 
-    // All send_* on a disabled bot must be instant no-ops (no network hit).
-    // We just verify they don't panic — no HTTP call fires in tests.
     #[tokio::test]
     async fn test_send_bot_started_disabled_noop() {
         let bot = disabled_bot();
