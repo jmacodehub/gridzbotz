@@ -26,6 +26,13 @@
 //!    - Each strategy votes with its weight
 //!    - Final decision = highest weighted sum
 //! 
+//! ## Voter Attribution (PR #98 Commit 2a):
+//!    - `last_voters` tracks strategy names that cleared the confidence gate
+//!      on the most recent `resolve()` call.
+//!    - Populated fresh every tick — stale voters never persist.
+//!    - Read via `get_last_voters()` by StrategyManager (Commit 2b) to feed
+//!      realized fill P&L back into per-strategy `record_trade()` trackers.
+//! 
 //! ## Example:
 //! ```text
 //! Grid:     BUY  (weight: 1.0, confidence: 0.5)  → Vote: 0.50
@@ -33,6 +40,7 @@
 //! RSI:      HOLD (weight: 0.9, confidence: 0.4)  → Filtered (too low)
 //! 
 //! Total BUY: 1.06 > 0  →  Final: BUY (confidence: 0.71)
+//! last_voters: ["Grid", "Momentum"]   ← only the two that cleared gate
 //! ```
 
 use super::Signal;
@@ -155,11 +163,21 @@ impl From<&Signal> for SignalType {
 // WEIGHTED MAJORITY CONSENSUS ENGINE
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Dynamic Weighted Majority Algorithm consensus engine
+/// Dynamic Weighted Majority Algorithm consensus engine.
+///
+/// PR #98 Commit 2a: adds `last_voters` — the names of strategies that
+/// cleared the confidence gate on the most recent `resolve()` call.
+/// Exposed via `get_last_voters()` so StrategyManager (Commit 2b) can
+/// route realized fill P&L back to the right per-strategy trackers.
 pub struct WMAConsensusEngine {
     performances: HashMap<String, StrategyPerformance>,
     cycles: usize,
     min_confidence: f64,
+    /// PR #98 Commit 2a: strategies that cleared the confidence threshold
+    /// on the last resolve() call. Cleared fresh every tick — never stale.
+    /// Both BUY and SELL voters are tracked: they all contributed to the
+    /// consensus sizing decision that drove the fill.
+    last_voters: Vec<String>,
 }
 
 impl WMAConsensusEngine {
@@ -168,6 +186,7 @@ impl WMAConsensusEngine {
             performances: HashMap::new(),
             cycles: 0,
             min_confidence: MIN_CONFIDENCE,
+            last_voters: Vec::new(),
         }
     }
     
@@ -176,6 +195,7 @@ impl WMAConsensusEngine {
             performances: HashMap::new(),
             cycles: 0,
             min_confidence,
+            last_voters: Vec::new(),
         }
     }
     
@@ -191,6 +211,18 @@ impl WMAConsensusEngine {
         if let Some(perf) = self.performances.get_mut(strategy_name) {
             perf.record_trade(profit);
         }
+    }
+
+    /// Return the strategy names that cleared the confidence gate on the
+    /// most recent `resolve()` call.
+    ///
+    /// Used by `StrategyManager::get_last_wma_voters()` (Commit 2b) to
+    /// attribute realized fill P&L back to the participating strategies.
+    ///
+    /// Empty slice = no strategy cleared the threshold (all signals were
+    /// filtered), meaning the consensus was Hold and no fill should occur.
+    pub fn get_last_voters(&self) -> &[String] {
+        &self.last_voters
     }
     
     fn calculate_correlation(&self, strategy1: &str, strategy2: &str) -> f64 {
@@ -216,9 +248,17 @@ impl WMAConsensusEngine {
     }
     
     /// Resolve consensus from multiple strategy signals.
-    /// Uses Signal::confidence() for weighted voting.
+    ///
+    /// PR #98 Commit 2a: clears `last_voters` at the top of every call so
+    /// it always reflects this tick's participants — never carries stale
+    /// names from a previous tick. Strategy names are pushed into
+    /// `last_voters` at the same confidence gate that admits them to voting,
+    /// tracking both BUY and SELL contributors.
     pub fn resolve(&mut self, strategy_signals: Vec<(String, Signal)>, current_price: f64) -> Signal {
         self.cycles += 1;
+
+        // PR #98 Commit 2a: fresh slate every tick — zero stale attribution risk.
+        self.last_voters.clear();
         
         if self.cycles % UPDATE_FREQUENCY == 0 {
             self.update_weights();
@@ -229,7 +269,6 @@ impl WMAConsensusEngine {
         let mut filtered_count = 0;
         
         for (strategy_name, signal) in &strategy_signals {
-            // Use Signal::confidence() — added to mod.rs in Phase 1
             let confidence = signal.confidence();
             
             if let Some(perf) = self.performances.get_mut(strategy_name) {
@@ -241,7 +280,10 @@ impl WMAConsensusEngine {
                        strategy_name, confidence, self.min_confidence);
                 continue;
             }
-            
+
+            // PR #98 Commit 2a: track this strategy as a voter for the
+            // current tick — regardless of BUY/SELL direction.
+            self.last_voters.push(strategy_name.clone());
             filtered_count += 1;
             
             let weight = self.performances
@@ -277,8 +319,8 @@ impl WMAConsensusEngine {
         };
         
         if buy_weight > sell_weight && buy_weight > 0.0 {
-            info!("[WMA] CONSENSUS: BUY (buy: {:.3} > sell: {:.3}, conf: {:.2})",
-                  buy_weight, sell_weight, final_confidence);
+            info!("[WMA] CONSENSUS: BUY (buy: {:.3} > sell: {:.3}, conf: {:.2}, voters: {:?})",
+                  buy_weight, sell_weight, final_confidence, self.last_voters);
             Signal::Buy {
                 price: current_price,
                 size: 0.5,
@@ -290,8 +332,8 @@ impl WMAConsensusEngine {
                 level_id: None,
             }
         } else if sell_weight > buy_weight && sell_weight > 0.0 {
-            info!("[WMA] CONSENSUS: SELL (sell: {:.3} > buy: {:.3}, conf: {:.2})",
-                  sell_weight, buy_weight, final_confidence);
+            info!("[WMA] CONSENSUS: SELL (sell: {:.3} > buy: {:.3}, conf: {:.2}, voters: {:?})",
+                  sell_weight, buy_weight, final_confidence, self.last_voters);
             Signal::Sell {
                 price: current_price,
                 size: 0.5,
@@ -353,6 +395,7 @@ mod tests {
     fn test_wma_creation() {
         let engine = WMAConsensusEngine::new();
         assert_eq!(engine.min_confidence, MIN_CONFIDENCE);
+        assert!(engine.last_voters.is_empty(), "last_voters must start empty");
     }
     
     #[test]
@@ -431,5 +474,86 @@ mod tests {
         let perf = engine.get_performance("Test").unwrap();
         assert!(perf.win_rate > 0.9);
         assert!(perf.roi > 0.0);
+    }
+
+    // ───────────────────────────────────────────────────────────────────────
+    // PR #98 Commit 2a: last_voters tracking tests
+    // ───────────────────────────────────────────────────────────────────────
+
+    /// Strategies that clear the confidence gate appear in last_voters.
+    #[test]
+    fn test_last_voters_populated_after_resolve() {
+        let mut engine = WMAConsensusEngine::new();
+        engine.register_strategy("Grid".to_string());
+        engine.register_strategy("Momentum".to_string());
+
+        let signals = vec![
+            (
+                "Grid".to_string(),
+                Signal::Buy { price: 100.0, size: 1.0, confidence: 0.75,
+                              reason: "grid".into(), level_id: None },
+            ),
+            (
+                "Momentum".to_string(),
+                Signal::Buy { price: 100.0, size: 1.0, confidence: 0.80,
+                              reason: "momentum".into(), level_id: None },
+            ),
+        ];
+
+        let _ = engine.resolve(signals, 100.0);
+        let voters = engine.get_last_voters();
+        assert_eq!(voters.len(), 2);
+        assert!(voters.contains(&"Grid".to_string()));
+        assert!(voters.contains(&"Momentum".to_string()));
+    }
+
+    /// Strategies below the confidence threshold must NOT appear in last_voters.
+    #[test]
+    fn test_last_voters_excludes_filtered_strategies() {
+        let mut engine = WMAConsensusEngine::with_min_confidence(0.70);
+        engine.register_strategy("Strong".to_string());
+        engine.register_strategy("Weak".to_string());
+
+        let signals = vec![
+            (
+                "Strong".to_string(),
+                Signal::Buy { price: 100.0, size: 1.0, confidence: 0.85,
+                              reason: "strong".into(), level_id: None },
+            ),
+            (
+                "Weak".to_string(),
+                Signal::Sell { price: 100.0, size: 1.0, confidence: 0.40,
+                               reason: "weak".into(), level_id: None },
+            ),
+        ];
+
+        let _ = engine.resolve(signals, 100.0);
+        let voters = engine.get_last_voters();
+        assert_eq!(voters.len(), 1);
+        assert!(voters.contains(&"Strong".to_string()));
+        assert!(!voters.contains(&"Weak".to_string()));
+    }
+
+    /// last_voters is cleared between ticks — never carries stale names.
+    #[test]
+    fn test_last_voters_cleared_between_ticks() {
+        let mut engine = WMAConsensusEngine::new();
+        engine.register_strategy("Grid".to_string());
+
+        // Tick 1 — Grid votes with high confidence
+        let signals_t1 = vec![(
+            "Grid".to_string(),
+            Signal::Buy { price: 100.0, size: 1.0, confidence: 0.80,
+                          reason: "t1".into(), level_id: None },
+        )];
+        let _ = engine.resolve(signals_t1, 100.0);
+        assert_eq!(engine.get_last_voters().len(), 1);
+
+        // Tick 2 — empty signal list (price unchanged, no strategy fires)
+        let _ = engine.resolve(vec![], 100.0);
+        assert!(
+            engine.get_last_voters().is_empty(),
+            "last_voters must be empty when no strategy clears the gate"
+        );
     }
 }
