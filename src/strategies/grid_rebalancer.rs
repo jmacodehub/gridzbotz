@@ -1197,6 +1197,7 @@ mod tests {
             side: OrderSide::Buy,
             fill_price: 85.0,
             fill_size: 0.1,
+            fee_usdc: 0.0,
             pnl: Some(0.05),
             timestamp: 1_700_000_000,
             level_id: Some(1),
