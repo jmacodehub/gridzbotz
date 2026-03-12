@@ -1,5 +1,18 @@
 //! =============================================================================
-//! REAL TRADER ENGINE V3.2
+//! REAL TRADER ENGINE V3.3
+//!
+//! V3.3 CHANGES (fix/cb-reconcile-telegram-hardening — PR #103 Commit 1):
+//! ✅ reconcile_balances() removed from process_price_update().
+//!    Root cause: it called CB.record_trade(cumulative_pnl, nav) on EVERY
+//!    price tick (120×/min at 500ms cycle), not just on actual fills.
+//!    Cumulative snapshot (not delta) caused CB NAV drift and spurious
+//!    consecutive-loss trips even with zero fills.
+//! ✅ last_reconciled_nav: Arc<RwLock<f64>> added — seeded with initial_nav
+//!    so the first reconcile after a real trade computes a clean delta.
+//! ✅ reconcile_balances() now computes pnl_delta = total_value - last_nav
+//!    and only calls CB.record_trade() when delta != 0.0.
+//! ✅ reconcile_balances() sole call site remains execute_trade() every N
+//!    trades — correct cadence, no regression to trade flow.
 //!
 //! V3.2 CHANGES (fix/fill-level-id-cb-nav-wiring — PR #102 Commit 2):
 //! ✅ pending_fills: Arc<RwLock<Vec<FillEvent>>> added to RealTradingEngine.
@@ -15,49 +28,19 @@
 //!
 //! V3.1 CHANGES (feat/priority-fee-quant-log — PR #97 Commit 1):
 //! ✅ build_jupiter_swap(): add quant info! log for priority fee observability.
-//!    GAP-3: fee resolution used debug!() only — invisible at info level in
-//!    production (logging.level = "info" in all production TOMLs).
-//!    New log line (both dynamic and static paths):
-//!      [Quant] priority_fee: mode=dynamic|static fee=X µL/CU max_lamports=Y
-//!    Feeds: prod monitoring today + ML training data in future.
 //!
 //! V3.0 CHANGES (fix/fees-config-reconciliation — PR #96 Commit 1):
-//! ✅ RealTradingConfig::slippage_bps DELETED — was a shadow of
-//!    ExecutionConfig::max_slippage_bps (bridged via from_config()).
-//!    FeesConfig is now undisputed single source of truth for fee math;
-//!    ExecutionConfig::max_slippage_bps owns Jupiter swap tolerance.
-//! ✅ RealTradingEngine::slippage_bps (u16) added as plain engine field.
-//!    Read once from global_config.execution.max_slippage_bps at construction.
-//!    Same pattern as static_priority_fee and profit_take_pct.
-//! ✅ build_jupiter_swap(): .with_slippage(self.slippage_bps) — no more
-//!    unwrap_or(50) fallback that could silently override TOML config.
-//! ✅ test_no_slippage_shadow_on_realconfig: compile-time regression guard.
+//! ✅ RealTradingConfig::slippage_bps DELETED — shadow of ExecutionConfig.
+//! ✅ FeesConfig is now undisputed single source of truth for fee math.
+//! ✅ RealTradingEngine::slippage_bps cached from execution.max_slippage_bps.
 //!
-//! V2.9 CHANGES (fix/risk-continuous-sl-monitoring — PR #89):
-//! ✅ process_price_update(): continuous SL/TP monitoring on every price tick.
+//! ## Shadow field policy (RealTradingConfig) — DO NOT regress
+//!   - Slippage:        ExecutionConfig::max_slippage_bps → engine.slippage_bps
+//!   - Stop-loss/TP:    RiskConfig → engine.profit_take_pct
+//!   - Static prio fee: PriorityFeeConfig::fallback_microlamports → engine field
+//!   - Fee math:        FeesConfig — paper_trader/fee_filter/grid_rebalancer only
 //!
-//! V2.8 CHANGES (fix/risk-stop-loss-wiring — PR #88):
-//! ✅ StopLossManager wired into RealTradingEngine.
-//!
-//! V2.7 CHANGES (feat/dynamic-priority-fees — PR #79 Commit 8):
-//! ✅ AsyncRpcFeeSource: async FeeDataSource impl using nonblocking RpcClient.
-//!
-//! V2.6 CHANGES (fix/real-trader-fee-shadow-rpc-wiring — PR #79 Commit 1):
-//! ✅ Shadow fee fields removed: maker_fee_bps + taker_fee_bps.
-//!
-//! ## Shadow field policy (RealTradingConfig)
-//!
-//! Do NOT add shadow fields back to RealTradingConfig. Sources of truth:
-//!   - Slippage (Jupiter tolerance): ExecutionConfig::max_slippage_bps
-//!     → cached as engine.slippage_bps at construction (PR #96)
-//!   - Stop-loss / take-profit %:    RiskConfig (PR #88)
-//!     → cached as engine.profit_take_pct at construction
-//!   - Static priority fee:          PriorityFeeConfig::fallback_microlamports
-//!     → cached as engine.static_priority_fee at construction (PR #79)
-//!   - Fee math (maker/taker BPS):   FeesConfig — consumed by paper_trader,
-//!     fee_filter, grid_rebalancer — not needed in real execution path.
-//!
-//! March 2026 — V3.2 🚀
+//! March 2026 — V3.3 🚀
 //! =============================================================================
 
 use anyhow::{bail, Context, Result};
@@ -319,8 +302,12 @@ pub struct RealTradingEngine {
     /// V3.2: Synthetic FillEvents from confirmed Jupiter swaps.
     /// place_limit_order_with_level() pushes here after execute_trade() succeeds.
     /// process_price_update() drains this buffer and returns fills to grid_bot.
-    /// Arc<RwLock> so both methods can share it without making engine non-Send.
     pending_fills:         Arc<RwLock<Vec<FillEvent>>>,
+    /// V3.3: Last NAV seen by reconcile_balances().
+    /// Seeded with initial_nav at construction so the first post-trade
+    /// reconcile produces a clean delta instead of a full-session snapshot.
+    /// reconcile_balances() updates this after every call.
+    last_reconciled_nav:   Arc<RwLock<f64>>,
 }
 
 impl RealTradingEngine {
@@ -331,7 +318,7 @@ impl RealTradingEngine {
         initial_balance_sol: f64,
         initial_sol_price_usd: f64,
     ) -> Result<Self> {
-        info!("[RealEngine] Initializing V3.2");
+        info!("[RealEngine] Initializing V3.3");
 
         config.validate()?;
 
@@ -385,7 +372,7 @@ impl RealTradingEngine {
             initial_sol_price_usd,
         ));
 
-        info!("[RealEngine] Initialized V3.2");
+        info!("[RealEngine] Initialized V3.3");
         info!("  Wallet      : {}", keystore.pubkey());
         info!("  NAV         : ${:.2} (SOL @ ${:.4})",
             balance_tracker.initial_balance_usd(), initial_sol_price_usd);
@@ -413,7 +400,8 @@ impl RealTradingEngine {
             static_priority_fee,
             profit_take_pct,
             slippage_bps,
-            pending_fills:         Arc::new(RwLock::new(Vec::new())),
+            pending_fills:       Arc::new(RwLock::new(Vec::new())),
+            last_reconciled_nav: Arc::new(RwLock::new(initial_nav)),
         })
     }
 
@@ -590,14 +578,31 @@ impl RealTradingEngine {
         Ok((tx, last_valid))
     }
 
+    /// Reconcile live balances against CB.
+    ///
+    /// Called every `reconcile_balances_every_n_trades` from execute_trade().
+    /// Computes pnl_delta = total_value - last_reconciled_nav to pass a true
+    /// per-reconcile delta to CB.record_trade(), not a growing cumulative
+    /// snapshot that would cause NAV drift and spurious consecutive-loss trips.
+    ///
+    /// CB.record_trade() is only called when delta != 0.0 — silent no-op on
+    /// flat price (avoids zero-delta noise on CB's consecutive-loss counter).
     async fn reconcile_balances(&self, current_price: f64) -> Result<()> {
-        let (usdc, sol) = self.balance_tracker.get_balances().await;
-        let total_value = usdc + (sol * current_price);
-        let initial     = self.balance_tracker.initial_balance_usd();
-        let pnl         = total_value - initial;
+        let (usdc, sol)  = self.balance_tracker.get_balances().await;
+        let total_value  = usdc + (sol * current_price);
 
-        let mut breaker = self.circuit_breaker.write().await;
-        breaker.record_trade(pnl, total_value);
+        let mut last_nav = self.last_reconciled_nav.write().await;
+        let pnl_delta    = total_value - *last_nav;
+        *last_nav        = total_value;
+        drop(last_nav);
+
+        if pnl_delta != 0.0 {
+            self.circuit_breaker.write().await.record_trade(pnl_delta, total_value);
+            debug!(
+                "[RealEngine] Reconcile: nav=${:.2} delta=${:+.4} → CB updated",
+                total_value, pnl_delta
+            );
+        }
 
         Ok(())
     }
@@ -687,7 +692,7 @@ impl RealTradingEngine {
 
         println!();
         println!("=======================================================");
-        println!("  REAL TRADING ENGINE V3.2 - STATUS");
+        println!("  REAL TRADING ENGINE V3.3 - STATUS");
         println!("=======================================================");
         println!();
         println!("Balances:");
@@ -788,15 +793,14 @@ impl TradingEngine for RealTradingEngine {
         }
         let order_id = self.execute_trade(side, price, size).await?;
 
-        // Synthetic FillEvent — swap confirmed atomically, no order-book scan needed.
         let ts = chrono::Utc::now().timestamp();
         let mut fill = FillEvent::new(
             order_id.clone(),
             side,
             price,
             size,
-            0.0,   // fee_usdc: embedded in Jupiter output, not separately known here
-            None,  // pnl: resolved by GridStateTracker.mark_buy/sell_filled()
+            0.0,
+            None,
             ts,
         );
         if let Some(lid) = grid_level_id {
@@ -824,14 +828,13 @@ impl TradingEngine for RealTradingEngine {
 
     /// Poll for fills and run SL/TP monitoring.
     ///
-    /// Returns synthetic FillEvents that were pushed by place_limit_order_with_level()
-    /// since the last call, merged with any SL/TP-triggered fills.
-    /// In paper mode this is driven by order-book matching; in real mode by
-    /// confirmed Jupiter swaps accumulated in self.pending_fills.
+    /// V3.3: reconcile_balances() removed from this path.
+    /// It was firing CB.record_trade(cumulative_pnl) on every price tick
+    /// (120×/min), causing spurious consecutive-loss trips with zero fills.
+    /// CB now only receives P&L from:
+    ///   1. GridBot.process_price_update() → fill loop delta (primary path)
+    ///   2. execute_trade() → reconcile_balances() every N trades (sanity check)
     async fn process_price_update(&self, current_price: f64) -> TradingResult<Vec<FillEvent>> {
-        let _ = self.circuit_breaker.write().await.is_trading_allowed();
-        self.reconcile_balances(current_price).await?;
-
         let entry_price = self.stop_loss_manager.read().await.entry_price();
         if entry_price > 0.0 {
             let (stop_triggered, profit_triggered) = {
@@ -858,8 +861,6 @@ impl TradingEngine for RealTradingEngine {
             }
         }
 
-        // Drain synthetic fills accumulated since last tick.
-        // In a quiet tick this is empty vec — zero allocation cost.
         let fills = std::mem::take(&mut *self.pending_fills.write().await);
         Ok(fills)
     }
@@ -944,5 +945,24 @@ mod tests {
         assert!(config.reconcile_balances_every_n_trades.is_some(), "reconcile_n_trades must be Some");
         assert!(config.rpc_url.is_none(),                            "rpc_url must default to None");
         assert!(config.jupiter_api_key.is_none(),                    "jupiter_api_key must default to None");
+    }
+
+    #[test]
+    fn test_reconcile_not_called_in_process_price_update() {
+        // Structural guard: process_price_update must NOT call reconcile_balances.
+        // If this test fails it means the every-tick CB regression was re-introduced.
+        // Verified by code-review — reconcile_balances() sole wiring is
+        // execute_trade() every reconcile_balances_every_n_trades.
+        let src = include_str!("real_trader.rs");
+        let fn_body_start = src.find("async fn process_price_update").unwrap();
+        // Find the closing brace of process_price_update by scanning for
+        // the next top-level fn after it.
+        let after = &src[fn_body_start..];
+        let next_fn = after.find("\n    async fn ").unwrap_or(after.len());
+        let fn_body = &after[..next_fn];
+        assert!(
+            !fn_body.contains("reconcile_balances"),
+            "REGRESSION: reconcile_balances() must not be called inside process_price_update()"
+        );
     }
 }
