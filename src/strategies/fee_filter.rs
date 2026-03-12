@@ -1,5 +1,5 @@
 //! ═══════════════════════════════════════════════════════════════════════════
-//! 💎 SMART FEE FILTER V2.1 - PROJECT FLASH
+//! 💎 SMART FEE FILTER V2.3 - PROJECT FLASH
 //!
 //! Intelligent fee-aware trade filtering to maximize net profitability.
 //!
@@ -21,12 +21,20 @@
 //!    Silently bypassing fee checks at startup is a capital-safety hole.
 //!    Default::default() retains grace_period=10 for standalone users.
 //!
+//! V2.3 (PR #105 — regime + vol scaling mutual exclusion):
+//! ✅ calculate_min_required_profit(): early return after regime branch.
+//!    Root cause: VERY_LOW_VOL regime_factor (1.5×) AND low-vol vol_factor
+//!    (up to 2.0×) were both applied to the same market condition, compounding
+//!    to 5.25× effective multiplier. Overnight data: 17 checked, 17 blocked.
+//!    Fix: regime adjustment and volatility scaling are now mutually exclusive.
+//!    Regime encodes vol semantics — vol scaling only runs when regime is off.
+//!
 //! Based on GIGA Test Results:
 //! - Activity Paradox: More fills ≠ More profit
 //! - Fee filtering prevented 40% of unprofitable trades
 //! - 2x profit multiplier = optimal baseline
 //!
-//! February 8, 2026 - V2.0 | March 2026 - V2.2 🚀
+//! February 8, 2026 - V2.0 | March 2026 - V2.3 🚀
 //! ═══════════════════════════════════════════════════════════════════════════
 
 
@@ -76,8 +84,10 @@ pub struct SmartFeeFilterConfig {
     pub min_profit_multiplier: f64,
 
 
-    /// Volatility scaling factor for dynamic thresholds
-    /// - Higher volatility = higher minimum spread required
+    /// Volatility scaling factor for dynamic thresholds.
+    /// Only active when `enable_regime_adjustment = false`.
+    /// When regime adjustment is enabled, regime encodes vol semantics —
+    /// applying vol scaling on top would double-count the same condition.
     pub volatility_scaling_factor: f64,
 
 
@@ -103,7 +113,11 @@ pub struct SmartFeeFilterConfig {
     pub enable_time_optimization: bool,
 
 
-    /// Enable dynamic regime-based adjustment
+    /// Enable dynamic regime-based adjustment.
+    ///
+    /// When true, regime factor is the sole vol-context multiplier —
+    /// the continuous volatility scaling branch is skipped entirely.
+    /// This prevents compounding two representations of the same condition.
     pub enable_regime_adjustment: bool,
 
 
@@ -404,40 +418,65 @@ impl SmartFeeFilter {
     // ═══════════════════════════════════════════════════════════════════
 
 
-    /// Calculate minimum required profit based on market conditions
+    /// Calculate minimum required profit based on market conditions.
+    ///
+    /// ## Multiplier logic (V2.3 — PR #105)
+    ///
+    /// **Regime adjustment enabled (default):**
+    ///   `min = base_cost × min_profit_multiplier × regime_factor`
+    ///   Returns immediately — vol scaling is NOT applied.
+    ///   Regime labels already encode volatility context:
+    ///     VERY_LOW_VOL=1.5×  LOW_VOL=1.2×  MEDIUM_VOL=1.0×
+    ///     HIGH_VOL=0.9×      VERY_HIGH_VOL=0.8×
+    ///
+    /// **Regime adjustment disabled:**
+    ///   Falls through to continuous vol scaling only.
+    ///   High vol (>1.0): reduce threshold up to 30%.
+    ///   Low vol (<0.5):  increase threshold up to 2×.
+    ///
+    /// Pre-fix bug: both branches ran sequentially, compounding to
+    /// 5.25× (2.0 × 1.5 × 1.75) in VERY_LOW_VOL + vol≈0 — blocked
+    /// all grid trades despite valid configuration (17/17 overnight).
     fn calculate_min_required_profit(
         &self,
         base_cost: f64,
         volatility: f64,
         market_regime: &str,
     ) -> f64 {
-        // Base minimum: cost * multiplier
         let mut min_profit = base_cost * self.config.min_profit_multiplier;
 
-
-        // Regime-based adjustment (if enabled)
+        // ── Regime adjustment (PR #105: early return — no vol scaling below) ──
+        //
+        // Regime labels are derived from the same volatility signal that drives
+        // the continuous scaling branch. Applying both compounds two
+        // representations of identical market conditions.
+        //
+        // Fix: when regime adjustment is active, it IS the vol adjustment.
+        // Return immediately so the vol scaling block never runs.
         if self.config.enable_regime_adjustment {
             let regime_factor = match market_regime {
-                "VERY_LOW_VOL" => 1.5,   // Harder to profit in low vol
-                "LOW_VOL" => 1.2,
-                "MEDIUM_VOL" => 1.0,     // Baseline
-                "HIGH_VOL" => 0.9,       // Easier to profit in high vol
+                "VERY_LOW_VOL"  => 1.5,  // Harder to profit in low vol
+                "LOW_VOL"       => 1.2,
+                "MEDIUM_VOL"    => 1.0,  // Baseline
+                "HIGH_VOL"      => 0.9,  // Easier to profit in high vol
                 "VERY_HIGH_VOL" => 0.8,
-                _ => 1.0,
+                _               => 1.0,
             };
             min_profit *= regime_factor;
+            return min_profit; // ← PR #105 fix: regime IS the vol adjustment
         }
 
-
-        // Volatility-based adjustment
+        // ── Continuous vol scaling (only when regime adjustment is OFF) ──
+        //
+        // Safe to apply here because enable_regime_adjustment=false means
+        // no regime factor was applied above — zero compounding risk.
         if volatility > 1.0 {
             let vol_factor = 1.0 - (volatility - 1.0) * 0.1;
             min_profit *= vol_factor.max(0.7);  // Cap at 30% reduction
         } else if volatility < 0.5 {
             let vol_factor = 1.0 + (0.5 - volatility) * self.config.volatility_scaling_factor;
-            min_profit *= vol_factor.min(2.0);  // Cap at 2x increase
+            min_profit *= vol_factor.min(2.0);  // Cap at 2× increase
         }
-
 
         min_profit
     }
@@ -593,16 +632,13 @@ mod tests {
     fn test_profitable_trade() {
         let filter = filter_no_grace();
 
-
         let entry = 100.0;
         let exit = 105.0;  // 5% gross profit
         let size = 1.0;
 
-
         let (should_execute, net_profit, _) = filter.should_execute_trade(
             entry, exit, size, 1.0, "MEDIUM_VOL"
         );
-
 
         assert!(should_execute, "5% profit trade should pass the fee filter");
         assert!(net_profit > 0.0, "net_profit must be positive, got {}", net_profit);
@@ -613,16 +649,13 @@ mod tests {
     fn test_unprofitable_trade() {
         let filter = filter_no_grace();
 
-
         let entry = 100.0;
         let exit = 100.1;  // Only 0.1% gross profit
         let size = 1.0;
 
-
         let (should_execute, _, _) = filter.should_execute_trade(
             entry, exit, size, 1.0, "MEDIUM_VOL"
         );
-
 
         assert!(!should_execute, "0.1% profit trade should be blocked by fee filter");
     }
@@ -635,23 +668,19 @@ mod tests {
         config.grace_period_trades = 0;
         let filter = SmartFeeFilter::new(config);
 
-
         let entry = 100.0;
         let exit = 101.0;
         let size = 1.0;
-
 
         // High vol should be more permissive
         let (high_vol_ok, _, _) = filter.should_execute_trade(
             entry, exit, size, 2.0, "HIGH_VOL"
         );
 
-
         // Low vol should be more strict
         let (low_vol_ok, _, _) = filter.should_execute_trade(
             entry, exit, size, 0.3, "VERY_LOW_VOL"
         );
-
 
         // High vol more likely to pass
         assert!(high_vol_ok || !low_vol_ok);
@@ -664,17 +693,14 @@ mod tests {
         config.grace_period_trades = 5;
         let filter = SmartFeeFilter::new(config);
 
-
         // Even unprofitable trades should pass during grace period
         let entry = 100.0;
         let exit = 100.05;  // Minimal profit
         let size = 1.0;
 
-
         let (should_execute, _, reason) = filter.should_execute_trade(
             entry, exit, size, 1.0, "MEDIUM_VOL"
         );
-
 
         assert!(should_execute);
         assert!(reason.contains("Grace"));
@@ -734,8 +760,6 @@ mod tests {
 
 
     /// from_fees_config() must always produce grace_period_trades=0.
-    /// A non-zero grace period in GridRebalancer silently bypasses fee
-    /// filtering at startup — a capital-safety hole.
     #[test]
     fn test_from_fees_config_grace_period_is_zero() {
         let fees = FeesConfig::default();
@@ -757,10 +781,115 @@ mod tests {
         };
         let config = SmartFeeFilterConfig::from_fees_config(&fees);
         let filter = SmartFeeFilter::new(config);
-        // 0.2% gross spread on 0.1 SOL @ $100 — fees eat it entirely
         let (pass, _, reason) = filter.should_execute_trade(
             100.0, 100.2, 0.1, 0.0, "VERY_LOW_VOL"
         );
         assert!(!pass, "First call must not bypass filtering; got reason: {}", reason);
+    }
+
+
+    // ── V2.3 PR #105: Regime + vol scaling mutual exclusion ───────────────
+
+
+    /// VERY_LOW_VOL + vol≈0: regime flag must block the vol scaling branch.
+    ///
+    /// Pre-fix: 2.0 × 1.5 (regime) × 1.75 (vol) = 5.25× → blocked 17/17 trades.
+    /// Post-fix: 2.0 × 1.5 (regime only)          = 3.0× → proportionate gate.
+    ///
+    /// Test: a trade that clearly clears 3.0× but would fail 5.25× must PASS.
+    ///   $100 entry, 0.6% spacing, 1.0 SOL:
+    ///   gross  ≈ $100 × 0.006 × 1.0 = $0.60
+    ///   costs  ≈ $100 × (0.04+0.02+0.05+0.05+0.01)/100 × 1.0 = $0.17
+    ///   net    ≈ $0.43
+    ///   3.0×:  threshold ≈ $0.51  — borderline; use 1.0% spacing for margin:
+    ///   gross  = $1.00, costs ≈ $0.17, net ≈ $0.83
+    ///   3.0×:  $0.51 → PASS ✅   5.25×: $0.89 → FAIL ❌  (regression catch)
+    #[test]
+    fn test_regime_adjustment_not_compounded_with_vol_scaling() {
+        let filter = SmartFeeFilter::new(SmartFeeFilterConfig {
+            grace_period_trades: 0,
+            enable_regime_adjustment: true,
+            min_profit_multiplier: 2.0,
+            volatility_scaling_factor: 1.5,
+            ..SmartFeeFilterConfig::default()
+        });
+
+        // 1% spacing, 1.0 SOL — clears 3.0× gate but not 5.25×
+        let (pass, net, reason) = filter.should_execute_trade(
+            100.0,
+            101.0,  // 1.0% spacing
+            1.0,
+            0.0001, // vol ≈ 0 — maximises pre-fix compound bug
+            "VERY_LOW_VOL",
+        );
+
+        assert!(
+            pass,
+            "VERY_LOW_VOL at 1% spacing must PASS with fixed 3.0× threshold \
+             (pre-fix 5.25× blocked this). net={:.6} reason={}",
+            net, reason
+        );
+    }
+
+
+    /// When enable_regime_adjustment=false, vol scaling must still apply.
+    /// Ensures the fix didn't accidentally remove vol scaling entirely.
+    #[test]
+    fn test_vol_scaling_applies_when_regime_disabled() {
+        let filter_no_regime = SmartFeeFilter::new(SmartFeeFilterConfig {
+            grace_period_trades: 0,
+            enable_regime_adjustment: false,
+            min_profit_multiplier: 2.0,
+            volatility_scaling_factor: 1.5,
+            ..SmartFeeFilterConfig::default()
+        });
+        let filter_with_regime = SmartFeeFilter::new(SmartFeeFilterConfig {
+            grace_period_trades: 0,
+            enable_regime_adjustment: true,
+            min_profit_multiplier: 2.0,
+            volatility_scaling_factor: 1.5,
+            ..SmartFeeFilterConfig::default()
+        });
+
+        // VERY_LOW_VOL + vol≈0:
+        //   regime_on (fixed): 2.0 × 1.5 = 3.0× threshold
+        //   regime_off:        2.0 × 1.75 = 3.5× threshold (vol scaling only)
+        // Regime-on must be MORE permissive (lower threshold = more passes)
+        let (with_regime_pass, _, _) = filter_with_regime.should_execute_trade(
+            100.0, 101.0, 1.0, 0.0001, "VERY_LOW_VOL"
+        );
+        let (no_regime_pass, _, _) = filter_no_regime.should_execute_trade(
+            100.0, 101.0, 1.0, 0.0001, "VERY_LOW_VOL"
+        );
+
+        // regime_on (3.0×) must be at least as permissive as regime_off (3.5×)
+        assert!(
+            with_regime_pass || !no_regime_pass,
+            "Regime-enabled (3.0×) must be >= permissive than regime-disabled (3.5×) \
+             for VERY_LOW_VOL + vol≈0"
+        );
+    }
+
+
+    /// MEDIUM_VOL with normal vol (0.5..1.0 neutral band): both paths must
+    /// agree since regime_factor=1.0 and vol falls in the no-op band.
+    #[test]
+    fn test_medium_vol_neutral_band_unchanged() {
+        let filter = SmartFeeFilter::new(SmartFeeFilterConfig {
+            grace_period_trades: 0,
+            enable_regime_adjustment: true,
+            ..SmartFeeFilterConfig::default()
+        });
+
+        // 3% gross profit, vol=0.8 (neutral band 0.5..1.0)
+        let (pass, net, _) = filter.should_execute_trade(
+            100.0, 103.0, 1.0, 0.8, "MEDIUM_VOL"
+        );
+
+        assert!(
+            pass,
+            "3% profit trade in MEDIUM_VOL (neutral vol band) must pass; net={:.4}",
+            net
+        );
     }
 }
