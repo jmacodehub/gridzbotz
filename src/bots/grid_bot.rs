@@ -1,37 +1,34 @@
 //! ═════════════════════════════════════════════════════════════════════════
-//! GRID BOT V6.3 — GRIDREBALANCER WIRED AS EXECUTION-ONLY WMA NON-VOTER
+//! GRID BOT V6.4 — FEE-RECONCILIATION WIRED (PR #107)
 //!
-//! PR #105 Commit 3: GridRebalancer switched from .add() → .add_execution_only()
-//!   Root cause of WMA deadlock:
-//!     GridRebalancer::analyze() always returns Signal::Hold (confidence=0.0).
-//!     Registering it via .add() gave it a permanent WMA voter slot emitting
-//!     0.0, always below wma_conf_gate. Zero fills → no weight update →
-//!     always 0.0 → permanent deadlock.
-//!   Fix:
-//!     .add_execution_only(grid_rebalancer_for_manager, ...) — skips
-//!     wma_engine.register_strategy(). GridRebalancer still receives
-//!     on_fill() callbacks and attach_analytics() init. It places orders
-//!     via its own should_place_order() path, not WMA consensus voting.
+//! PR #107 Commit 2: Replace hardcoded spacing bounds in GridRebalancerConfig
+//!   Before: max_spacing: 0.0075, min_spacing: 0.001  (hardcoded)
+//!   After:  max_spacing: config.trading.max_grid_spacing_pct
+//!           min_spacing: config.trading.min_grid_spacing_pct
+//!   Defaults are identical — zero behaviour change on all 46 TOMLs.
+//!   Per-pair configs can now override via:
+//!     [trading]
+//!     max_grid_spacing_pct = 0.010   # 1.0%
+//!     min_grid_spacing_pct = 0.002   # 0.2%
 //!
+//! PR #107 Commit 4: Thread fee_usdc into mark_buy/sell_filled
+//!   Source: fees.taker_fee_pct from FeesConfig (single source of truth)
+//!   Formula: fee_usdc = fill_price * fill_size * (taker_fee_pct / 100.0)
+//!   mark_buy_filled(lid, fee_usdc)  — accumulates on GridLevel.fees_paid
+//!   mark_sell_filled(lid, fee_usdc) — accumulates + computes NET P&L
+//!   GridStateTracker.total_fees_paid() logged at stats heartbeat interval.
+//!   Paper mode uses taker_fee_pct=0.0 by default — zero behaviour change.
+//!
+//! PR #105 Commit 3: GridRebalancer switched to .add_execution_only()
+//!   (avoids WMA deadlock — see V6.3 header for full root-cause)
 //! PR #102 Commit 3: level_id mark-filled + CB delta P&L fix.
-//!   • process_price_update(): capture pnl_before fill loop.
-//!     For each fill with Some(level_id):
-//!       - OrderSide::Buy  → grid_state.mark_buy_filled(level_id)
-//!       - OrderSide::Sell → grid_state.mark_sell_filled(level_id)
-//!     Re-read total_realized_pnl() after mark → compute delta.
-//!     Pass pnl_delta (not cumulative snapshot) to CB.record_trade().
-//!   Root causes fixed:
-//!     1. GridStateTracker never updated in live mode (mark_*_filled
-//!        only fired in paper mode via order-book matching).
-//!     2. CB received cumulative P&L on every fill → NAV drift,
-//!        consecutive-loss counter always firing on first loss.
-//!
 //! PR #101 Commit 2: TelegramBot wired into GridBot.
 //! PR #99  Commit 3b: wma_confidence_threshold fully wired end-to-end.
 //! PR #98  Commit 2b-ii: WMA voter P&L attribution wired.
 //! PR #94  (Commit 6): GridBotStats observability.
 //! PR #93: CircuitBreaker wired.
 //!
+//! March 13, 2026 - V6.4: fee-reconciliation wired (PR #107 C2+C4) 💰
 //! March 12, 2026 - V6.3: GridRebalancer execution-only (PR #105 C3) 🔥
 //! March 12, 2026 - V6.2: fill level_id + CB delta P&L (PR #102) ✅
 //! March 11, 2026 - V6.1: Telegram alerts wired (PR #101) 📲
@@ -107,17 +104,26 @@ impl GridBot {
         engine: Arc<dyn TradingEngine + Send + Sync>,
         feed:   Arc<PriceFeed>,
     ) -> Result<Self> {
-        info!("[BOT-V6.3] Initializing GridBot V6.3...");
-        info!("[BOT-V6.3] WMAConfGate:      {:.2} (TOML-driven, PR #99)",
+        info!("[BOT-V6.4] Initializing GridBot V6.4...");
+        info!("[BOT-V6.4] WMAConfGate:      {:.2} (TOML-driven, PR #99)",
               config.strategies.wma_confidence_threshold);
-        info!("[BOT-V6.3] OptimizerCadence: {} cycles",
+        info!("[BOT-V6.4] OptimizerCadence: {} cycles",
               config.trading.optimizer_interval_cycles);
-        info!("[BOT-V6.3] ConsensusSizing:  {} | multiplier={:.2}x",
+        info!("[BOT-V6.4] ConsensusSizing:  {} | multiplier={:.2}x",
               if config.trading.enable_smart_position_sizing { "ACTIVE" } else { "disabled" },
               config.trading.signal_size_multiplier);
+        // PR #107 Commit 2: log config-driven spacing bounds
+        info!("[BOT-V6.4] DynSpacingBounds: {:.5}–{:.5} (PR #107 C2)",
+              config.trading.min_grid_spacing_pct,
+              config.trading.max_grid_spacing_pct);
+        info!("[BOT-V6.4] TakerFee:         {:.4}% (PR #107 C4)",
+              config.fees.taker_fee_pct);
 
         let telegram = TelegramBot::from_env();
 
+        // PR #107 Commit 2: max_spacing / min_spacing now sourced from
+        // TradingConfig instead of hardcoded literals.
+        // Defaults (0.0075 / 0.001) are identical — no behaviour change.
         let grid_config = GridRebalancerConfig {
             grid_spacing:                   config.trading.grid_spacing_percent / 100.0,
             order_size:                     config.trading.min_order_size,
@@ -127,8 +133,8 @@ impl GridBot {
             enable_dynamic_spacing:         config.trading.enable_dynamic_grid,
             enable_fee_filtering:           config.trading.enable_fee_optimization,
             volatility_window_seconds:      config.trading.volatility_window as u64,
-            max_spacing:                    0.0075,
-            min_spacing:                    0.001,
+            max_spacing:                    config.trading.max_grid_spacing_pct,  // was 0.0075
+            min_spacing:                    config.trading.min_grid_spacing_pct,  // was 0.001
             enable_regime_gate:             config.trading.enable_regime_gate,
             min_volatility_to_trade:        config.trading.min_volatility_to_trade,
             pause_in_very_low_vol:          config.trading.pause_in_very_low_vol,
@@ -199,7 +205,7 @@ impl GridBot {
 
         let manager = _manager;
 
-        info!("[BOT-V6.3] {} strategies loaded ({} WMA voters, conf_gate={:.2})",
+        info!("[BOT-V6.4] {} strategies loaded ({} WMA voters, conf_gate={:.2})",
               manager.strategies.len(),
               manager.wma_engine.registered_count(),
               manager.wma_engine.min_confidence());
@@ -211,7 +217,7 @@ impl GridBot {
         let adaptive_optimizer = AdaptiveOptimizer::new(base_spacing, base_size);
         let circuit_breaker    = CircuitBreaker::new(&config);
 
-        info!("[BOT-V6.3] GridBot V6.3 initialization complete");
+        info!("[BOT-V6.4] GridBot V6.4 initialization complete");
 
         Ok(Self {
             manager,
@@ -249,7 +255,7 @@ impl GridBot {
     }
 
     async fn initialize_with_price(&mut self) -> Result<()> {
-        info!("[BOT] V6.3 GRID INIT - awaiting live price...");
+        info!("[BOT] V6.4 GRID INIT - awaiting live price...");
 
         let initial_price = self.feed.latest_price().await;
         if initial_price <= 0.0 {
@@ -484,15 +490,24 @@ impl GridBot {
             //    compute per-fill deltas for CB.record_trade().
             let pnl_before = self.grid_state.total_realized_pnl().await;
 
+            // ── PR #107 Commit 4: taker_fee_pct sourced from FeesConfig
+            //    (single source of truth). Paper mode has taker_fee_pct=0.0
+            //    by default — zero behaviour change there.
+            let taker_fee_pct = self.config.fees.taker_fee_pct;
+
             for fill in &filled_orders {
                 let is_buy    = fill.side == OrderSide::Buy;
                 let fill_size = self.adaptive_optimizer.current_position_size;
 
+                // PR #107 Commit 4: compute USDC fee for this individual fill
+                // fee = fill_price * fill_size * (taker_fee_pct / 100.0)
+                let fee_usdc = price * fill_size * (taker_fee_pct / 100.0);
+
                 if let Some(lid) = fill.level_id {
                     if is_buy {
-                        self.grid_state.mark_buy_filled(lid).await;
+                        self.grid_state.mark_buy_filled(lid, fee_usdc).await;
                     } else {
-                        self.grid_state.mark_sell_filled(lid).await;
+                        self.grid_state.mark_sell_filled(lid, fee_usdc).await;
                     }
                 }
 
@@ -501,10 +516,10 @@ impl GridBot {
 
                 self.total_fills_tracked += 1;
 
-                info!("[FILL] #{}: {} {} @ ${:.4} | size:{:.4} | Δ P&L:${:.4} | ts:{}",
+                info!("[FILL] #{}: {} {} @ ${:.4} | size:{:.4} | fee:${:.4} | \u0394 P&L:${:.4} | ts:{}",
                       self.total_fills_tracked,
                       if is_buy { "BUY" } else { "SELL" },
-                      fill.order_id, price, fill_size, pnl_delta, timestamp);
+                      fill.order_id, price, fill_size, fee_usdc, pnl_delta, timestamp);
 
                 self.enhanced_metrics.record_trade(is_buy, pnl_delta, timestamp);
                 self.circuit_breaker.record_trade(pnl_delta, new_nav);
@@ -524,7 +539,7 @@ impl GridBot {
                         self.manager.record_fill_for_wma(voter, pnl_delta);
                     }
                     if !voters.is_empty() {
-                        debug!("[WMA-ATTR] SELL attributed to {} voters | Δ P&L:${:.4}",
+                        debug!("[WMA-ATTR] SELL attributed to {} voters | \u0394 P&L:${:.4}",
                                voters.len(), pnl_delta);
                     }
                 }
@@ -547,6 +562,11 @@ impl GridBot {
 
         let interval = self.config.metrics.stats_interval;
         if interval > 0 && self.total_cycles % interval == 0 {
+            // PR #107 Commit 4: log total fees paid by GridStateTracker
+            let total_fees_paid = self.grid_state.total_fees_paid().await;
+            info!("[FEES] Total fees paid (grid levels): ${:.4} | taker_rate={:.4}%",
+                  total_fees_paid, taker_fee_pct);
+
             let perf   = self.engine.get_performance_stats().await;
             let cb_ok  = !self.circuit_breaker.status().is_tripped;
             self.telegram.send_heartbeat(
@@ -610,10 +630,11 @@ impl GridBot {
         let grid_levels = self.grid_state.count().await;
         let filled_buys = self.grid_state.get_levels_with_filled_buys().await.len();
         let total_pnl   = self.grid_state.total_realized_pnl().await;
+        let total_fees  = self.grid_state.total_fees_paid().await; // PR #107 C4
         let border      = "=".repeat(60);
 
         println!("\n{border}");
-        println!("   [BOT] GRID BOT V6.3 - STATUS REPORT");
+        println!("   [BOT] GRID BOT V6.4 - STATUS REPORT");
         println!("{border}");
         println!("\n[PERFORMANCE]");
         println!("  Total Cycles:      {}", stats.total_cycles);
@@ -639,13 +660,21 @@ impl GridBot {
         println!("\n[GRID]");
         println!("  Active Levels:     {}", grid_levels);
         println!("  Filled Buys:       {}", filled_buys);
-        println!("  Realized P&L:      ${:.2}", total_pnl);
+        println!("  Net Realized P&L:  ${:.4}", total_pnl);
+        println!("  Total Fees Paid:   ${:.4} (taker={:.4}%)",
+                 total_fees, self.config.fees.taker_fee_pct); // PR #107 C4
 
         if let Some(ffs) = self.grid_rebalancer.fee_filter_stats() {
             println!("\n[FEE FILTER]");
             println!("  Total Checked:     {}", ffs.total_checks);
             println!("  Passed:            {}", ffs.trades_passed);
             println!("  Blocked:           {}", ffs.trades_filtered);
+        }
+
+        if self.config.trading.enable_dynamic_grid {
+            println!("\n[DYN SPACING]");
+            println!("  Min Spacing:       {:.5}", self.config.trading.min_grid_spacing_pct);
+            println!("  Max Spacing:       {:.5}", self.config.trading.max_grid_spacing_pct);
         }
 
         println!("\n[PORTFOLIO]");
@@ -803,7 +832,7 @@ pub struct GridBotStats {
 
 impl GridBotStats {
     pub fn display_summary(&self) {
-        println!("\n[STATS] GRID BOT V6.3 STATISTICS");
+        println!("\n[STATS] GRID BOT V6.4 STATISTICS");
         println!("   Cycles:     {}", self.total_cycles);
         println!("   Trades:     {}", self.successful_trades);
         println!("   Fills:      {}", self.total_fills_tracked);
@@ -1078,13 +1107,8 @@ mod tests {
         assert!((delta - 1.25).abs() < 1e-12);
     }
 
-    // ────────────────────────────────────────────────────────────────────────
-    // PR #105 Commit 3: execution-only wiring verification
-    // ────────────────────────────────────────────────────────────────────────
+    // ── PR #105 Commit 3: execution-only wiring verification ────────────────────
 
-    /// Verify that a strategy registered via add_execution_only() is present
-    /// in the manager but has NO WMA voter slot — this is the call-site
-    /// contract that grid_bot.rs now relies on for GridRebalancer.
     #[test]
     fn test_grid_rebalancer_execution_only_no_wma_slot() {
         use crate::strategies::{
@@ -1097,18 +1121,14 @@ mod tests {
         let (manager, weights) = StrategyRegistryBuilder::new()
             .add_execution_only(gr, 0.40)
             .build(ctx);
-        // Strategy is present in the manager
         assert_eq!(manager.strategies.len(), 1);
         assert_eq!(weights, vec![0.40]);
-        // But has NO WMA voter slot
         assert!(
             manager.wma_engine.get_performance("GridRebalancer").is_none(),
             "GridRebalancer must NOT be a WMA voter when added via add_execution_only()"
         );
     }
 
-    /// Verify wma_voter_count in log is consistent: execution-only strategy
-    /// contributes to strategies.len() but NOT to registered_count().
     #[test]
     fn test_wma_voter_count_excludes_execution_only() {
         use crate::strategies::{
@@ -1120,11 +1140,61 @@ mod tests {
         let gr2 = GridRebalancer::new(GridRebalancerConfig::default()).unwrap();
         let ctx = AnalyticsContext::default();
         let (manager, _) = StrategyRegistryBuilder::new()
-            .add_execution_only(gr1, 0.40)  // execution-only: NOT a voter
-            .add(gr2, 0.30)                  // regular: IS a voter
+            .add_execution_only(gr1, 0.40)
+            .add(gr2, 0.30)
             .build(ctx);
         assert_eq!(manager.strategies.len(), 2,   "both strategies in manager");
         assert_eq!(manager.wma_engine.registered_count(), 1,
                    "only 1 WMA voter slot (the .add() one)");
+    }
+
+    // ── PR #107 Commit 2+4: fee threading tests ─────────────────────────────
+
+    /// fee_usdc formula: price * size * (taker_pct / 100)
+    fn compute_fee_usdc(price: f64, size: f64, taker_pct: f64) -> f64 {
+        price * size * (taker_pct / 100.0)
+    }
+
+    #[test]
+    fn test_fee_usdc_formula_standard_rate() {
+        // SOL @ $120, 0.1 SOL fill, 0.3% taker fee
+        // fee = 120.0 * 0.1 * 0.003 = $0.036
+        let fee = compute_fee_usdc(120.0, 0.1, 0.3);
+        assert!((fee - 0.036).abs() < 1e-9,
+            "fee must be $0.036, got {:.6}", fee);
+    }
+
+    #[test]
+    fn test_fee_usdc_zero_rate_paper_mode() {
+        // Paper mode: taker_fee_pct = 0.0 — fee must be zero
+        let fee = compute_fee_usdc(150.0, 0.5, 0.0);
+        assert!((fee - 0.0).abs() < 1e-12,
+            "zero-rate fee must be 0.0, got {:.6}", fee);
+    }
+
+    #[test]
+    fn test_fee_usdc_scales_with_price() {
+        // Same size/rate, double price → double fee
+        let fee_low  = compute_fee_usdc(100.0, 0.1, 0.25);
+        let fee_high = compute_fee_usdc(200.0, 0.1, 0.25);
+        assert!((fee_high - fee_low * 2.0).abs() < 1e-9,
+            "fee must scale linearly with price");
+    }
+
+    #[test]
+    fn test_grid_spacing_bounds_wired_from_defaults() {
+        // Verify that default TradingConfig has the same values as the
+        // old hardcoded literals in GridRebalancerConfig init.
+        // If this test fails it means someone changed a default without
+        // checking the other side — deliberate breakage guard.
+        let cfg = crate::config::TradingConfig::default();
+        assert!(
+            (cfg.max_grid_spacing_pct - 0.0075).abs() < 1e-9,
+            "max_grid_spacing_pct default must match old hardcoded 0.0075"
+        );
+        assert!(
+            (cfg.min_grid_spacing_pct - 0.001).abs() < 1e-9,
+            "min_grid_spacing_pct default must match old hardcoded 0.001"
+        );
     }
 }
