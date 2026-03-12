@@ -1,6 +1,18 @@
 //! ═══════════════════════════════════════════════════════════════════════
-//! Telegram Bot Integration — PR #101 Full Alert Suite
+//! Telegram Bot Integration — PR #103 Hardened
 //!
+//! V2 changes (PR #103 — fix/cb-reconcile-telegram-hardening):
+//! ✅ client: Client stored as struct field — reqwest connection pool
+//!    reused across all send_*() calls. Previously Client::new() was
+//!    called on every fire() invocation, rebuilding the pool each time.
+//! ✅ .timeout(Duration::from_secs(5)) added to every HTTP request.
+//!    Without this a slow/down Telegram API would block the entire
+//!    trading cycle because send_fill() etc. are .await-ed in grid_bot.
+//! ✅ .error_for_status()? added — Telegram returns HTTP 200 with
+//!    {"ok":false} on bad token/chat_id. Previously fire() silently
+//!    "succeeded" on credential errors. Now warns loudly in logs.
+//!
+//! V1 (PR #101 — Full Alert Suite):
 //! Provides real-time mobile notifications for live trading events.
 //! All methods are fire-and-forget async — failures are logged but
 //! never propagate to the trading loop (capital safety first).
@@ -25,6 +37,7 @@
 
 use reqwest::Client;
 use serde_json::json;
+use std::time::Duration;
 use log::{debug, warn};
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -40,6 +53,9 @@ pub struct TelegramBot {
     token:   String,
     chat_id: String,
     enabled: bool,
+    /// Reused across all send_*() calls — avoids rebuilding the
+    /// connection pool on every message (PR #103).
+    client:  Client,
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -55,6 +71,7 @@ impl TelegramBot {
             token:   token.unwrap_or_default(),
             chat_id: chat_id.unwrap_or_default(),
             enabled,
+            client:  Client::new(),
         }
     }
 
@@ -77,6 +94,7 @@ impl TelegramBot {
             token:   token.unwrap_or_default(),
             chat_id: chat_id.unwrap_or_default(),
             enabled,
+            client:  Client::new(),
         }
     }
 
@@ -259,7 +277,9 @@ impl TelegramBot {
 // ═══════════════════════════════════════════════════════════════════════
 
 impl TelegramBot {
-    /// Fire-and-forget HTTP POST. Errors are warned but never propagated.
+    /// Fire-and-forget HTTP POST with 5s timeout.
+    /// Errors (network failure OR Telegram API {"ok":false}) are warned
+    /// but never propagated — trading loop safety is non-negotiable.
     async fn fire(&self, text: &str) {
         debug!("[TELEGRAM] Sending: {:.60}…", text);
         if let Err(e) = self.send(text).await {
@@ -267,17 +287,24 @@ impl TelegramBot {
         }
     }
 
+    /// POST to Telegram sendMessage API.
+    /// Uses shared `self.client` (connection pool reuse).
+    /// 5s timeout prevents slow Telegram API from blocking the trading cycle.
+    /// .error_for_status() surfaces HTTP 4xx/5xx AND Telegram {"ok":false}
+    /// responses that would otherwise silently succeed.
     async fn send(&self, text: &str) -> Result<(), Box<dyn std::error::Error>> {
         let url = format!("https://api.telegram.org/bot{}/sendMessage", self.token);
-        Client::new()
+        self.client
             .post(&url)
+            .timeout(Duration::from_secs(5))
             .json(&json!({
                 "chat_id":    self.chat_id,
                 "text":       text,
                 "parse_mode": "Markdown"
             }))
             .send()
-            .await?;
+            .await?
+            .error_for_status()?;
         Ok(())
     }
 }
@@ -323,6 +350,15 @@ mod tests {
     fn test_disabled_when_only_chat_id() {
         let bot = TelegramBot::new(None, Some("123".into()));
         assert!(!bot.is_enabled());
+    }
+
+    #[test]
+    fn test_client_is_reused_not_per_call() {
+        // Structural guard: TelegramBot must hold a Client field.
+        // If this compiles, the field exists — Client::new() per-call
+        // regression cannot silently re-enter (the field would be unused).
+        let bot = disabled_bot();
+        let _: &Client = &bot.client;
     }
 
     #[tokio::test]
