@@ -1,5 +1,14 @@
 //! ═══════════════════════════════════════════════════════════════════════════
-//! 🎛️  UNIFIED CONFIGURATION SYSTEM V5.6 - GRIDZBOTZ
+//! 🎛️  UNIFIED CONFIGURATION SYSTEM V5.7 - GRIDZBOTZ
+//!
+//! V5.7 ADDITIONS (PR #100 — fix/grid-seed-bypass):
+//! ✅ GridStrategyConfig: seed_orders_bypass added
+//!    - Mirrors GridRebalancerConfig.seed_orders_bypass (default: true)
+//!    - Without this, TOML key `strategies.grid.seed_orders_bypass = false`
+//!      was rejected by deny_unknown_fields → startup crash
+//!    - Default: true — all 46 existing TOMLs parse unchanged
+//!    - Validation: none needed (bool)
+//!    - Zero breaking changes
 //!
 //! V5.6 ADDITIONS (PR #99 — Commit 1):
 //! ✅ StrategiesConfig: wma_confidence_threshold added
@@ -46,6 +55,7 @@
 //! V5.0 ADDITIONS (Stage 1 — Feb 23, 2026):
 //! ✅ execution_mode, instance_id, ExecutionConfig, BotConfig helpers
 //!
+//! March 12, 2026 - V5.7: seed_orders_bypass added to GridStrategyConfig (PR #100) 🔧
 //! March 11, 2026 - V5.6: wma_confidence_threshold added (PR #99 Commit 1) 🎯
 //! March 11, 2026 - V5.5: signal_size_multiplier added (PR #94 Commit 5a) 📐
 //! March 10, 2026 - V5.4: FeeFilterConfig added (PR #94 Commit 3) 🔥
@@ -853,7 +863,12 @@ impl Default for StrategiesConfig {
         Self {
             active: vec!["grid".to_string()],
             consensus_mode: "single".to_string(),
-            grid: GridStrategyConfig { enabled: true, weight: 1.0, min_confidence: 0.5 },
+            grid: GridStrategyConfig {
+                enabled: true,
+                weight: 1.0,
+                min_confidence: 0.5,
+                seed_orders_bypass: default_grid_seed_bypass(),
+            },
             momentum: MomentumStrategyConfig::default(),
             mean_reversion: MeanReversionStrategyConfig::default(),
             rsi: RsiStrategyConfig::default(),
@@ -870,6 +885,15 @@ impl Default for StrategiesConfig {
 // Strategy sub-configs
 // ─────────────────────────────────────────────────────────────────────────
 
+/// Config for the grid strategy, including the seed-orders bypass flag.
+///
+/// `seed_orders_bypass` mirrors `GridRebalancerConfig::seed_orders_bypass`.
+/// When `true` (default), `GridRebalancer::rebalance()` skips the initial
+/// seed-order placement and jumps straight to live grid management.
+/// Set to `false` only if you want the full seed sequence on (re)start.
+///
+/// PR #100: added here so TOML keys are accepted instead of rejected by
+/// `deny_unknown_fields` and causing a startup crash.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct GridStrategyConfig {
@@ -877,6 +901,10 @@ pub struct GridStrategyConfig {
     pub weight: f64,
     #[serde(default = "default_confidence")]
     pub min_confidence: f64,
+    /// Skip initial seed-order placement on (re)start.
+    /// Default: true — matches GridRebalancerConfig default.
+    #[serde(default = "default_grid_seed_bypass")]
+    pub seed_orders_bypass: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -1310,6 +1338,9 @@ fn default_signal_size_multiplier()   -> f64    { 1.0 }
 /// PR #99 Commit 1: WMA confidence gate default — 0.50 (permissive, matches grid.min_confidence).
 /// Production multi-strategy configs should set wma_confidence_threshold = 0.65 in their TOML.
 fn default_wma_confidence_threshold() -> f64    { 0.50 }
+/// PR #100: seed_orders_bypass default — true, matches GridRebalancerConfig default.
+/// All 46 existing TOMLs that omit this key parse unchanged.
+fn default_grid_seed_bypass()         -> bool   { true }
 
 // ═══════════════════════════════════════════════════════════════════════════
 // MAIN CONFIG IMPLEMENTATION
@@ -1385,7 +1416,7 @@ impl Config {
     pub fn display_summary(&self) {
         let border = "═".repeat(78);
         println!("\n{}", border);
-        println!("  🤖 GRIDZBOTZ V5.6 - CONFIGURATION");
+        println!("  🤖 GRIDZBOTZ V5.7 - CONFIGURATION");
         println!("{}\n", border);
 
         println!("📋 BOT: {} v{} [{}]", self.bot.name, self.bot.version, self.bot.environment);
@@ -1454,6 +1485,8 @@ impl Config {
         println!("   Active:           {}", self.strategies.active.join(", "));
         println!("   Mode:             {}", self.strategies.consensus_mode);
         println!("   WMA Conf Gate:    {:.2}", self.strategies.wma_confidence_threshold);
+        println!("   Seed Bypass:      {}",
+            if self.strategies.grid.seed_orders_bypass { "✅" } else { "❌" });
         if self.strategies.rsi.enabled {
             println!("   RSI:              period={} oversold={:.0} overbought={:.0} extreme={:.0}/{:.0}",
                 self.strategies.rsi.period, self.strategies.rsi.oversold_threshold,
@@ -1513,7 +1546,7 @@ impl ConfigBuilder {
             config: Config {
                 bot: BotConfig {
                     name: "GridzBot-Builder".to_string(),
-                    version: "5.6.0".to_string(),
+                    version: "5.7.0".to_string(),
                     environment: "testing".to_string(),
                     execution_mode: "paper".to_string(),
                     instance_id: None,
@@ -1604,6 +1637,13 @@ impl ConfigBuilder {
         self.config.strategies.wma_confidence_threshold = threshold;
         self
     }
+    /// PR #100: Control seed-orders bypass for grid strategy rebalancer.
+    /// true (default) = skip seed placement, jump to live grid management.
+    /// false = run full seed sequence on (re)start.
+    pub fn seed_orders_bypass(mut self, bypass: bool) -> Self {
+        self.config.strategies.grid.seed_orders_bypass = bypass;
+        self
+    }
 
     pub fn build(mut self) -> Result<Config> {
         self.config.apply_environment_defaults();
@@ -1617,7 +1657,7 @@ impl Default for ConfigBuilder {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// TESTS — V5.6 wma_confidence_threshold + V5.5 signal_size_multiplier
+// TESTS — V5.7 seed_orders_bypass + V5.6 wma_confidence_threshold
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[cfg(test)]
@@ -1816,7 +1856,6 @@ min_sol_reserve = 1.0
 
     // ── PR #99 Commit 1: wma_confidence_threshold tests ────────────────────
 
-    /// Default value is 0.50 — permissive, matches grid.min_confidence.
     #[test]
     fn test_wma_confidence_threshold_default() {
         let cfg = StrategiesConfig::default();
@@ -1826,7 +1865,6 @@ min_sol_reserve = 1.0
         );
     }
 
-    /// Value above 1.0 must be rejected.
     #[test]
     fn test_wma_confidence_threshold_above_one_rejected() {
         let mut cfg = StrategiesConfig::default();
@@ -1838,7 +1876,6 @@ min_sol_reserve = 1.0
         );
     }
 
-    /// Negative value must be rejected.
     #[test]
     fn test_wma_confidence_threshold_negative_rejected() {
         let mut cfg = StrategiesConfig::default();
@@ -1846,7 +1883,6 @@ min_sol_reserve = 1.0
         assert!(cfg.validate().is_err());
     }
 
-    /// Boundary values 0.0 and 1.0 must be accepted.
     #[test]
     fn test_wma_confidence_threshold_boundary_values_accepted() {
         let mut cfg = StrategiesConfig::default();
@@ -1856,7 +1892,6 @@ min_sol_reserve = 1.0
         assert!(cfg.validate().is_ok(), "1.0 must be valid");
     }
 
-    /// ConfigBuilder setter wires through to strategies config.
     #[test]
     fn test_builder_wma_confidence_threshold_setter() {
         let config = ConfigBuilder::new()
@@ -1869,7 +1904,6 @@ min_sol_reserve = 1.0
         );
     }
 
-    /// Serde roundtrip — field survives serialise → deserialise.
     #[test]
     fn test_wma_confidence_threshold_serde_roundtrip() {
         let mut cfg = StrategiesConfig::default();
@@ -1879,6 +1913,63 @@ min_sol_reserve = 1.0
         assert!(
             (restored.wma_confidence_threshold - 0.72).abs() < 1e-9,
             "roundtrip must preserve 0.72"
+        );
+    }
+
+    // ── PR #100: seed_orders_bypass tests ───────────────────────────────────
+
+    /// Default must be true — safe, matches GridRebalancerConfig.
+    #[test]
+    fn test_seed_orders_bypass_default_is_true() {
+        let cfg = StrategiesConfig::default();
+        assert!(
+            cfg.grid.seed_orders_bypass,
+            "seed_orders_bypass must default to true"
+        );
+    }
+
+    /// Absent key in TOML must also default to true.
+    #[test]
+    fn test_seed_orders_bypass_absent_toml_defaults_true() {
+        let toml_str = r#"
+enabled = true
+weight = 1.0
+min_confidence = 0.5
+"#;
+        let cfg: GridStrategyConfig = toml::from_str(toml_str).expect("deserialise");
+        assert!(
+            cfg.seed_orders_bypass,
+            "absent seed_orders_bypass must default to true"
+        );
+    }
+
+    /// Explicit false must survive serde roundtrip.
+    #[test]
+    fn test_seed_orders_bypass_false_roundtrip() {
+        let original = GridStrategyConfig {
+            enabled: true,
+            weight: 1.0,
+            min_confidence: 0.5,
+            seed_orders_bypass: false,
+        };
+        let toml_str = toml::to_string(&original).expect("serialise");
+        let restored: GridStrategyConfig = toml::from_str(&toml_str).expect("deserialise");
+        assert!(
+            !restored.seed_orders_bypass,
+            "explicit false must survive serde roundtrip"
+        );
+    }
+
+    /// Builder setter wires through correctly.
+    #[test]
+    fn test_builder_seed_orders_bypass_setter() {
+        let config = ConfigBuilder::new()
+            .seed_orders_bypass(false)
+            .build()
+            .expect("build");
+        assert!(
+            !config.strategies.grid.seed_orders_bypass,
+            "builder must wire seed_orders_bypass=false"
         );
     }
 }
