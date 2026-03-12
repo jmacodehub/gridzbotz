@@ -34,6 +34,12 @@
 //!    - Populated fresh every tick — stale voters never persist.
 //!    - Read via `get_last_voters()` by StrategyManager (Commit 2b) to feed
 //!      realized fill P&L back into per-strategy `record_trade()` trackers.
+//!
+//! ## Voter Count (PR #105 Commit 4):
+//!    - `registered_count()` returns the number of strategies that have a
+//!      WMA performance slot (i.e. were registered via `register_strategy()`).
+//!    - Distinct from `StrategyManager.strategies.len()` which includes
+//!      execution-only entries that are NOT WMA voters.
 //! 
 //! ## Example:
 //! ```text
@@ -50,9 +56,9 @@ use log::{debug, info};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-// ═══════════════════════════════════════════════════════════════════════════
+// ═════════════════════════════════════════════════════════════════════════
 // CONFIGURATION
-// ═══════════════════════════════════════════════════════════════════════════
+// ═════════════════════════════════════════════════════════════════════════
 
 // NOTE (PR #99 Commit 2): MIN_CONFIDENCE is the historic hard-wired default
 // preserved so WMAConsensusEngine::new() keeps its pre-PR #99 behaviour.
@@ -78,9 +84,9 @@ const ROI_WEIGHT: f64 = 0.4;
 #[allow(dead_code)]
 const MAX_CORRELATION: f64 = 0.8;
 
-// ═══════════════════════════════════════════════════════════════════════════
+// ═════════════════════════════════════════════════════════════════════════
 // STRATEGY PERFORMANCE TRACKING
-// ═══════════════════════════════════════════════════════════════════════════
+// ═════════════════════════════════════════════════════════════════════════
 
 /// Performance metrics for a single strategy
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -166,9 +172,9 @@ impl From<&Signal> for SignalType {
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
+// ═════════════════════════════════════════════════════════════════════════
 // WEIGHTED MAJORITY CONSENSUS ENGINE
-// ═══════════════════════════════════════════════════════════════════════════
+// ═════════════════════════════════════════════════════════════════════════
 
 /// Dynamic Weighted Majority Algorithm consensus engine.
 ///
@@ -183,6 +189,11 @@ impl From<&Signal> for SignalType {
 /// cleared the confidence gate on the most recent `resolve()` call.
 /// Exposed via `get_last_voters()` so StrategyManager (Commit 2b) can
 /// route realized fill P&L back to the right per-strategy trackers.
+///
+/// PR #105 Commit 4: adds `registered_count()` — returns the number of
+/// WMA voter slots (strategies registered via `register_strategy()`).
+/// Distinct from the total strategy count in `StrategyManager`, which
+/// includes execution-only entries that are not WMA voters.
 pub struct WMAConsensusEngine {
     performances: HashMap<String, StrategyPerformance>,
     cycles: usize,
@@ -224,6 +235,20 @@ impl WMAConsensusEngine {
     
     pub fn register_strategy(&mut self, name: String) {
         self.performances.insert(name.clone(), StrategyPerformance::new(name));
+    }
+
+    /// Returns the number of strategies registered as WMA voters.
+    ///
+    /// This is the count of slots in the `performances` map — i.e. strategies
+    /// that were registered via `register_strategy()` and participate in
+    /// weighted consensus voting.
+    ///
+    /// PR #105 Commit 4: distinct from `StrategyManager.strategies.len()` which
+    /// also counts execution-only entries (e.g. `GridRebalancer`) that have
+    /// no WMA slot. Used in `GridBot::new()` startup log and status display
+    /// to give an accurate picture of the active voter pool.
+    pub fn registered_count(&self) -> usize {
+        self.performances.len()
     }
     
     pub fn get_performance(&self, name: &str) -> Option<&StrategyPerformance> {
@@ -411,9 +436,9 @@ impl Default for WMAConsensusEngine {
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
+// ═════════════════════════════════════════════════════════════════════════
 // TESTS
-// ═══════════════════════════════════════════════════════════════════════════
+// ═════════════════════════════════════════════════════════════════════════
 
 #[cfg(test)]
 mod tests {
@@ -564,9 +589,9 @@ mod tests {
         assert!(perf.roi > 0.0);
     }
 
-    // ───────────────────────────────────────────────────────────────────────
+    // ────────────────────────────────────────────────────────────────────────
     // PR #98 Commit 2a: last_voters tracking tests
-    // ───────────────────────────────────────────────────────────────────────
+    // ────────────────────────────────────────────────────────────────────────
 
     /// Strategies that clear the confidence gate appear in last_voters.
     #[test]
@@ -643,5 +668,66 @@ mod tests {
             engine.get_last_voters().is_empty(),
             "last_voters must be empty when no strategy clears the gate"
         );
+    }
+
+    // ────────────────────────────────────────────────────────────────────────
+    // PR #105 Commit 4: registered_count() accessor
+    // ────────────────────────────────────────────────────────────────────────
+
+    /// registered_count() returns 0 on a fresh engine.
+    #[test]
+    fn test_registered_count_zero_on_new_engine() {
+        let engine = WMAConsensusEngine::new();
+        assert_eq!(engine.registered_count(), 0);
+    }
+
+    /// registered_count() increments with each register_strategy() call.
+    #[test]
+    fn test_registered_count_increments_on_register() {
+        let mut engine = WMAConsensusEngine::new();
+        assert_eq!(engine.registered_count(), 0);
+        engine.register_strategy("Momentum".to_string());
+        assert_eq!(engine.registered_count(), 1);
+        engine.register_strategy("RSI".to_string());
+        assert_eq!(engine.registered_count(), 2);
+        engine.register_strategy("MeanReversion".to_string());
+        assert_eq!(engine.registered_count(), 3);
+    }
+
+    /// registered_count() is NOT affected by resolve() or record_trade().
+    #[test]
+    fn test_registered_count_stable_across_cycles() {
+        let mut engine = WMAConsensusEngine::new();
+        engine.register_strategy("Momentum".to_string());
+        engine.register_strategy("RSI".to_string());
+        let count_before = engine.registered_count();
+
+        // Run several cycles
+        for _ in 0..15 {
+            let signals = vec![(
+                "Momentum".to_string(),
+                Signal::Buy { price: 100.0, size: 1.0, confidence: 0.75,
+                              reason: "m".into(), level_id: None },
+            )];
+            let _ = engine.resolve(signals, 100.0);
+            engine.record_trade("Momentum", 0.5);
+        }
+
+        assert_eq!(engine.registered_count(), count_before,
+                   "registered_count must not change across trading cycles");
+    }
+
+    /// registered_count() reflects only WMA voters, not execution-only strategies.
+    /// This mirrors the grid_bot.rs contract: GridRebalancer is added via
+    /// add_execution_only() and must NOT appear in registered_count().
+    #[test]
+    fn test_registered_count_excludes_unregistered_strategies() {
+        let mut engine = WMAConsensusEngine::new();
+        // Simulate: only signal strategies get register_strategy() calls
+        engine.register_strategy("Momentum".to_string());
+        engine.register_strategy("RSI".to_string());
+        // GridRebalancer is NOT registered (execution-only path skips this)
+        assert_eq!(engine.registered_count(), 2,
+                   "only Momentum + RSI are WMA voters; GridRebalancer excluded");
     }
 }
