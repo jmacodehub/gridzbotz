@@ -1,5 +1,13 @@
 # ═══════════════════════════════════════════════════════════════════════════
-#  🏆 MASTER V5.6.0 — GRIDZBOTZ — CANONICAL CONFIG TEMPLATE
+#  🏆 MASTER V5.6.1 — GRIDZBOTZ — CANONICAL CONFIG TEMPLATE
+#
+#  V5.6.1 (PR #106 — Fix Initial Grid Seeding / Orders=0 problem):
+#  ✅ [strategies.grid] seed_orders_bypass added (default: true)
+#     Bypasses SmartFeeFilter for the initial grid seeding batch only.
+#     Fixes Orders=0 on devnet/low-vol where VERY_LOW_VOL regime_factor (1.5×)
+#     blocked every seed order. After mark_seeding_complete() is called by
+#     GridBot, the filter is enforced normally — capital safety preserved.
+#     Set false only for hot-restart where seeding already occurred externally.
 #
 #  V5.6.0 (PR #94 — Commits 1-6):
 #  ✅ [trading] optimizer_interval_cycles added (OPT-1, Commits 1+2)
@@ -93,7 +101,7 @@
 # ═══════════════════════════════════════════════════════════════════════════
 [bot]
 name    = "GridzBot-Master"
-version = "5.6.0"    # V5.6.0 — PR #94: fee filter + consensus sizing + observability
+version = "5.6.1"    # V5.6.1 — PR #106: seed bypass fixes Orders=0 on low-vol
 environment = "testing"              # testing | development | production
 
 # 🔑 EXECUTION MODE — The single most important knob:
@@ -479,6 +487,27 @@ require_timeframe_alignment  = false
 enabled        = true
 weight         = 1.0
 min_confidence = 0.5
+
+# ── 🆕 V5.6.1 (PR #106): Seed Bypass — fixes Orders=0 on devnet / low-vol ──
+#
+# When true (default), the SmartFeeFilter is bypassed for the initial grid
+# seeding batch. GridBot calls mark_seeding_complete() after place_grid_orders()
+# returns, at which point the filter is enforced for ALL subsequent orders.
+#
+# Why this is needed:
+#   SmartFeeFilterConfig::from_fees_config() hardcodes grace_period_trades=0.
+#   In low-vol environments (devnet, ranging mainnet), the VERY_LOW_VOL
+#   regime_factor (1.5×) multiplies the minimum-profit bar high enough to
+#   block every seed order → 17 checked, 17 blocked, Orders=0 forever.
+#
+# Capital safety: bypass is time-bounded to seeding only. All live fills
+# go through the full fee filter (Bug B also fixed: record_execution() now
+# wired in on_fill() so trades_executed advances correctly).
+#
+# Set false only for hot-restart where the grid was seeded externally.
+#
+# Default: true
+seed_orders_bypass = true
 
 # ─── Strategy 2: Momentum ───────────────────────────────────────────────
 [strategies.momentum]
