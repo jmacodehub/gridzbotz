@@ -1,5 +1,17 @@
 //! ═════════════════════════════════════════════════════════════════════════
-//! GRID BOT V6.2 — FILL LEVEL-ID WIRED + CB DELTA P&L
+//! GRID BOT V6.3 — GRIDREBALANCER WIRED AS EXECUTION-ONLY WMA NON-VOTER
+//!
+//! PR #105 Commit 3: GridRebalancer switched from .add() → .add_execution_only()
+//!   Root cause of WMA deadlock:
+//!     GridRebalancer::analyze() always returns Signal::Hold (confidence=0.0).
+//!     Registering it via .add() gave it a permanent WMA voter slot emitting
+//!     0.0, always below wma_conf_gate. Zero fills → no weight update →
+//!     always 0.0 → permanent deadlock.
+//!   Fix:
+//!     .add_execution_only(grid_rebalancer_for_manager, ...) — skips
+//!     wma_engine.register_strategy(). GridRebalancer still receives
+//!     on_fill() callbacks and attach_analytics() init. It places orders
+//!     via its own should_place_order() path, not WMA consensus voting.
 //!
 //! PR #102 Commit 3: level_id mark-filled + CB delta P&L fix.
 //!   • process_price_update(): capture pnl_before fill loop.
@@ -20,6 +32,7 @@
 //! PR #94  (Commit 6): GridBotStats observability.
 //! PR #93: CircuitBreaker wired.
 //!
+//! March 12, 2026 - V6.3: GridRebalancer execution-only (PR #105 C3) 🔥
 //! March 12, 2026 - V6.2: fill level_id + CB delta P&L (PR #102) ✅
 //! March 11, 2026 - V6.1: Telegram alerts wired (PR #101) 📲
 //! March 11, 2026 - V6.0: wma_confidence_threshold fully wired (PR #99) 🎯
@@ -94,12 +107,12 @@ impl GridBot {
         engine: Arc<dyn TradingEngine + Send + Sync>,
         feed:   Arc<PriceFeed>,
     ) -> Result<Self> {
-        info!("[BOT-V6.2] Initializing GridBot V6.2...");
-        info!("[BOT-V6.2] WMAConfGate:      {:.2} (TOML-driven, PR #99)",
+        info!("[BOT-V6.3] Initializing GridBot V6.3...");
+        info!("[BOT-V6.3] WMAConfGate:      {:.2} (TOML-driven, PR #99)",
               config.strategies.wma_confidence_threshold);
-        info!("[BOT-V6.2] OptimizerCadence: {} cycles",
+        info!("[BOT-V6.3] OptimizerCadence: {} cycles",
               config.trading.optimizer_interval_cycles);
-        info!("[BOT-V6.2] ConsensusSizing:  {} | multiplier={:.2}x",
+        info!("[BOT-V6.3] ConsensusSizing:  {} | multiplier={:.2}x",
               if config.trading.enable_smart_position_sizing { "ACTIVE" } else { "disabled" },
               config.trading.signal_size_multiplier);
 
@@ -136,8 +149,13 @@ impl GridBot {
 
         let analytics_ctx = AnalyticsContext::default();
 
+        // PR #105 Commit 3: GridRebalancer registered as execution-only.
+        // It MUST NOT be a WMA voter — analyze() always returns Signal::Hold
+        // (confidence=0.0), which permanently blocks the wma_conf_gate.
+        // Use .add_execution_only() so it still receives on_fill() callbacks
+        // but has no WMA performance slot.
         let (_manager, _weights) = StrategyRegistryBuilder::new()
-            .add(grid_rebalancer_for_manager, config.strategies.grid.weight)
+            .add_execution_only(grid_rebalancer_for_manager, config.strategies.grid.weight)
             .add_if(
                 config.strategies.momentum.enabled,
                 MomentumStrategy::new_from_config(&MomentumConfig {
@@ -181,8 +199,9 @@ impl GridBot {
 
         let manager = _manager;
 
-        info!("[BOT-V6.2] {} strategies loaded (conf_gate={:.2})",
+        info!("[BOT-V6.3] {} strategies loaded ({} WMA voters, conf_gate={:.2})",
               manager.strategies.len(),
+              manager.wma_engine.registered_count(),
               manager.wma_engine.min_confidence());
 
         let grid_state         = GridStateTracker::new();
@@ -192,7 +211,7 @@ impl GridBot {
         let adaptive_optimizer = AdaptiveOptimizer::new(base_spacing, base_size);
         let circuit_breaker    = CircuitBreaker::new(&config);
 
-        info!("[BOT-V6.2] GridBot V6.2 initialization complete");
+        info!("[BOT-V6.3] GridBot V6.3 initialization complete");
 
         Ok(Self {
             manager,
@@ -230,7 +249,7 @@ impl GridBot {
     }
 
     async fn initialize_with_price(&mut self) -> Result<()> {
-        info!("[BOT] V6.2 GRID INIT - awaiting live price...");
+        info!("[BOT] V6.3 GRID INIT - awaiting live price...");
 
         let initial_price = self.feed.latest_price().await;
         if initial_price <= 0.0 {
@@ -463,17 +482,12 @@ impl GridBot {
 
             // ── PR #102: Snapshot P&L *before* the fill loop so we can
             //    compute per-fill deltas for CB.record_trade().
-            //    Previously the cumulative snapshot was passed on every fill,
-            //    causing CB NAV drift and spurious consecutive-loss trips.
             let pnl_before = self.grid_state.total_realized_pnl().await;
 
             for fill in &filled_orders {
                 let is_buy    = fill.side == OrderSide::Buy;
                 let fill_size = self.adaptive_optimizer.current_position_size;
 
-                // ── PR #102: Mark the grid level filled so GridStateTracker
-                //    stays consistent in live mode. Synthetic FillEvents from
-                //    real_trader carry level_id set by place_limit_order_with_level().
                 if let Some(lid) = fill.level_id {
                     if is_buy {
                         self.grid_state.mark_buy_filled(lid).await;
@@ -482,7 +496,6 @@ impl GridBot {
                     }
                 }
 
-                // Re-read after mark so delta reflects the state update above.
                 let pnl_after = self.grid_state.total_realized_pnl().await;
                 let pnl_delta = pnl_after - pnl_before;
 
@@ -494,8 +507,6 @@ impl GridBot {
                       fill.order_id, price, fill_size, pnl_delta, timestamp);
 
                 self.enhanced_metrics.record_trade(is_buy, pnl_delta, timestamp);
-
-                // CB receives per-fill delta, not cumulative snapshot.
                 self.circuit_breaker.record_trade(pnl_delta, new_nav);
 
                 if fill.side == OrderSide::Sell {
@@ -508,7 +519,6 @@ impl GridBot {
                         self.total_fills_tracked,
                     ).await;
 
-                    // WMA P&L attribution (PR #98)
                     let voters: Vec<String> = self.manager.get_last_wma_voters().to_vec();
                     for voter in &voters {
                         self.manager.record_fill_for_wma(voter, pnl_delta);
@@ -524,7 +534,6 @@ impl GridBot {
         self.last_known_pnl = wallet.pnl_usdc(price);
         self.enhanced_metrics.update_portfolio_value(new_nav);
 
-        // Adaptive optimizer
         if self.total_cycles - self.last_optimization_cycle
             >= self.config.trading.optimizer_interval_cycles
         {
@@ -536,7 +545,6 @@ impl GridBot {
             self.last_optimization_cycle = self.total_cycles;
         }
 
-        // Periodic heartbeat
         let interval = self.config.metrics.stats_interval;
         if interval > 0 && self.total_cycles % interval == 0 {
             let perf   = self.engine.get_performance_stats().await;
@@ -605,7 +613,7 @@ impl GridBot {
         let border      = "=".repeat(60);
 
         println!("\n{border}");
-        println!("   [BOT] GRID BOT V6.2 - STATUS REPORT");
+        println!("   [BOT] GRID BOT V6.3 - STATUS REPORT");
         println!("{border}");
         println!("\n[PERFORMANCE]");
         println!("  Total Cycles:      {}", stats.total_cycles);
@@ -617,6 +625,7 @@ impl GridBot {
         println!("  Intent Conflicts:  {}", stats.intent_conflicts);
         println!("  Optimizer Cadence: {} cycles", self.config.trading.optimizer_interval_cycles);
         println!("  WMA Conf Gate:     {:.2}", self.manager.wma_engine.min_confidence());
+        println!("  WMA Voters:        {}", self.manager.wma_engine.registered_count());
         println!("  Telegram:          {}", if self.telegram.is_enabled() { "✅ Enabled" } else { "Disabled" });
 
         if self.config.trading.enable_smart_position_sizing {
@@ -794,7 +803,7 @@ pub struct GridBotStats {
 
 impl GridBotStats {
     pub fn display_summary(&self) {
-        println!("\n[STATS] GRID BOT V6.2 STATISTICS");
+        println!("\n[STATS] GRID BOT V6.3 STATISTICS");
         println!("   Cycles:     {}", self.total_cycles);
         println!("   Trades:     {}", self.successful_trades);
         println!("   Fills:      {}", self.total_fills_tracked);
@@ -1052,23 +1061,70 @@ mod tests {
         assert!(!tripped);
     }
 
-    /// PR #102: Verify pnl_delta semantics — delta must be zero when
-    /// P&L does not change (e.g. BUY fill before a SELL closes the round-trip).
     #[test]
     fn test_pnl_delta_zero_on_buy_fill() {
         let pnl_before = 0.0_f64;
-        let pnl_after  = 0.0_f64; // BUY fill does not realize P&L
+        let pnl_after  = 0.0_f64;
         let delta = pnl_after - pnl_before;
         assert!((delta - 0.0).abs() < 1e-12);
     }
 
-    /// PR #102: Verify pnl_delta is positive on a profitable SELL.
     #[test]
     fn test_pnl_delta_positive_on_profitable_sell() {
         let pnl_before = 0.0_f64;
-        let pnl_after  = 1.25_f64; // SELL closed a profitable round-trip
+        let pnl_after  = 1.25_f64;
         let delta = pnl_after - pnl_before;
         assert!(delta > 0.0);
         assert!((delta - 1.25).abs() < 1e-12);
+    }
+
+    // ────────────────────────────────────────────────────────────────────────
+    // PR #105 Commit 3: execution-only wiring verification
+    // ────────────────────────────────────────────────────────────────────────
+
+    /// Verify that a strategy registered via add_execution_only() is present
+    /// in the manager but has NO WMA voter slot — this is the call-site
+    /// contract that grid_bot.rs now relies on for GridRebalancer.
+    #[test]
+    fn test_grid_rebalancer_execution_only_no_wma_slot() {
+        use crate::strategies::{
+            StrategyRegistryBuilder,
+            grid_rebalancer::{GridRebalancer, GridRebalancerConfig},
+            shared::analytics::AnalyticsContext,
+        };
+        let gr  = GridRebalancer::new(GridRebalancerConfig::default()).unwrap();
+        let ctx = AnalyticsContext::default();
+        let (manager, weights) = StrategyRegistryBuilder::new()
+            .add_execution_only(gr, 0.40)
+            .build(ctx);
+        // Strategy is present in the manager
+        assert_eq!(manager.strategies.len(), 1);
+        assert_eq!(weights, vec![0.40]);
+        // But has NO WMA voter slot
+        assert!(
+            manager.wma_engine.get_performance("GridRebalancer").is_none(),
+            "GridRebalancer must NOT be a WMA voter when added via add_execution_only()"
+        );
+    }
+
+    /// Verify wma_voter_count in log is consistent: execution-only strategy
+    /// contributes to strategies.len() but NOT to registered_count().
+    #[test]
+    fn test_wma_voter_count_excludes_execution_only() {
+        use crate::strategies::{
+            StrategyRegistryBuilder,
+            grid_rebalancer::{GridRebalancer, GridRebalancerConfig},
+            shared::analytics::AnalyticsContext,
+        };
+        let gr1 = GridRebalancer::new(GridRebalancerConfig::default()).unwrap();
+        let gr2 = GridRebalancer::new(GridRebalancerConfig::default()).unwrap();
+        let ctx = AnalyticsContext::default();
+        let (manager, _) = StrategyRegistryBuilder::new()
+            .add_execution_only(gr1, 0.40)  // execution-only: NOT a voter
+            .add(gr2, 0.30)                  // regular: IS a voter
+            .build(ctx);
+        assert_eq!(manager.strategies.len(), 2,   "both strategies in manager");
+        assert_eq!(manager.wma_engine.registered_count(), 1,
+                   "only 1 WMA voter slot (the .add() one)");
     }
 }
