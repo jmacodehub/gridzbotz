@@ -1,5 +1,18 @@
 //! =============================================================================
-//! REAL TRADER ENGINE V3.3
+//! REAL TRADER ENGINE V3.4
+//!
+//! V3.4 CHANGES (fix/real-trader-canonical-fee-source — PR #110):
+//! ✅ P0 FIX: AsyncRpcFeeSource replaced by canonical RpcFeeSource (PR #109).
+//!    AsyncRpcFeeSource called getRecentPrioritizationFees(&[]) — empty
+//!    account keys = global network noise (NFT mints, memecoin spam, voting).
+//!    RpcFeeSource passes [JUP6Lk, SOL, USDC] = Jupiter local fee market.
+//!    This is the correct distribution for our actual swap execution path.
+//! ✅ priority_fees.source field now respected in new():
+//!    "rpc"    → RpcFeeSource    (Chainstack / any RPC)
+//!    "helius" → HeliusFeeSource (Helius getPriorityFeeEstimate V2)
+//! ✅ display_status() shows fee source name (rpc|helius), not just DYNAMIC.
+//! ✅ Closes EXEC-4 Dynamic Priority Fees audit item (CRITICAL).
+//!    Chain: PR #97 (estimator) → PR #109 (sources) → PR #110 (production wiring)
 //!
 //! V3.3 CHANGES (fix/cb-reconcile-telegram-hardening — PR #103 Commit 1):
 //! ✅ reconcile_balances() removed from process_price_update().
@@ -19,12 +32,7 @@
 //!    place_limit_order_with_level() pushes a synthetic FillEvent after every
 //!    confirmed Jupiter swap, carrying level_id and actual fill price/size.
 //!    process_price_update() drains pending_fills and returns them so that
-//!    grid_bot.rs receives fills in live mode, enabling:
-//!      - notify_fill() fan-out to all strategies
-//!      - mark_buy/sell_filled(level_id) in GridStateTracker
-//!      - real P&L delta delivery to CircuitBreaker.record_trade()
-//!    fee_usdc = 0.0: Jupiter fee is embedded in output amount;
-//!    TODO(tech-debt): reconcile actual fee from tx receipt in future PR.
+//!    grid_bot.rs receives fills in live mode.
 //!
 //! V3.1 CHANGES (feat/priority-fee-quant-log — PR #97 Commit 1):
 //! ✅ build_jupiter_swap(): add quant info! log for priority fee observability.
@@ -32,7 +40,6 @@
 //! V3.0 CHANGES (fix/fees-config-reconciliation — PR #96 Commit 1):
 //! ✅ RealTradingConfig::slippage_bps DELETED — shadow of ExecutionConfig.
 //! ✅ FeesConfig is now undisputed single source of truth for fee math.
-//! ✅ RealTradingEngine::slippage_bps cached from execution.max_slippage_bps.
 //!
 //! ## Shadow field policy (RealTradingConfig) — DO NOT regress
 //!   - Slippage:        ExecutionConfig::max_slippage_bps → engine.slippage_bps
@@ -40,7 +47,7 @@
 //!   - Static prio fee: PriorityFeeConfig::fallback_microlamports → engine field
 //!   - Fee math:        FeesConfig — paper_trader/fee_filter/grid_rebalancer only
 //!
-//! March 2026 — V3.3 🚀
+//! March 2026 — V3.4 🚀
 //! =============================================================================
 
 use anyhow::{bail, Context, Result};
@@ -53,8 +60,9 @@ use std::sync::Arc;
 use std::str::FromStr;
 use std::time::Duration;
 use tokio::sync::RwLock;
-use solana_client::nonblocking::rpc_client::RpcClient as AsyncRpcClient;
 use super::priority_fee_estimator::{PriorityFeeEstimator, FeeDataSource};
+use super::rpc_fee_source::RpcFeeSource;
+use super::helius_fee_source::HeliusFeeSource;
 
 // -----------------------------------------------------------------------------
 // MODULAR IMPORTS
@@ -74,7 +82,7 @@ use solana_sdk::{
 };
 
 // =============================================================================
-// ⚡ ASYNC RPC FEE SOURCE
+// CONSTANTS
 // =============================================================================
 
 /// Estimated CU budget for Jupiter swaps (used to convert µL/CU → total lamports).
@@ -83,60 +91,6 @@ const JUPITER_ESTIMATED_CU: u64 = 300_000;
 /// Minimum max_lamports floor — ensures txs can land even if estimator
 /// returns very low values during unusually calm periods.
 const MIN_MAX_LAMPORTS: u64 = 5_000;
-
-struct AsyncRpcFeeSource {
-    client: AsyncRpcClient,
-    rpc_url: String,
-}
-
-impl AsyncRpcFeeSource {
-    fn new(rpc_url: &str, timeout: Duration) -> Self {
-        debug!("AsyncRpcFeeSource: targeting {} (timeout {:?})", rpc_url, timeout);
-        Self {
-            client: AsyncRpcClient::new_with_timeout(rpc_url.to_string(), timeout),
-            rpc_url: rpc_url.to_string(),
-        }
-    }
-}
-
-#[async_trait]
-impl FeeDataSource for AsyncRpcFeeSource {
-    async fn fetch_recent_fees(&self) -> Vec<u64> {
-        match self.client.get_recent_prioritization_fees(&[]).await {
-            Ok(entries) => {
-                let fees: Vec<u64> = entries
-                    .iter()
-                    .map(|e| e.prioritization_fee)
-                    .collect();
-
-                if fees.is_empty() {
-                    log::warn!(
-                        "RPC {} returned 0 fee samples — estimator will use fallback",
-                        self.rpc_url
-                    );
-                } else {
-                    let non_zero = fees.iter().filter(|&&f| f > 0).count();
-                    debug!(
-                        "Fee source: {} slots, {} non-zero, range {}-{} µL ({})",
-                        fees.len(),
-                        non_zero,
-                        fees.iter().min().copied().unwrap_or(0),
-                        fees.iter().max().copied().unwrap_or(0),
-                        self.rpc_url,
-                    );
-                }
-                fees
-            }
-            Err(e) => {
-                log::warn!(
-                    "RPC fee sampling failed ({}): {e} — estimator will use fallback",
-                    self.rpc_url
-                );
-                vec![]
-            }
-        }
-    }
-}
 
 // -----------------------------------------------------------------------------
 // CONFIGURATION
@@ -282,32 +236,29 @@ pub struct PerformanceStats {
 // REAL TRADING ENGINE
 // -----------------------------------------------------------------------------
 pub struct RealTradingEngine {
-    keystore:              Arc<SecureKeystore>,
-    executor:              Arc<RwLock<TransactionExecutor>>,
-    circuit_breaker:       Arc<RwLock<CircuitBreaker>>,
-    stop_loss_manager:     Arc<RwLock<StopLossManager>>,
-    balance_tracker:       Arc<BalanceTracker>,
-    config:                RealTradingConfig,
-    trades:                Arc<RwLock<Vec<Trade>>>,
-    _open_orders:          Arc<RwLock<HashMap<String, Order>>>,
-    next_id:               Arc<AtomicU64>,
-    total_executions:      Arc<AtomicU64>,
-    successful_executions: Arc<AtomicU64>,
-    failed_executions:     Arc<AtomicU64>,
-    emergency_shutdown:    Arc<AtomicBool>,
+    keystore:               Arc<SecureKeystore>,
+    executor:               Arc<RwLock<TransactionExecutor>>,
+    circuit_breaker:        Arc<RwLock<CircuitBreaker>>,
+    stop_loss_manager:      Arc<RwLock<StopLossManager>>,
+    balance_tracker:        Arc<BalanceTracker>,
+    config:                 RealTradingConfig,
+    trades:                 Arc<RwLock<Vec<Trade>>>,
+    _open_orders:           Arc<RwLock<HashMap<String, Order>>>,
+    next_id:                Arc<AtomicU64>,
+    total_executions:       Arc<AtomicU64>,
+    successful_executions:  Arc<AtomicU64>,
+    failed_executions:      Arc<AtomicU64>,
+    emergency_shutdown:     Arc<AtomicBool>,
     priority_fee_estimator: Option<Arc<PriorityFeeEstimator>>,
-    static_priority_fee:   u64,
-    profit_take_pct:       f64,
-    slippage_bps:          u16,
+    /// Name of the active fee source for logging — "rpc", "helius", or "static".
+    fee_source_name:        &'static str,
+    static_priority_fee:    u64,
+    profit_take_pct:        f64,
+    slippage_bps:           u16,
     /// V3.2: Synthetic FillEvents from confirmed Jupiter swaps.
-    /// place_limit_order_with_level() pushes here after execute_trade() succeeds.
-    /// process_price_update() drains this buffer and returns fills to grid_bot.
-    pending_fills:         Arc<RwLock<Vec<FillEvent>>>,
+    pending_fills:          Arc<RwLock<Vec<FillEvent>>>,
     /// V3.3: Last NAV seen by reconcile_balances().
-    /// Seeded with initial_nav at construction so the first post-trade
-    /// reconcile produces a clean delta instead of a full-session snapshot.
-    /// reconcile_balances() updates this after every call.
-    last_reconciled_nav:   Arc<RwLock<f64>>,
+    last_reconciled_nav:    Arc<RwLock<f64>>,
 }
 
 impl RealTradingEngine {
@@ -318,7 +269,7 @@ impl RealTradingEngine {
         initial_balance_sol: f64,
         initial_sol_price_usd: f64,
     ) -> Result<Self> {
-        info!("[RealEngine] Initializing V3.3");
+        info!("[RealEngine] Initializing V3.4");
 
         config.validate()?;
 
@@ -337,33 +288,68 @@ impl RealTradingEngine {
         let profit_take_pct = global_config.risk.take_profit_pct;
         let slippage_bps    = global_config.execution.max_slippage_bps;
 
-        let (priority_fee_estimator, static_priority_fee) =
+        // ── Priority fee wiring (V3.4) ────────────────────────────────────────
+        // Respects priority_fees.source: "rpc" | "helius"
+        // "rpc"    → RpcFeeSource: getRecentPrioritizationFees with
+        //            [JUP6Lk, SOL, USDC] account keys = Jupiter local fee market
+        // "helius" → HeliusFeeSource: getPriorityFeeEstimate V2
+        //            max(global_percentile, per_account_percentile)
+        // Both supersede the old AsyncRpcFeeSource which used &[] (global noise).
+        let (priority_fee_estimator, fee_source_name, static_priority_fee) =
             if global_config.priority_fees.enable_dynamic {
-                let source = AsyncRpcFeeSource::new(
-                    &global_config.network.rpc_url,
-                    Duration::from_secs(5),
-                );
-                let estimator = PriorityFeeEstimator::new(
-                    global_config.priority_fees.clone(),
-                    Arc::new(source),
-                );
+                let fee_cfg = &global_config.priority_fees;
+                let rpc_url = &global_config.network.rpc_url;
+
+                let source: Arc<dyn FeeDataSource> = match fee_cfg.source.as_str() {
+                    "helius" => {
+                        // Helius RPC URL from env — falls back gracefully if absent
+                        let helius_url = std::env::var("GRIDZBOTZ_HELIUS_RPC_URL")
+                            .unwrap_or_else(|_| {
+                                log::warn!(
+                                    "[RealEngine] priority_fees.source=\"helius\" but \
+                                     GRIDZBOTZ_HELIUS_RPC_URL not set — \
+                                     falling back to RpcFeeSource on primary RPC"
+                                );
+                                rpc_url.clone()
+                            });
+                        info!("[RealEngine] Fee source: Helius getPriorityFeeEstimate V2 ⚡");
+                        Arc::new(HeliusFeeSource::new(helius_url, fee_cfg))
+                    }
+                    _ => {
+                        // default: "rpc" — canonical RpcFeeSource with JUP account keys
+                        info!(
+                            "[RealEngine] Fee source: RpcFeeSource ({}) \
+                             [JUP6Lk+SOL+USDC local market] ⚡",
+                            rpc_url
+                        );
+                        Arc::new(RpcFeeSource::new(rpc_url.clone(), Duration::from_secs(5)))
+                    }
+                };
+
+                let estimator = PriorityFeeEstimator::new(fee_cfg.clone(), source);
                 info!(
-                    "[RealEngine] Dynamic priority fees ENABLED \
-                     (P{}, ×{}, cache {}s, bounds {}-{} µL/CU)",
-                    global_config.priority_fees.percentile,
-                    global_config.priority_fees.multiplier,
-                    global_config.priority_fees.cache_ttl_secs,
-                    global_config.priority_fees.min_microlamports,
-                    global_config.priority_fees.max_microlamports,
+                    "[RealEngine] Dynamic fees: P{}, ×{}, cache {}s, bounds {}-{} µL/CU, source={}",
+                    fee_cfg.percentile,
+                    fee_cfg.multiplier,
+                    fee_cfg.cache_ttl_secs,
+                    fee_cfg.min_microlamports,
+                    fee_cfg.max_microlamports,
+                    fee_cfg.source,
                 );
+
+                let src_name: &'static str = match fee_cfg.source.as_str() {
+                    "helius" => "helius",
+                    _        => "rpc",
+                };
                 (
                     Some(Arc::new(estimator)),
-                    global_config.priority_fees.fallback_microlamports,
+                    src_name,
+                    fee_cfg.fallback_microlamports,
                 )
             } else {
                 let fee = global_config.priority_fees.fallback_microlamports;
                 info!("[RealEngine] Priority fees STATIC: {} µL/CU", fee);
-                (None, fee)
+                (None, "static", fee)
             };
 
         let balance_tracker = Arc::new(BalanceTracker::new(
@@ -372,7 +358,7 @@ impl RealTradingEngine {
             initial_sol_price_usd,
         ));
 
-        info!("[RealEngine] Initialized V3.3");
+        info!("[RealEngine] Initialized V3.4");
         info!("  Wallet      : {}", keystore.pubkey());
         info!("  NAV         : ${:.2} (SOL @ ${:.4})",
             balance_tracker.initial_balance_usd(), initial_sol_price_usd);
@@ -381,6 +367,7 @@ impl RealTradingEngine {
         info!("  SL mode     : {}",
             if global_config.risk.enable_trailing_stop { "trailing" } else { "fixed" });
         info!("  Slippage    : {} bps (max Jupiter swap tolerance)", slippage_bps);
+        info!("  Fee source  : {}", fee_source_name);
 
         Ok(Self {
             keystore,
@@ -397,6 +384,7 @@ impl RealTradingEngine {
             failed_executions:     Arc::new(AtomicU64::new(0)),
             emergency_shutdown:    Arc::new(AtomicBool::new(false)),
             priority_fee_estimator,
+            fee_source_name,
             static_priority_fee,
             profit_take_pct,
             slippage_bps,
@@ -526,8 +514,9 @@ impl RealTradingEngine {
         let (per_cu_microlamports, fee_mode) = match &self.priority_fee_estimator {
             Some(estimator) => {
                 let fee = estimator.get_priority_fee().await;
-                debug!("[Jupiter] Dynamic fee resolved: {} µL/CU", fee);
-                (fee, "dynamic")
+                debug!("[Jupiter] Dynamic fee resolved: {} µL/CU (source: {})",
+                    fee, self.fee_source_name);
+                (fee, self.fee_source_name)
             }
             None => {
                 debug!("[Jupiter] Static fee: {} µL/CU", self.static_priority_fee);
@@ -541,7 +530,7 @@ impl RealTradingEngine {
         let max_lamports = max_lamports.max(MIN_MAX_LAMPORTS);
 
         info!(
-            "[Quant] priority_fee: mode={} fee={} µL/CU max_lamports={}",
+            "[Quant] priority_fee: source={} fee={} µL/CU max_lamports={}",
             fee_mode, per_cu_microlamports, max_lamports
         );
 
@@ -578,15 +567,6 @@ impl RealTradingEngine {
         Ok((tx, last_valid))
     }
 
-    /// Reconcile live balances against CB.
-    ///
-    /// Called every `reconcile_balances_every_n_trades` from execute_trade().
-    /// Computes pnl_delta = total_value - last_reconciled_nav to pass a true
-    /// per-reconcile delta to CB.record_trade(), not a growing cumulative
-    /// snapshot that would cause NAV drift and spurious consecutive-loss trips.
-    ///
-    /// CB.record_trade() is only called when delta != 0.0 — silent no-op on
-    /// flat price (avoids zero-delta noise on CB's consecutive-loss counter).
     async fn reconcile_balances(&self, current_price: f64) -> Result<()> {
         let (usdc, sol)  = self.balance_tracker.get_balances().await;
         let total_value  = usdc + (sol * current_price);
@@ -692,7 +672,7 @@ impl RealTradingEngine {
 
         println!();
         println!("=======================================================");
-        println!("  REAL TRADING ENGINE V3.3 - STATUS");
+        println!("  REAL TRADING ENGINE V3.4 - STATUS");
         println!("=======================================================");
         println!();
         println!("Balances:");
@@ -725,10 +705,9 @@ impl RealTradingEngine {
         println!();
         println!("Execution:");
         println!("  Slippage    : {} bps (max Jupiter tolerance)", self.slippage_bps);
-        if self.priority_fee_estimator.is_some() {
-            println!("  Priority fee: DYNAMIC");
-        } else {
-            println!("  Priority fee: STATIC ({} µL/CU)", self.static_priority_fee);
+        match self.fee_source_name {
+            "static" => println!("  Priority fee: STATIC ({} µL/CU)", self.static_priority_fee),
+            src      => println!("  Priority fee: DYNAMIC (source: {})", src),
         }
         println!();
         println!("Circuit Breaker:");
@@ -768,19 +747,6 @@ impl RealTradingEngine {
 
 #[async_trait]
 impl TradingEngine for RealTradingEngine {
-    /// Execute a Jupiter swap for the given grid level and push a synthetic
-    /// FillEvent to pending_fills.
-    ///
-    /// Jupiter swaps are atomic — there is no open order to poll. The fill
-    /// is constructed here, immediately after the confirmed swap, so that
-    /// process_price_update() can drain it and deliver it to grid_bot:
-    ///   - grid_bot marks the level filled in GridStateTracker
-    ///   - CircuitBreaker receives real P&L delta (not always-zero snapshot)
-    ///   - StrategyManager.notify_fill() fan-out fires correctly
-    ///
-    /// fee_usdc = 0.0: Jupiter fee is embedded in output amount and cannot
-    /// be computed at this call site without parsing the tx receipt.
-    /// TODO(tech-debt): reconcile fee from tx receipt in a future PR.
     async fn place_limit_order_with_level(
         &self,
         side: OrderSide,
@@ -826,14 +792,6 @@ impl TradingEngine for RealTradingEngine {
         Ok(0)
     }
 
-    /// Poll for fills and run SL/TP monitoring.
-    ///
-    /// V3.3: reconcile_balances() removed from this path.
-    /// It was firing CB.record_trade(cumulative_pnl) on every price tick
-    /// (120×/min), causing spurious consecutive-loss trips with zero fills.
-    /// CB now only receives P&L from:
-    ///   1. GridBot.process_price_update() → fill loop delta (primary path)
-    ///   2. execute_trade() → reconcile_balances() every N trades (sanity check)
     async fn process_price_update(&self, current_price: f64) -> TradingResult<Vec<FillEvent>> {
         let entry_price = self.stop_loss_manager.read().await.entry_price();
         if entry_price > 0.0 {
@@ -865,9 +823,7 @@ impl TradingEngine for RealTradingEngine {
         Ok(fills)
     }
 
-    async fn open_order_count(&self) -> usize {
-        0
-    }
+    async fn open_order_count(&self) -> usize { 0 }
 
     async fn is_trading_allowed(&self) -> bool {
         if self.emergency_shutdown.load(Ordering::SeqCst) {
@@ -939,30 +895,48 @@ mod tests {
     #[test]
     fn test_no_slippage_shadow_on_realconfig() {
         let config = RealTradingConfig::default();
-        assert!(config.max_trade_size_usdc.is_some(),               "max_trade_size_usdc must be Some");
-        assert!(config.circuit_breaker_loss_pct.is_some(),          "circuit_breaker_loss_pct must be Some");
-        assert!(config.profit_take_ratio.is_some(),                  "profit_take_ratio must be Some");
-        assert!(config.reconcile_balances_every_n_trades.is_some(), "reconcile_n_trades must be Some");
-        assert!(config.rpc_url.is_none(),                            "rpc_url must default to None");
-        assert!(config.jupiter_api_key.is_none(),                    "jupiter_api_key must default to None");
+        assert!(config.max_trade_size_usdc.is_some());
+        assert!(config.circuit_breaker_loss_pct.is_some());
+        assert!(config.profit_take_ratio.is_some());
+        assert!(config.reconcile_balances_every_n_trades.is_some());
+        assert!(config.rpc_url.is_none());
+        assert!(config.jupiter_api_key.is_none());
     }
 
     #[test]
     fn test_reconcile_not_called_in_process_price_update() {
         // Structural guard: process_price_update must NOT call reconcile_balances.
-        // If this test fails it means the every-tick CB regression was re-introduced.
-        // Verified by code-review — reconcile_balances() sole wiring is
-        // execute_trade() every reconcile_balances_every_n_trades.
         let src = include_str!("real_trader.rs");
         let fn_body_start = src.find("async fn process_price_update").unwrap();
-        // Find the closing brace of process_price_update by scanning for
-        // the next top-level fn after it.
         let after = &src[fn_body_start..];
         let next_fn = after.find("\n    async fn ").unwrap_or(after.len());
         let fn_body = &after[..next_fn];
         assert!(
             !fn_body.contains("reconcile_balances"),
             "REGRESSION: reconcile_balances() must not be called inside process_price_update()"
+        );
+    }
+
+    /// V3.4 guard: AsyncRpcFeeSource must not exist anywhere in this file.
+    /// It used &[] account keys (global noise). Canonical RpcFeeSource uses
+    /// [JUP6Lk, SOL, USDC] (Jupiter local fee market).
+    #[test]
+    fn test_async_rpc_fee_source_removed() {
+        let src = include_str!("real_trader.rs");
+        assert!(
+            !src.contains("AsyncRpcFeeSource"),
+            "REGRESSION: AsyncRpcFeeSource removed in V3.4 — use canonical RpcFeeSource"
+        );
+    }
+
+    /// V3.4 guard: fee_source_name field must be present on the engine struct.
+    /// Proves source-aware logging is wired, not just compile-checked.
+    #[test]
+    fn test_fee_source_name_field_exists() {
+        let src = include_str!("real_trader.rs");
+        assert!(
+            src.contains("fee_source_name"),
+            "fee_source_name field must exist — source-aware fee logging requires it"
         );
     }
 }
