@@ -10,7 +10,7 @@
 //!
 //! SETUP - create a .env file at project root:
 //!   cp .env.example .env
-//!   # then fill in JUPITER_API_KEY and RPC_URL
+//!   # then fill in GRIDZBOTZ_JUPITER_API_KEY (and other REQUIRED vars)
 //!
 //! USAGE - Dry run (zero risk, reads .env automatically):
 //!   cargo run --bin smoke_test -- --keypair ~/.config/solana/id.json
@@ -45,13 +45,13 @@ struct Args {
     #[clap(short, long, default_value = "~/.config/solana/id.json")]
     keypair: String,
 
-    /// Mainnet RPC URL. Reads RPC_URL from .env if not specified.
-    #[clap(short, long, env = "RPC_URL", default_value = "https://api.mainnet-beta.solana.com")]
+    /// Mainnet RPC URL. Reads GRIDZBOTZ_RPC_URL from .env if not specified.
+    #[clap(short, long, env = "GRIDZBOTZ_RPC_URL", default_value = "https://api.mainnet-beta.solana.com")]
     rpc: String,
 
-    /// Jupiter API key (overrides JUPITER_API_KEY env var).
+    /// Jupiter API key. Reads GRIDZBOTZ_JUPITER_API_KEY from .env if not specified.
     /// Get a free key at https://portal.jup.ag
-    #[clap(long, env = "JUPITER_API_KEY")]
+    #[clap(long, env = "GRIDZBOTZ_JUPITER_API_KEY")]
     jup_key: Option<String>,
 
     /// Send the real swap (0.001 SOL -> USDC). Default: dry run only.
@@ -93,7 +93,7 @@ async fn main() -> Result<()> {
     };
     println!("  RPC:      {}", rpc_display);
     println!("  Jup API:  https://api.jup.ag | auth: {}",
-        if args.jup_key.is_some() { "key configured" } else { "NO KEY - set JUPITER_API_KEY" }
+        if args.jup_key.is_some() { "key configured ✅" } else { "❌ NO KEY — set GRIDZBOTZ_JUPITER_API_KEY in .env" }
     );
     println!();
 
@@ -126,10 +126,9 @@ async fn main() -> Result<()> {
     // -- [3] Jupiter: quote + build tx ---------------------------------------
     print!("  [3/5] Jupiter quote + build tx...... ");
 
-    // Get API key from --jup-key flag or JUPITER_API_KEY env var
+    // Resolve API key: --jup-key flag → GRIDZBOTZ_JUPITER_API_KEY env var
     let api_key = args.jup_key
-        .or_else(|| std::env::var("JUPITER_API_KEY").ok())
-        .context("Jupiter API key required. Set JUPITER_API_KEY env var or pass --jup-key")?;
+        .context("Jupiter API key required. Set GRIDZBOTZ_JUPITER_API_KEY in .env or pass --jup-key")?;
 
     // Parse mints
     let sol_mint = Pubkey::from_str(SOL_MINT)
