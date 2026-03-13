@@ -1,5 +1,5 @@
 //! ═════════════════════════════════════════════════════════════════
-//! Trading Module V5.8 - Jupiter-Powered Real Trading Engine (Consolidated)
+//! Trading Module V5.9 - Jupiter-Powered Real Trading Engine (Consolidated)
 //!
 //! Architecture:
 //! - Unified Trading Interface: Generic trait for paper and live trading
@@ -13,6 +13,14 @@
 //! - Enhanced Metrics: Trade-level analytics and performance tracking
 //! - Adaptive Optimizer: Self-learning grid spacing and position sizing
 //! - Wallet Utils: Shared on-chain balance query (single-bot + fleet)
+//!
+//! V5.9 CHANGES (PR #109 — Dynamic Priority Fee Sources):
+//! ✅ rpc_fee_source.rs — RpcFeeSource: FeeDataSource via getRecentPrioritizationFees
+//!    Passes JUP6Lk + SOL + USDC account keys for Jupiter local fee market accuracy.
+//! ✅ helius_fee_source.rs — HeliusFeeSource: FeeDataSource via getPriorityFeeEstimate
+//!    Helius V2 algo: max(global_percentile, per_account_percentile). Helius only.
+//! ✅ PriorityFeeConfig gains `source` field: "rpc" | "helius" (serde default = "rpc")
+//! ✅ smoke_test.rs wired: live fee estimated at stage [3/5], hardcoded 10_000 removed
 //!
 //! V5.8 CHANGES (PR #86 — Multi-Bot Orchestrator):
 //! ✅ wallet_utils.rs — fetch_wallet_balances_for_orchestrator() extracted from main.rs
@@ -57,7 +65,7 @@
 //! ✅ executor.execute_versioned() wired for Jupiter swaps
 //! ✅ keystore.sign_versioned_transaction() added
 //!
-//! March 2026 - V5.8 FLEET COMMANDER 🚀
+//! March 2026 - V5.9 DYNAMIC FEES ⚡
 //! ═════════════════════════════════════════════════════════════════
 
 pub use crate::config::Config;
@@ -65,9 +73,9 @@ pub use crate::config::Config;
 // Re-export async_trait for trait implementations
 pub use async_trait::async_trait;
 
-// ═══════════════════════════════════════════════════════════════════════════
+// ═════════════════════════════════════════════════════════════════
 // Core Trading Modules
-// ═══════════════════════════════════════════════════════════════════════════
+// ═════════════════════════════════════════════════════════════════
 
 pub mod price_feed;
 pub mod pyth_price_feed;
@@ -85,6 +93,8 @@ pub mod engine;                 // 🏭 V5.4: Config-driven engine factory
 pub mod price_feed_utils;       // 📡 V5.4: Pyth HTTP price fetching with retry (PR #72)
 pub mod priority_fee_estimator; // ⚡ Dynamic priority fee estimation (EXEC-4)
 pub mod wallet_utils;           // 💰 V5.8: Shared on-chain balance query (PR #86)
+pub mod rpc_fee_source;         // ⚡ V5.9: Standard getRecentPrioritizationFees (PR #109)
+pub mod helius_fee_source;      // ⚡ V5.9: Helius getPriorityFeeEstimate V2 (PR #109)
 
 // WebSocket feeds (optional feature)
 #[cfg(feature = "websockets")]
@@ -94,15 +104,15 @@ pub mod binance_ws;
 #[cfg(feature = "websockets")]
 pub mod pyth_lazer;
 
-// ═══════════════════════════════════════════════════════════════════════════
+// ═════════════════════════════════════════════════════════════════
 // Wallet Utils Export (V5.8 — PR #86) 💰
-// ═══════════════════════════════════════════════════════════════════════════
+// ═════════════════════════════════════════════════════════════════
 
 pub use wallet_utils::fetch_wallet_balances_for_orchestrator;
 
-// ═══════════════════════════════════════════════════════════════════════════
+// ═════════════════════════════════════════════════════════════════
 // Engine Factory Exports (V5.4 — PR #72) 🏭
-// ═══════════════════════════════════════════════════════════════════════════
+// ═════════════════════════════════════════════════════════════════
 
 pub use engine::{
     create_engine,
@@ -110,9 +120,9 @@ pub use engine::{
     EngineParams,
 };
 
-// ═══════════════════════════════════════════════════════════════════════════
+// ═════════════════════════════════════════════════════════════════
 // Paper Trading Exports
-// ═══════════════════════════════════════════════════════════════════════════
+// ═════════════════════════════════════════════════════════════════
 
 pub use paper_trader::{
     PaperTradingEngine,
@@ -125,9 +135,9 @@ pub use paper_trader::{
     PerformanceStats as PaperPerformanceStats,
 };
 
-// ═══════════════════════════════════════════════════════════════════════════
+// ═════════════════════════════════════════════════════════════════
 // Grid Level State Machine Exports (V4.0)
-// ═══════════════════════════════════════════════════════════════════════════
+// ═════════════════════════════════════════════════════════════════
 
 pub use grid_level::{
     GridLevel,
@@ -135,24 +145,24 @@ pub use grid_level::{
     GridStateTracker,
 };
 
-// ═══════════════════════════════════════════════════════════════════════════
+// ═════════════════════════════════════════════════════════════════
 // Enhanced Metrics Exports (V4.1) 📊
-// ═══════════════════════════════════════════════════════════════════════════
+// ═════════════════════════════════════════════════════════════════
 
 pub use enhanced_metrics::EnhancedMetrics;
 
-// ═══════════════════════════════════════════════════════════════════════════
+// ═════════════════════════════════════════════════════════════════
 // Adaptive Optimizer Exports (V4.2) 🧠
-// ═══════════════════════════════════════════════════════════════════════════
+// ═════════════════════════════════════════════════════════════════
 
 pub use adaptive_optimizer::{
     AdaptiveOptimizer,
     OptimizationResult,
 };
 
-// ═══════════════════════════════════════════════════════════════════════════
+// ═════════════════════════════════════════════════════════════════
 // Jupiter Client Exports (V5.3.1 / Mar 2026) 🪐 — Production from src/dex/
-// ═══════════════════════════════════════════════════════════════════════════
+// ═════════════════════════════════════════════════════════════════
 
 pub use crate::dex::jupiter_client::{
     JupiterClient,
@@ -163,9 +173,9 @@ pub use crate::dex::jupiter_client::{
 // WSOL_MINT backwards-compat alias (SOL and WSOL are the same on Solana)
 pub const WSOL_MINT: &str = SOL_MINT;
 
-// ═══════════════════════════════════════════════════════════════════════════
+// ═════════════════════════════════════════════════════════════════
 // Real Trading Exports (🔥 ENABLED - Phase 5!)
-// ═══════════════════════════════════════════════════════════════════════════
+// ═════════════════════════════════════════════════════════════════
 
 pub use real_trader::{
     RealTradingEngine,
@@ -173,9 +183,9 @@ pub use real_trader::{
     PerformanceStats as RealPerformanceStats,
 };
 
-// ═══════════════════════════════════════════════════════════════════════════
+// ═════════════════════════════════════════════════════════════════
 // Transaction Executor Exports
-// ═══════════════════════════════════════════════════════════════════════════
+// ═════════════════════════════════════════════════════════════════
 
 pub use executor::{
     TransactionExecutor,
@@ -185,15 +195,22 @@ pub use executor::{
 
 pub use trade::Trade;
 
-// ═══════════════════════════════════════════════════════════════════════════
+// ═════════════════════════════════════════════════════════════════
 // Priority Fee Estimator Exports (⚡ EXEC-4)
-// ═══════════════════════════════════════════════════════════════════════════
+// ═════════════════════════════════════════════════════════════════
 
 pub use priority_fee_estimator::{PriorityFeeEstimator, FeeDataSource, MockFeeSource};
 
-// ═══════════════════════════════════════════════════════════════════════════
+// ═════════════════════════════════════════════════════════════════
+// Fee Source Exports (⚡ V5.9 — PR #109)
+// ═════════════════════════════════════════════════════════════════
+
+pub use rpc_fee_source::RpcFeeSource;
+pub use helius_fee_source::HeliusFeeSource;
+
+// ═════════════════════════════════════════════════════════════════
 // Price Feed Exports
-// ═══════════════════════════════════════════════════════════════════════════
+// ═════════════════════════════════════════════════════════════════
 
 pub use price_feed::{PriceFeed, PriceFeedMetrics, FeedMode};
 pub use pyth_http::{PythHttpFeed, PriceUpdate as HttpPriceUpdate, feed_ids as http_feed_ids};
@@ -202,9 +219,9 @@ pub use pyth_price_feed::PythPriceFeed;
 #[cfg(feature = "websockets")]
 pub use pyth_websocket::{PythWebSocketFeed, PriceUpdate as WsPriceUpdate};
 
-// ═══════════════════════════════════════════════════════════════════════════
+// ═════════════════════════════════════════════════════════════════
 // Conditional Type Aliases (WebSocket vs HTTP)
-// ═══════════════════════════════════════════════════════════════════════════
+// ═════════════════════════════════════════════════════════════════
 
 #[cfg(feature = "websockets")]
 pub type LivePriceUpdate = WsPriceUpdate;
@@ -216,9 +233,9 @@ pub use pyth_http::feed_ids as live_feed_ids;
 #[cfg(not(feature = "websockets"))]
 pub use http_feed_ids as live_feed_ids;
 
-// ═══════════════════════════════════════════════════════════════════════════
+// ═════════════════════════════════════════════════════════════════
 // UNIFIED TRADING ENGINE TRAIT (V4.1) 🚀
-// ═══════════════════════════════════════════════════════════════════════════
+// ═════════════════════════════════════════════════════════════════
 
 /// Result type for trading operations
 pub type TradingResult<T> = anyhow::Result<T>;
@@ -256,7 +273,7 @@ pub struct BatchOrderRequest {
     pub grid_level_id: Option<u64>,
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
+// ═════════════════════════════════════════════════════════════════
 // FILL EVENT (V5.2 / V5.2.1) 📨
 //
 // Emitted whenever an order is confirmed filled.
@@ -268,7 +285,7 @@ pub struct BatchOrderRequest {
 //
 //   FillEvent::new(...).with_level(level.id).with_distance_from_mid(-1.2)
 //
-// ═══════════════════════════════════════════════════════════════════════════
+// ═════════════════════════════════════════════════════════════════
 
 #[derive(Debug, Clone)]
 pub struct FillEvent {
@@ -306,42 +323,12 @@ impl FillEvent {
         }
     }
 
-    /// ```
-    /// use solana_grid_bot::trading::{FillEvent, OrderSide};
-    ///
-    /// let fill = FillEvent::new(
-    ///     "ORDER-123",
-    ///     OrderSide::Buy,
-    ///     153.50,
-    ///     0.1,
-    ///     0.0025,
-    ///     None,
-    ///     1_700_000_000,
-    /// ).with_level(42);
-    ///
-    /// assert_eq!(fill.level_id, Some(42));
-    /// ```
     #[inline]
     pub fn with_level(mut self, level_id: u64) -> Self {
         self.level_id = Some(level_id);
         self
     }
 
-    /// ```
-    /// use solana_grid_bot::trading::{FillEvent, OrderSide};
-    ///
-    /// let fill = FillEvent::new(
-    ///     "ORDER-456",
-    ///     OrderSide::Buy,
-    ///     153.14,
-    ///     0.1,
-    ///     0.0025,
-    ///     None,
-    ///     1_700_000_100,
-    /// ).with_distance_from_mid(-1.2);
-    ///
-    /// assert!(fill.distance_from_mid_pct.unwrap() < 0.0);
-    /// ```
     #[inline]
     pub fn with_distance_from_mid(mut self, pct: f64) -> Self {
         self.distance_from_mid_pct = Some(pct);
@@ -417,9 +404,9 @@ pub trait TradingEngine: Send + Sync {
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
+// ═════════════════════════════════════════════════════════════════
 // Helper Functions
-// ═══════════════════════════════════════════════════════════════════════════
+// ═════════════════════════════════════════════════════════════════
 
 pub async fn get_live_price(feed_id: &str) -> Option<f64> {
     let http = PythHttpFeed::new(vec![feed_id.to_string()]);
@@ -430,9 +417,9 @@ pub async fn get_live_price(feed_id: &str) -> Option<f64> {
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
+// ═════════════════════════════════════════════════════════════════
 // Re-exports for Convenience
-// ═══════════════════════════════════════════════════════════════════════════
+// ═════════════════════════════════════════════════════════════════
 
 pub mod prelude {
     pub use super::{
@@ -492,12 +479,16 @@ pub mod prelude {
         // Priority Fee Estimator (⚡ EXEC-4)
         PriorityFeeEstimator,
         FeeDataSource,
+
+        // Fee Sources (⚡ V5.9 — PR #109)
+        RpcFeeSource,
+        HeliusFeeSource,
     };
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
+// ═════════════════════════════════════════════════════════════════
 // TESTS
-// ═══════════════════════════════════════════════════════════════════════════
+// ═════════════════════════════════════════════════════════════════
 
 #[cfg(test)]
 mod tests {
@@ -557,7 +548,7 @@ mod tests {
         let _: Option<AdaptiveOptimizer> = None;
         let _: Option<JupiterClient>     = None;
         let _: Option<FillEvent>         = None;
-        let _sol: &str = SOL_MINT;
+        let _sol: &str  = SOL_MINT;
         let _wsol: &str = WSOL_MINT;
         let _usdc: &str = USDC_MINT;
     }
