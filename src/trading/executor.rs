@@ -16,6 +16,11 @@
 //! March 2026     | V6.3 — Remove priority_fee_microlamports orphan field
 //!                          (PR #96). Priority fees owned by PriorityFeeConfig
 //!                          + PriorityFeeEstimator — not by the executor.
+//! March 2026     | V6.4 — Remove dead hardcoded fallback RPCs from default()
+//!                          (PR #116). projectserum.com dead, rpcpool.com 403.
+//!                          Helius fallback wired via TOML rpc_fallback_urls.
+//!                          default() now sets rpc_fallback_urls: None so TOML
+//!                          config populates the pool without being shadowed.
 //!
 //! ## Fee ownership policy
 //!
@@ -25,6 +30,15 @@
 //! → Jupiter builds the VersionedTransaction with compute budget ix baked in.
 //! The executor receives a fully-built, fully-signed VersionedTransaction
 //! and sends it. Do NOT re-add priority_fee_microlamports here.
+//!
+//! ## RPC fallback pool policy
+//!
+//! Dead or restricted endpoints must NOT appear in default().
+//! Fallback URLs are production config — they belong in TOML under
+//! [execution].rpc_fallback_urls, not hardcoded in source.
+//! Confirmed dead (PR #116):
+//!   ❌ https://solana-api.projectserum.com  — domain dead
+//!   ❌ https://api.rpcpool.com              — returns HTTP 403
 //! ═══════════════════════════════════════════════════════════════════════════
 
 use anyhow::{bail, Context, Result};
@@ -68,10 +82,13 @@ impl Default for ExecutorConfig {
     fn default() -> Self {
         Self {
             rpc_url: "https://api.mainnet-beta.solana.com".into(),
-            rpc_fallback_urls: Some(vec![
-                "https://solana-api.projectserum.com".into(),
-                "https://api.rpcpool.com".into(),
-            ]),
+            // ✅ PR #116: rpc_fallback_urls set to None in default().
+            // Dead endpoints removed:
+            //   ❌ "https://solana-api.projectserum.com" — domain dead
+            //   ❌ "https://api.rpcpool.com"              — returns HTTP 403
+            // Helius fallback is wired via TOML [execution].rpc_fallback_urls.
+            // default() must not shadow production config with dead endpoints.
+            rpc_fallback_urls: None,
             rpc_timeout_secs: Some(30),
             max_retries: Some(3),
             confirmation_timeout_secs: Some(60),
@@ -430,15 +447,12 @@ impl TransactionExecutor {
         config.validate()?;
         let rpc = Arc::new(RpcClientPool::new(&config));
 
-        info!("⚡ TransactionExecutor V6.3 initialized");
+        info!("⚡ TransactionExecutor V6.4 initialized");
         info!(
             "   Retries: {} | Confirmation timeout: {}s",
             config.max_retries.unwrap_or(3),
             config.confirmation_timeout_secs.unwrap_or(60),
         );
-        // ✅ PR #96: '| Priority fee: N µL' removed from log — the executor
-        //    does not own or compute priority fees. Fee info is logged in
-        //    RealTradingEngine::new() under the 'Execution:' block.
 
         Ok(Self {
             rpc,
@@ -626,20 +640,39 @@ mod tests {
 
     /// ✅ PR #96: Compile-time regression guard.
     /// priority_fee_microlamports must NOT exist on ExecutorConfig.
-    /// The executor does NOT own fee decisions — fees flow through:
-    /// PriorityFeeConfig → PriorityFeeEstimator → build_jupiter_swap()
-    /// → JupiterClient::with_priority_fee() → baked into VersionedTransaction.
-    /// Re-adding this field would create a false impression of fee ownership
-    /// and mislead any reader of the logs. See module doc for full policy.
     #[test]
     fn test_no_priority_fee_microlamports_on_executor_config() {
         let config = ExecutorConfig::default();
-        // The following line must NOT compile if the orphan field exists:
-        // let _ = config.priority_fee_microlamports; // ← must NOT exist
-        // Verify the struct holds exactly the right operational fields:
         assert!(!config.rpc_url.is_empty(),              "rpc_url must be set");
         assert!(config.max_retries.unwrap_or(0) > 0,     "max_retries must be > 0");
         assert!(config.confirmation_timeout_secs.is_some(), "confirmation_timeout must be Some");
         assert!(config.compute_unit_limit.is_some(),     "compute_unit_limit must be Some");
+    }
+
+    /// ✅ PR #116: Dead fallback RPC regression guard.
+    /// projectserum.com and rpcpool.com must never appear in default().
+    /// If they creep back in, every cold-start will poison the RPC pool
+    /// with endpoints that are guaranteed to fail before reaching Helius.
+    #[test]
+    fn test_no_dead_fallback_rpcs_in_default() {
+        let config = ExecutorConfig::default();
+        if let Some(ref fallbacks) = config.rpc_fallback_urls {
+            for url in fallbacks {
+                assert!(
+                    !url.contains("projectserum"),
+                    "REGRESSION: projectserum.com is dead — must not appear in default fallbacks"
+                );
+                assert!(
+                    !url.contains("rpcpool"),
+                    "REGRESSION: rpcpool.com returns 403 — must not appear in default fallbacks"
+                );
+            }
+        }
+        // The preferred state: default() has no fallbacks at all.
+        // Helius is wired via TOML [execution].rpc_fallback_urls.
+        assert!(
+            config.rpc_fallback_urls.is_none(),
+            "PR #116: default() should have rpc_fallback_urls: None — fallbacks belong in TOML"
+        );
     }
 }
