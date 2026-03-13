@@ -17,6 +17,11 @@
 //!   • `registry.len()` logged separately as `claimed_levels` for
 //!     observability without misleading the conflicts metric.
 //!
+//! fix/usdc-balance-helius-routing:
+//!   • fetch_wallet_balances_for_orchestrator() gains `token_rpc_url`
+//!     param. Pass execution.rpc_fallback_urls[0] (Helius) so
+//!     get_token_accounts_by_owner routes away from Chainstack (403).
+//!
 //! Architecture:
 //! ```text
 //!   main() --orchestrate
@@ -161,9 +166,16 @@ impl Orchestrator {
             }
 
             let params = if bot_config.bot.is_live() {
+                // Route get_token_accounts_by_owner to Helius fallback.
+                // Chainstack returns 403 on this method regardless of plan tier.
+                let token_rpc_url = bot_config.execution.rpc_fallback_urls
+                    .as_ref()
+                    .and_then(|v| v.first())
+                    .map(String::as_str);
                 let (usdc, sol) = crate::trading::fetch_wallet_balances_for_orchestrator(
                     &bot_config.network.rpc_url,
                     &bot_config.security.wallet_path,
+                    token_rpc_url,
                 ).await
                     .with_context(|| format!("Wallet query failed for '{}'", instance_id))?;
                 EngineParams {
