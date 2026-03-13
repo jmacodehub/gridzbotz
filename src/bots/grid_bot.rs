@@ -26,6 +26,15 @@
 //!   - \u0394 → \u{0394} (invalid Rust Unicode escapes)
 //!   - max/min_grid_spacing_pct added to test_config() TradingConfig literals
 //!
+//! PR #107 Commit 6: Restore Bot trait contract
+//!   - tick(price, ts) → process_tick(&mut self)  [trait requires no args]
+//!   - TickResult::Continue → TickResult::active/paused/shutdown constructors
+//!   - async fn stats() → fn stats() (sync — trait is sync)
+//!   - BotStats fields restored: instance_id, bot_type, total_fills,
+//!     total_orders, uptime_secs, is_paused, current_pnl, intent_conflicts
+//!   - name() + instance_id() methods restored (were dropped in prior commit)
+//!   - shutdown() restored with Telegram send_shutdown + display_strategy_performance
+//!
 //! PR #105 Commit 3: GridRebalancer switched to .add_execution_only()
 //!   (avoids WMA deadlock — see V6.3 header for full root-cause)
 //! PR #102 Commit 3: level_id mark-filled + CB delta P&L fix.
@@ -35,7 +44,7 @@
 //! PR #94  (Commit 6): GridBotStats observability.
 //! PR #93: CircuitBreaker wired.
 //!
-//! March 13, 2026 - V6.4: fee-reconciliation wired (PR #107 C2+C4+C5) 💰
+//! March 13, 2026 - V6.4: fee-reconciliation wired (PR #107 C2+C4+C5+C6) 💰
 //! March 12, 2026 - V6.3: GridRebalancer execution-only (PR #105 C3) 🔥
 //! March 12, 2026 - V6.2: fill level_id + CB delta P&L (PR #102) ✅
 //! March 11, 2026 - V6.1: Telegram alerts wired (PR #101) 📲
@@ -672,6 +681,10 @@ impl GridBot {
         println!("  Optimizations:     {}",   stats.optimization_count);
         println!("══════════════════════════════════════════════");
     }
+
+    pub async fn display_strategy_performance(&self) {
+        self.manager.display_stats();
+    }
 }
 
 // ═════════════════════════════════════════════════════════════════════════
@@ -707,40 +720,92 @@ pub struct GridBotStats {
 }
 
 // ═════════════════════════════════════════════════════════════════════════
-// Bot trait impl
+// impl Bot for GridBot  — PR #107 C6: trait contract restored
 // ═════════════════════════════════════════════════════════════════════════
 
 #[async_trait]
 impl Bot for GridBot {
+    // C6-fix-5: name() + instance_id() were dropped in prior commit — restored.
+    fn name(&self) -> &str { "GridBot" }
+    fn instance_id(&self) -> &str { self.config.bot.instance_name() }
+
+    fn set_intent_registry(&mut self, registry: IntentRegistry) {
+        info!("[BOT] Intent registry wired for '{}'", self.instance_id());
+        self.intent_registry = Some(registry);
+    }
+
     async fn initialize(&mut self) -> Result<()> {
         self.pre_init_hook().await?;
         self.initialize_with_price().await
-    }
-
-    async fn tick(&mut self, price: f64, timestamp: i64) -> Result<TickResult> {
-        self.process_price_update(price, timestamp).await?;
-        let last = self.last_price.unwrap_or(price);
-        if self.should_reposition(price, last).await {
-            self.reposition_grid(price, last).await?;
-        }
-        Ok(TickResult::Continue)
-    }
-
-    async fn shutdown(&mut self) -> Result<()> {
-        info!("[BOT] Shutting down GridBot V6.4");
-        self.display_status().await;
+            .context("Bot::initialize - grid placement failed")?;
         Ok(())
     }
 
-    async fn stats(&self) -> BotStats {
-        let s = self.get_stats().await;
+    // C6-fix-1+2: tick(price, ts) → process_tick(&mut self)
+    //   Bot trait requires process_tick() with NO args — bot owns its feed.
+    //   TickResult::Continue does not exist — use active/paused/shutdown constructors.
+    async fn process_tick(&mut self) -> Result<TickResult> {
+        let price = self.feed.latest_price().await;
+        if price <= 0.0 {
+            warn!("[BOT::process_tick] Invalid price {:.4} — shutdown", price);
+            return Ok(TickResult::shutdown());
+        }
+        let ts = chrono::Utc::now().timestamp();
+        let fills_before  = self.total_fills_tracked;
+        let orders_before = self.total_orders_placed;
+
+        self.process_price_update(price, ts).await?;
+
+        let fills_this_tick  = self.total_fills_tracked.saturating_sub(fills_before);
+        let orders_this_tick = self.total_orders_placed.saturating_sub(orders_before);
+
+        let stats = self.get_stats().await;
+        if stats.trading_paused {
+            return Ok(TickResult::paused("circuit breaker tripped"));
+        }
+        Ok(TickResult::active(fills_this_tick, orders_this_tick))
+    }
+
+    async fn shutdown(&mut self) -> Result<()> {
+        info!("[BOT] Graceful shutdown for '{}'", self.instance_id());
+        let final_price = self.last_price.unwrap_or(0.0);
+        self.display_status().await;
+        self.display_strategy_performance().await;
+
+        let wallet  = self.engine.get_wallet().await;
+        let perf    = self.engine.get_performance_stats().await;
+        self.telegram.send_shutdown(
+            self.instance_id(),
+            self.session_start.elapsed().as_secs(),
+            self.total_fills_tracked,
+            self.total_orders_placed,
+            self.last_known_pnl,
+            wallet.roi(final_price),
+            perf.win_rate,
+        ).await;
+
+        info!("[BOT] Shutdown complete | cycles={} fills={} orders={} repos={} pnl=${:.2}",
+              self.total_cycles, self.total_fills_tracked, self.total_orders_placed,
+              self.grid_repositions, self.last_known_pnl);
+        Ok(())
+    }
+
+    // C6-fix-3+4: async fn stats() → fn stats() (sync, no await).
+    //   Bot trait declares: fn stats(&self) -> BotStats  (NOT async).
+    //   BotStats fields restored: instance_id, bot_type, total_fills,
+    //   total_orders, uptime_secs, is_paused, current_pnl, intent_conflicts.
+    //   Removed phantom fields that don't exist on BotStats struct.
+    fn stats(&self) -> BotStats {
         BotStats {
-            total_cycles:      s.total_cycles,
-            successful_trades: s.successful_trades,
-            total_value_usdc:  s.total_value_usdc,
-            pnl_usdc:          s.pnl_usdc,
-            roi_percent:       s.roi_percent,
-            trading_paused:    s.trading_paused,
+            instance_id:      self.config.bot.instance_name().to_string(),
+            bot_type:         "GridBot".to_string(),
+            total_cycles:     self.total_cycles,
+            total_fills:      self.total_fills_tracked,
+            total_orders:     self.total_orders_placed,
+            uptime_secs:      self.session_start.elapsed().as_secs(),
+            is_paused:        self.circuit_breaker.status().is_tripped,
+            current_pnl:      self.last_known_pnl,
+            intent_conflicts: self.intent_conflicts,
         }
     }
 }
