@@ -1,5 +1,10 @@
 //! ═══════════════════════════════════════════════════════════════════════════
-//! 🚀 PROJECT FLASH V5.8 – Production Grid Trading Bot
+//! 🚀 PROJECT FLASH V5.9 – Production Grid Trading Bot
+//!
+//! V5.9 CHANGES (feat/wire-dotenvy-into-main):
+//! ✅ dotenvy::dotenv().ok() — first line of main(), loads .env before
+//!    Config::from_file() so GRIDZBOTZ_* vars reach resolve_secrets()
+//! ✅ Replaced unmaintained `dotenv` crate with `dotenvy` (maintained fork)
 //!
 //! V5.8 CHANGES (PR #86 — Multi-Bot Orchestrator):
 //! ✅ --orchestrate <PATH> flag — PATH A fleet mode via Orchestrator V1.0
@@ -24,7 +29,7 @@
 //! ✅ All engine construction logic lives in src/trading/engine.rs
 //! ✅ main.rs only passes EngineParams (wallet balances for live)
 //!
-//! March 2026 — V5.8 FLEET COMMANDER 🤖
+//! March 2026 — V5.9 SECRETS HARDENING 🔐 / V5.8 FLEET COMMANDER 🤖
 //! ═══════════════════════════════════════════════════════════════════════════
 
 use solana_grid_bot::init;
@@ -49,7 +54,7 @@ use clap::Parser;
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[derive(Parser, Debug)]
-#[clap(name = "gridzbotz", version = "5.8.0")]
+#[clap(name = "gridzbotz", version = "5.9.0")]
 #[clap(about = "Production-grade Solana grid trading bot — single-bot or fleet", long_about = None)]
 struct Args {
     /// Configuration file path (single-bot mode)
@@ -204,8 +209,8 @@ fn print_banner(config: &Config, fleet_mode: bool) {
         "🟡 PAPER — simulation, fills logged to CSV"
     };
     println!("\n{}", border);
-    println!("     🚀 GRIDZBOTZ V5.8 — PRODUCTION GRID TRADING BOT");
-    println!("     🤖 Multi-Bot Orchestrator V1.0 · GAP-3 Complete · Fleet Ready");
+    println!("     🚀 GRIDZBOTZ V5.9 — PRODUCTION GRID TRADING BOT");
+    println!("     🔐 Secrets Hardening Complete · Fleet Ready · Jupiter V6");
     println!("{}", border);
     println!("\n   Mode:     {}", mode_label);
     if !fleet_mode {
@@ -275,7 +280,7 @@ async fn fetch_wallet_balances(rpc_url: &str, wallet_path: &str) -> Result<(f64,
 // ═══════════════════════════════════════════════════════════════════════════
 
 async fn initialize_components(config: &Config) -> Result<(Box<dyn Bot>, Arc<PriceFeed>)> {
-    info!("🔧 Initializing core components V5.8...");
+    info!("🔧 Initializing core components V5.9...");
 
     info!("🚀 Starting V3.5 Hybrid Price Feed (Pyth/Hermes)...");
     let price_history_size = config.trading.volatility_window as usize;
@@ -311,7 +316,7 @@ async fn initialize_components(config: &Config) -> Result<(Box<dyn Bot>, Arc<Pri
     let engine = create_engine(config, params).await?;
     info!("✅ TradingEngine constructed via engine factory");
 
-    info!("🤖 Initializing GridBot V5.8 → Box<dyn Bot>...");
+    info!("🤖 Initializing GridBot V5.9 → Box<dyn Bot>...");
     let mut bot: Box<dyn Bot> = Box::new(
         GridBot::new(config.clone(), engine, Arc::clone(&feed))?
     );
@@ -344,7 +349,7 @@ async fn run_trading_loop(
     let stats_interval       = config.metrics.stats_interval as u32;
     let slow_cycle_threshold = cycle_interval * 3;
 
-    info!("🔥 STARTING TRADING LOOP — V5.8 Box<dyn Bot> DISPATCH");
+    info!("🔥 STARTING TRADING LOOP — V5.9 Box<dyn Bot> DISPATCH");
     if config.bot.is_live() {
         info!("   Total Cycles:     ∞ (live mode — Ctrl+C to stop)");
     } else {
@@ -483,7 +488,7 @@ fn setup_logging(args: &Args) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// MAIN ENTRY POINT V5.8 — Dual-Mode Dispatch
+// MAIN ENTRY POINT V5.9 — Dual-Mode Dispatch
 //
 // PATH A (──orchestrate):  Orchestrator::from_config() → run() — N bots
 // PATH B (default):         initialize_components() → run_trading_loop() — 1 bot
@@ -491,6 +496,13 @@ fn setup_logging(args: &Args) {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
+    // 🔐 Load .env file (if present) into the process environment BEFORE
+    // anything else runs. This ensures GRIDZBOTZ_* vars are visible to
+    // resolve_secrets() inside Config::from_file().
+    // .ok() = silent no-op when .env is absent — safe for CI/CD & production
+    // servers that inject env vars directly without a .env file.
+    dotenvy::dotenv().ok();
+
     let args = Args::parse();
     setup_logging(&args);
     init().map_err(|e| anyhow::anyhow!("Core initialization failed: {:?}", e))?;
@@ -507,8 +519,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
             // Minimal fleet banner without per-bot config metadata
             let border = "═".repeat(75);
             println!("\n{}", border);
-            println!("     🚀 GRIDZBOTZ V5.8 — PRODUCTION GRID TRADING BOT");
-            println!("     🤖 Multi-Bot Orchestrator V1.0 · GAP-3 Complete · Fleet Ready");
+            println!("     🚀 GRIDZBOTZ V5.9 — PRODUCTION GRID TRADING BOT");
+            println!("     🔐 Secrets Hardening Complete · Fleet Ready · Jupiter V6");
             println!("     🟠 FLEET — multi-bot Orchestrator V1.0");
             println!("{}\n", border);
         }
