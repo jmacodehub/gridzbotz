@@ -4,7 +4,7 @@
 //! Proves the full gridzbotz stack in sequence:
 //!   [1] Keystore load + pubkey check
 //!   [2] Live SOL/USD price via Pyth Hermes
-//!   [3] Jupiter quote -> VersionedTransaction (api.jup.ag/swap/v1)
+//!   [3] Dynamic priority fee estimate + Jupiter quote -> VersionedTransaction
 //!   [4] Keystore sign (fee-payer identity verified)
 //!   [5] Submit to mainnet  <- only with --submit flag
 //!
@@ -21,17 +21,28 @@
 //! Override RPC inline (ignores .env RPC_URL):
 //!   cargo run --bin smoke_test -- --keypair ... --rpc https://... --submit
 //!
+//! Use Helius for fee estimation (more accurate, local fee market aware):
+//!   GRIDZBOTZ_HELIUS_RPC_URL=https://... cargo run --bin smoke_test -- ...
+//!
 //! February 2026 | Project Flash V6.0
+//! PR #109: Dynamic priority fees — RpcFeeSource + HeliusFeeSource
 //! =============================================================================
 
 use anyhow::{Context, Result};
 use clap::Parser;
 use log::info;
 use std::str::FromStr;
+use std::sync::Arc;
 use solana_grid_bot::{
+    config::PriorityFeeConfig,
     dex::{JupiterClient, SOL_MINT, USDC_MINT},
     security::keystore::{KeystoreConfig, SecureKeystore},
-    trading::price_feed::PriceFeed,
+    trading::{
+        price_feed::PriceFeed,
+        priority_fee_estimator::PriorityFeeEstimator,
+        rpc_fee_source::RpcFeeSource,
+        helius_fee_source::HeliusFeeSource,
+    },
 };
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::pubkey::Pubkey;
@@ -53,6 +64,12 @@ struct Args {
     /// Get a free key at https://portal.jup.ag
     #[clap(long, env = "GRIDZBOTZ_JUPITER_API_KEY")]
     jup_key: Option<String>,
+
+    /// Helius RPC URL for enhanced priority fee estimation (optional).
+    /// When set, uses Helius getPriorityFeeEstimate (V2, local-market-aware).
+    /// When unset, falls back to standard getRecentPrioritizationFees on --rpc.
+    #[clap(long, env = "GRIDZBOTZ_HELIUS_RPC_URL")]
+    helius_rpc: Option<String>,
 
     /// Send the real swap (0.001 SOL -> USDC). Default: dry run only.
     #[clap(long)]
@@ -92,6 +109,13 @@ async fn main() -> Result<()> {
         args.rpc.clone()
     };
     println!("  RPC:      {}", rpc_display);
+    println!("  Fee src:  {}",
+        if args.helius_rpc.is_some() {
+            "Helius getPriorityFeeEstimate (V2, local-market-aware) ⚡"
+        } else {
+            "Chainstack getRecentPrioritizationFees (JUP local market)"
+        }
+    );
     println!("  Jup API:  https://api.jup.ag | auth: {}",
         if args.jup_key.is_some() { "key configured ✅" } else { "❌ NO KEY — set GRIDZBOTZ_JUPITER_API_KEY in .env" }
     );
@@ -123,40 +147,68 @@ async fn main() -> Result<()> {
     println!("OK  ${:.4}  (0.001 SOL approx ${:.4})", sol_price, trade_value_usd);
     info!("Pyth price confirmed: ${:.4}", sol_price);
 
-    // -- [3] Jupiter: quote + build tx ---------------------------------------
-    print!("  [3/5] Jupiter quote + build tx...... ");
+    // -- [3] Dynamic priority fee + Jupiter build ----------------------------
+    print!("  [3/5] Priority fee + Jupiter tx..... ");
 
-    // Resolve API key: --jup-key flag → GRIDZBOTZ_JUPITER_API_KEY env var
+    // Build fee estimator — Helius if available, otherwise Chainstack RPC
+    let fee_config = PriorityFeeConfig {
+        enable_dynamic:         true,
+        source:                 if args.helius_rpc.is_some() { "helius".to_string() } else { "rpc".to_string() },
+        strategy:               "percentile".to_string(),
+        percentile:             75,   // P75 — aggressive but not wasteful for live swaps
+        multiplier:             1.2,
+        min_microlamports:      1_000,
+        max_microlamports:      500_000,
+        fallback_microlamports: 100_000,
+        cache_ttl_secs:         10,
+        sample_blocks:          150,
+    };
+
+    let estimator: PriorityFeeEstimator = if let Some(ref helius_url) = args.helius_rpc {
+        let source = Arc::new(HeliusFeeSource::new(helius_url, &fee_config));
+        PriorityFeeEstimator::new(fee_config.clone(), source)
+    } else {
+        let source = Arc::new(RpcFeeSource::new(args.rpc.clone()));
+        PriorityFeeEstimator::new(fee_config.clone(), source)
+    };
+
+    let priority_fee = estimator.get_priority_fee().await;
+    info!(
+        "Dynamic priority fee: {} µLCU (source: {}, P75 × 1.2, bounds 1K-500K)",
+        priority_fee,
+        fee_config.source
+    );
+
+    // Resolve API key
     let api_key = args.jup_key
         .context("Jupiter API key required. Set GRIDZBOTZ_JUPITER_API_KEY in .env or pass --jup-key")?;
 
     // Parse mints
-    let sol_mint = Pubkey::from_str(SOL_MINT)
-        .context("Failed to parse SOL_MINT")?;
-    let usdc_mint = Pubkey::from_str(USDC_MINT)
-        .context("Failed to parse USDC_MINT")?;
+    let sol_mint  = Pubkey::from_str(SOL_MINT).context("Failed to parse SOL_MINT")?;
+    let usdc_mint = Pubkey::from_str(USDC_MINT).context("Failed to parse USDC_MINT")?;
 
-    // V4.1 Constructor: direct params, no config struct
+    // V4.1 Constructor with live dynamic fee
     let jupiter = JupiterClient::new(
         args.rpc.clone(),
         user_pubkey,
         sol_mint,
         usdc_mint,
-        1000.0, // initial capital for position tracking
+        1000.0,
         api_key,
     )?
-    .with_priority_fee(10_000, "high".to_string());
+    .with_priority_fee(priority_fee, fee_config.source.clone());
 
     let lamports: u64 = 1_000_000; // 0.001 SOL
 
-    // V4.1 API: simple_swap() returns (VersionedTransaction, last_valid_block)
     let (mut vtx, last_valid) = jupiter
         .simple_swap(sol_mint, usdc_mint, lamports)
         .await
         .context("Jupiter simple_swap failed")?;
 
-    // Extract quote details from logs (price impact printed by simple_swap)
-    println!("OK  transaction built | valid until block {}", last_valid);
+    println!(
+        "OK  fee={} µLCU | tx valid until block {}",
+        priority_fee, last_valid
+    );
 
     // -- [4] Sign ------------------------------------------------------------
     print!("  [4/5] Signing transaction........... ");
@@ -171,10 +223,11 @@ async fn main() -> Result<()> {
         println!("  ----------------------------------------------------------------");
         println!("  DRY RUN PASSED -- all 4 stages completed successfully");
         println!();
-        println!("  [OK] Keystore:  loaded and verified");
-        println!("  [OK] Pyth feed: ${:.4} live price", sol_price);
-        println!("  [OK] Jupiter:   swap transaction built (SOL->USDC)");
-        println!("  [OK] Signing:   fee-payer checked, signature applied");
+        println!("  [OK] Keystore:    loaded and verified");
+        println!("  [OK] Pyth feed:   ${:.4} live price", sol_price);
+        println!("  [OK] Priority fee: {} µLCU (dynamic, {})", priority_fee, fee_config.source);
+        println!("  [OK] Jupiter:     swap transaction built (SOL->USDC)");
+        println!("  [OK] Signing:     fee-payer checked, signature applied");
         println!();
         println!("  --> To fire the real swap, rerun with --submit");
         println!("  ----------------------------------------------------------------");
@@ -196,12 +249,13 @@ async fn main() -> Result<()> {
 
     println!();
     println!("  ╔═══════════════════════════════════════════════════════════╗");
-    println!("  ║  🎉 FIRST REAL GRIDZBOTZ SWAP — MAINNET CONFIRMED! 🎉    ║");
+    println!("  ║      🎉 GRIDZBOTZ SWAP — MAINNET CONFIRMED! 🎉           ║");
     println!("  ╚═══════════════════════════════════════════════════════════╝");
     println!();
     println!("  Signature:    {}", sig);
     println!("  Explorer:     https://solscan.io/tx/{}", sig);
     println!("  Swapped:      0.001 SOL -> USDC");
+    println!("  Priority fee: {} µLCU ({})", priority_fee, fee_config.source);
     println!();
     println!("  Daily limits: {}/5 trades | ${:.2}/5.00 volume",
         daily_trades, daily_vol);
