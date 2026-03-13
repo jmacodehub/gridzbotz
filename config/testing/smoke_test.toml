@@ -23,6 +23,8 @@
 #     max_consecutive_losses, enable_trailing_stop,
 #     optimizer_interval_cycles, signal_size_multiplier,
 #     max/min_grid_spacing_pct
+#   V6.4.1: comment out ghost field max_volatility_to_trade
+#     (not yet in TradingConfig — future PR)
 # ═══════════════════════════════════════════════════════════════════════════
 
 [bot]
@@ -104,7 +106,7 @@ enable_price_bounds = false
 # 🚨 REGIME GATE DISABLED — smoke test MUST produce fills
 enable_regime_gate       = false
 min_volatility_to_trade  = 0.0
-max_volatility_to_trade  = 100.0
+# max_volatility_to_trade = 100.0   # 🔮 Future field — not yet in TradingConfig (PR #76/#77)
 pause_in_very_low_vol    = false
 
 enable_adaptive_spacing      = false
@@ -132,7 +134,7 @@ consensus_mode = "single"
 enable_multi_timeframe      = false
 require_timeframe_alignment = false
 
-# WMA confidence gate — low threshold ensures smoke test always trades
+# WMA confidence gate — 0.0 ensures smoke test always trades
 wma_confidence_threshold = 0.0
 
 [strategies.grid]
