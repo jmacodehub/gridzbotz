@@ -90,7 +90,11 @@ url = "2.5"
 # Configuration Management
 # ───────────────────────────────────────────────────────────────────────────
 config = { version = "0.14", default-features = false, features = ["toml"] }
-dotenv = "0.15"
+# dotenvy: maintained fork of the unmaintained `dotenv` crate.
+# Loads .env file into environment before Config::from_file() runs,
+# so GRIDZBOTZ_* vars are available to resolve_secrets() (V5.9).
+# .ok() = silent no-op when .env is absent (CI/CD, production server).
+dotenvy = "0.15"
 validator = { version = "0.18", features = ["derive"] }
 shellexpand = "3.1"       # Path expansion for keystore files (~/path support)
 

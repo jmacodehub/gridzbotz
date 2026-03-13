@@ -258,7 +258,7 @@ async fn try_swap(
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    dotenv::dotenv().ok();
+    dotenvy::dotenv().ok();
 
     env_logger::Builder::from_default_env()
         .filter_level(log::LevelFilter::Info)
@@ -529,17 +529,12 @@ mod tests {
 
     #[test]
     fn test_default_max_attempts_is_four() {
-        // Validates the CLI default matches the documented pilot finding:
-        // 1 complete BUY failure in 20hr run when all 3 original attempts
-        // hit 0x1771. 4 attempts eliminates this edge case.
         let expected: u32 = 4;
         assert_eq!(expected, 4);
     }
 
     #[test]
     fn test_default_retry_delay_is_500ms() {
-        // 500ms > Solana slot time (400ms) — guarantees a new slot
-        // (and fresh AMM state) before each retry quote fetch.
         let expected: u64 = 500;
         assert!(expected >= 400, "retry delay must exceed one Solana slot (400ms)");
     }
