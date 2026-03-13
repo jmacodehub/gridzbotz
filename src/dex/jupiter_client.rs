@@ -1,6 +1,19 @@
-//! 🪐 Jupiter Aggregator Client — PRODUCTION V4.4
+//! 🪐 Jupiter Aggregator Client — PRODUCTION V4.5
 //! 
 //! Real DEX trading via Jupiter API with best-price routing across Solana.
+//! 
+//! # V4.5 CHANGES (Mar 2026 — Fix prioritizationFeeLamports shape)
+//! ✅ Added `Lamports(u64)` variant to `PrioritizationFee` enum
+//! ✅ `get_swap_transaction()` now sends plain integer µLCU value to Jupiter V6
+//! ✅ Fixes 422 Unprocessable Entity: "did not match any variant of untagged
+//!    enum PrioritizationFeeLamports" — caused by passing fee source name "rpc"
+//!    as `priorityLevel` inside `priorityLevelWithMaxLamports` object.
+//! ✅ Jupiter V6 /swap/v1/swap accepts exactly three shapes:
+//!    - Plain integer:  `{ "prioritizationFeeLamports": 1000 }`
+//!    - Auto string:    `{ "prioritizationFeeLamports": "auto" }`
+//!    - Level+cap:      `{ "prioritizationFeeLamports": { "priorityLevelWithMaxLamports": { "priorityLevel": "high", "maxLamports": N } } }`
+//!    The `Lamports(u64)` variant covers the first (and correct) case when
+//!    `PriorityFeeEstimator` has already computed the µLCU value.
 //! 
 //! # V4.4 CHANGES (Mar 2026 — Config Clarity: DEFAULT_SLIPPAGE_BPS)
 //! ✅ DEFAULT_SLIPPAGE_BPS comment clarified: this constant is a constructor
@@ -199,10 +212,31 @@ struct SwapRequest {
     prioritization_fee_lamports: Option<PrioritizationFee>,
 }
 
+/// Represents the `prioritizationFeeLamports` field accepted by Jupiter V6 /swap/v1/swap.
+///
+/// Jupiter V6 accepts exactly three shapes for this field:
+///   1. Plain integer:  `1000`                                  ← `Lamports(u64)` — use this
+///                                                                 when PriorityFeeEstimator
+///                                                                 has already computed µLCU
+///   2. Auto string:    `"auto"`                               ← `Auto(String)`
+///   3. Level+cap obj:  `{ "priorityLevelWithMaxLamports":     ← `Detailed { .. }`
+///                          { "priorityLevel": "high",             priorityLevel must be:
+///                            "maxLamports": 500000 } }`           none|low|medium|high|veryHigh
+///
+/// ⚠️  The `priority_level` field in `JupiterClient` stores the fee *source* name
+///     ("rpc" or "helius") — NOT a valid Jupiter priority level string. Always use
+///     `Lamports(u64)` when wiring from `PriorityFeeEstimator`.
 #[derive(Debug, Serialize)]
 #[serde(untagged)]
 enum PrioritizationFee {
+    /// Pre-computed fee in microlamports — serializes as a bare integer.
+    /// Use when `PriorityFeeEstimator::get_priority_fee()` has already
+    /// calculated the value. This is the correct path for gridzbotz.
+    Lamports(u64),
+    /// Delegate fee estimation entirely to Jupiter (serializes as `"auto"`).
     Auto(String),
+    /// Jupiter level-based estimation with an explicit lamport cap.
+    /// `priority_level` must be: `"none"` | `"low"` | `"medium"` | `"high"` | `"veryHigh"`
     Detailed {
         #[serde(rename = "priorityLevelWithMaxLamports")]
         priority_level_with_max_lamports: PriorityLevelWithMaxLamports,
@@ -271,10 +305,14 @@ pub struct JupiterClient {
     /// HTTP client for Jupiter API
     http_client: reqwest::Client,
     
-    /// Priority fee max lamports
+    /// Priority fee in microlamports — pre-computed by PriorityFeeEstimator.
+    /// Sent as a plain integer in the `prioritizationFeeLamports` field.
+    /// ⚠️  NOT a Jupiter priority level — do not use as `priorityLevel` string.
     priority_fee_max_lamports: u64,
     
-    /// Priority level (none, low, medium, high, veryHigh)
+    /// Fee source name for logging only ("rpc" or "helius").
+    /// ⚠️  NOT a valid Jupiter priorityLevel string (which must be
+    ///     none|low|medium|high|veryHigh). Never pass this to PrioritizationFee::Detailed.
     priority_level: String,
     
     /// Jupiter API key
@@ -303,7 +341,7 @@ impl JupiterClient {
         initial_capital: f64,
         jupiter_api_key: String,
     ) -> Result<Self> {
-        info!("🪐 Jupiter API Client V4.4 — Production Mode (Secure)");
+        info!("🪐 Jupiter API Client V4.5 — Production Mode (Secure)");
         info!("   Endpoint:   {}", JUPITER_API);
         info!("   Base mint:  {}", base_mint);
         info!("   Quote mint: {}", quote_mint);
@@ -335,8 +373,8 @@ impl JupiterClient {
             last_order_time: None,
             slippage_bps: DEFAULT_SLIPPAGE_BPS,
             http_client,
-            priority_fee_max_lamports: 100_000, // 0.0001 SOL
-            priority_level: "high".to_string(),
+            priority_fee_max_lamports: 100_000,
+            priority_level: "rpc".to_string(),
             jupiter_api_key,
         })
     }
@@ -352,11 +390,15 @@ impl JupiterClient {
         self
     }
     
-    /// Set priority fee configuration
+    /// Set priority fee configuration.
+    ///
+    /// `max_lamports` is the pre-computed µLCU value from `PriorityFeeEstimator`.
+    /// `level` is the fee source name for logging only ("rpc" or "helius") —
+    /// it is NOT sent to Jupiter as a priority level string.
     pub fn with_priority_fee(mut self, max_lamports: u64, level: String) -> Self {
         self.priority_fee_max_lamports = max_lamports;
         self.priority_level = level.clone();
-        info!("   Priority:   {} (max {} lamports)", level, max_lamports);
+        info!("   Priority:   {} µLCU (source: {})", max_lamports, level);
         self
     }
     
@@ -534,7 +576,15 @@ impl JupiterClient {
         }).await
     }
     
-    /// Get swap transaction from Jupiter
+    /// Build and POST the swap transaction request to Jupiter V6.
+    ///
+    /// Uses `PrioritizationFee::Lamports(u64)` to send the pre-computed µLCU
+    /// value from `PriorityFeeEstimator` as a plain integer — the correct shape
+    /// for Jupiter V6 when you own the fee calculation.
+    ///
+    /// ⚠️  Do NOT switch to `PrioritizationFee::Detailed` here without ensuring
+    ///     `priority_level` contains a valid Jupiter level string
+    ///     (none|low|medium|high|veryHigh), NOT the fee source name ("rpc"/"helius").
     async fn get_swap_transaction(
         &self,
         quote_response: QuoteResponse,
@@ -548,15 +598,17 @@ impl JupiterClient {
                 wrap_unwrap_sol: true,
                 dynamic_compute_unit_limit: Some(true),
                 dynamic_slippage: Some(true),
-                prioritization_fee_lamports: Some(PrioritizationFee::Detailed {
-                    priority_level_with_max_lamports: PriorityLevelWithMaxLamports {
-                        max_lamports: self.priority_fee_max_lamports,
-                        priority_level: self.priority_level.clone(),
-                    },
-                }),
+                // Send the pre-computed µLCU value as a plain integer.
+                // Jupiter V6 accepts: integer | "auto" | { priorityLevelWithMaxLamports }
+                // PrioritizationFee::Lamports serializes as bare u64 — correct shape.
+                prioritization_fee_lamports: Some(PrioritizationFee::Lamports(
+                    self.priority_fee_max_lamports,
+                )),
             };
             
             debug!("📞 Swap URL: {}", swap_url);
+            debug!("   prioritizationFeeLamports: {} µLCU (source: {})",
+                self.priority_fee_max_lamports, self.priority_level);
             
             let response = self.http_client
                 .post(&swap_url)
@@ -627,7 +679,7 @@ impl JupiterClient {
 impl Trader for JupiterClient {
     async fn place_order(&mut self, _order: Order) -> Result<PlacedOrder> {
         bail!(
-            "JupiterClient V4.4: Trader trait methods removed for security.\n\
+            "JupiterClient V4.5: Trader trait methods removed for security.\n\
              Use simple_swap() + external signing via SecureKeystore instead."
         );
     }
@@ -648,7 +700,7 @@ impl Trader for JupiterClient {
     }
     
     fn trader_type(&self) -> &'static str {
-        "Jupiter Aggregator V4.4 (Secure - simple_swap only)"
+        "Jupiter Aggregator V4.5 (Secure - simple_swap only)"
     }
 }
 
@@ -693,12 +745,52 @@ mod tests {
     #[test]
     fn test_default_slippage_bps_is_fallback_only() {
         let client = create_test_client();
-        // On construction, field starts at DEFAULT_SLIPPAGE_BPS (50).
         assert_eq!(client.slippage_bps, DEFAULT_SLIPPAGE_BPS,
             "constructor must seed slippage_bps from DEFAULT_SLIPPAGE_BPS fallback");
-        // After .with_slippage(), it reflects the config value — not the constant.
         let client = client.with_slippage(100);
         assert_eq!(client.slippage_bps, 100,
             ".with_slippage() must override the fallback with the config-driven value");
+    }
+
+    /// Guard: PrioritizationFee::Lamports must serialize as a bare integer.
+    /// Jupiter V6 /swap/v1/swap rejects any other shape when passing a
+    /// pre-computed µLCU value — this is the regression that caused the
+    /// 422 "did not match any variant of untagged enum PrioritizationFeeLamports"
+    /// error in smoke_test (PR #114).
+    #[test]
+    fn test_prioritization_fee_lamports_serializes_as_integer() {
+        let fee = PrioritizationFee::Lamports(1000);
+        let json = serde_json::to_string(&fee).unwrap();
+        assert_eq!(json, "1000",
+            "Lamports variant must serialize as bare integer for Jupiter V6 /swap endpoint");
+    }
+
+    /// Guard: PrioritizationFee::Auto must serialize as a JSON string "auto".
+    #[test]
+    fn test_prioritization_fee_auto_serializes_as_string() {
+        let fee = PrioritizationFee::Auto("auto".to_string());
+        let json = serde_json::to_string(&fee).unwrap();
+        assert_eq!(json, "\"auto\"",
+            "Auto variant must serialize as JSON string");
+    }
+
+    /// Guard: PrioritizationFee::Detailed must serialize with the correct
+    /// camelCase Jupiter V6 field name. priorityLevel must be a valid level
+    /// string (none|low|medium|high|veryHigh) — NOT a fee source name.
+    #[test]
+    fn test_prioritization_fee_detailed_serializes_correctly() {
+        let fee = PrioritizationFee::Detailed {
+            priority_level_with_max_lamports: PriorityLevelWithMaxLamports {
+                max_lamports: 500_000,
+                priority_level: "high".to_string(),
+            },
+        };
+        let json = serde_json::to_string(&fee).unwrap();
+        assert!(json.contains("priorityLevelWithMaxLamports"),
+            "Detailed variant must use camelCase Jupiter field name");
+        assert!(json.contains("\"high\""),
+            "priorityLevel must be a valid Jupiter level string");
+        assert!(json.contains("500000"),
+            "maxLamports must be present");
     }
 }
