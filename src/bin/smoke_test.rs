@@ -79,7 +79,7 @@ struct Args {
 #[tokio::main]
 async fn main() -> Result<()> {
     // Load .env file from project root (silently ok if missing)
-    dotenv::dotenv().ok();
+    dotenvy::dotenv().ok();
 
     env_logger::Builder::from_default_env()
         .filter_level(log::LevelFilter::Info)
@@ -102,7 +102,6 @@ async fn main() -> Result<()> {
         }
     );
     println!("  Keypair:  {}", args.keypair);
-    // Mask the RPC key in output (show first 40 chars only)
     let rpc_display = if args.rpc.len() > 40 {
         format!("{}...[key]", &args.rpc[..40])
     } else {
@@ -150,12 +149,11 @@ async fn main() -> Result<()> {
     // -- [3] Dynamic priority fee + Jupiter build ----------------------------
     print!("  [3/5] Priority fee + Jupiter tx..... ");
 
-    // Build fee estimator — Helius if available, otherwise Chainstack RPC
     let fee_config = PriorityFeeConfig {
         enable_dynamic:         true,
         source:                 if args.helius_rpc.is_some() { "helius".to_string() } else { "rpc".to_string() },
         strategy:               "percentile".to_string(),
-        percentile:             75,   // P75 — aggressive but not wasteful for live swaps
+        percentile:             75,
         multiplier:             1.2,
         min_microlamports:      1_000,
         max_microlamports:      500_000,
@@ -179,15 +177,12 @@ async fn main() -> Result<()> {
         fee_config.source
     );
 
-    // Resolve API key
     let api_key = args.jup_key
         .context("Jupiter API key required. Set GRIDZBOTZ_JUPITER_API_KEY in .env or pass --jup-key")?;
 
-    // Parse mints
     let sol_mint  = Pubkey::from_str(SOL_MINT).context("Failed to parse SOL_MINT")?;
     let usdc_mint = Pubkey::from_str(USDC_MINT).context("Failed to parse USDC_MINT")?;
 
-    // V4.1 Constructor with live dynamic fee
     let jupiter = JupiterClient::new(
         args.rpc.clone(),
         user_pubkey,
