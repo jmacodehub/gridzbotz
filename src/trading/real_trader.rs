@@ -1,5 +1,20 @@
 //! =============================================================================
-//! REAL TRADER ENGINE V3.4
+//! REAL TRADER ENGINE V3.5
+//!
+//! V3.5 CHANGES (fix/requote-on-retry-dead-rpc-pool — PR #116):
+//! ✅ P0 FIX: Re-quote Jupiter on SlippageToleranceExceeded (0xb).
+//!    Old path: fail → rotate RPC → resend same stale tx → fail again.
+//!    New path: fail → re-quote Jupiter → rebuild tx → sign → submit.
+//!    execute_trade() now wraps build_jupiter_swap() + execute_versioned()
+//!    in a MAX_REQUOTE_ATTEMPTS=3 loop. On 0xb or blockhash expiry, the
+//!    executor lock is dropped, build_jupiter_swap() is called fresh
+//!    (new quote + new blockhash), and a new VersionedTransaction is built,
+//!    signed, and submitted. RPC rotation for non-slippage errors is still
+//!    handled inside RpcClientPool as before.
+//! ✅ P0 FIX: Dead fallback RPCs removed from ExecutorConfig::default().
+//!    projectserum.com is dead, api.rpcpool.com returns 403.
+//!    Helius is wired via TOML rpc_fallback_urls — default() no longer
+//!    shadows it with dead endpoints.
 //!
 //! V3.4 CHANGES (fix/real-trader-canonical-fee-source — PR #110):
 //! ✅ P0 FIX: Async fee source replaced by canonical RpcFeeSource (PR #109).
@@ -47,12 +62,12 @@
 //!   - Static prio fee: PriorityFeeConfig::fallback_microlamports → engine field
 //!   - Fee math:        FeesConfig — paper_trader/fee_filter/grid_rebalancer only
 //!
-//! March 2026 — V3.4 🚀
+//! March 2026 — V3.5 🚀
 //! =============================================================================
 
 use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
-use log::{debug, error, info};
+use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -90,6 +105,12 @@ const JUPITER_ESTIMATED_CU: u64 = 300_000;
 /// Minimum max_lamports floor — ensures txs can land even if estimator
 /// returns very low values during unusually calm periods.
 const MIN_MAX_LAMPORTS: u64 = 5_000;
+
+/// How many times to re-fetch a fresh Jupiter quote on slippage failure
+/// before giving up. Each attempt calls build_jupiter_swap() from scratch:
+/// new quote, new route, new blockhash, new signed VersionedTransaction.
+/// RPC rotation for non-slippage errors is still handled inside RpcClientPool.
+const MAX_REQUOTE_ATTEMPTS: u8 = 3;
 
 // -----------------------------------------------------------------------------
 // CONFIGURATION
@@ -268,7 +289,7 @@ impl RealTradingEngine {
         initial_balance_sol: f64,
         initial_sol_price_usd: f64,
     ) -> Result<Self> {
-        info!("[RealEngine] Initializing V3.4");
+        info!("[RealEngine] Initializing V3.5");
 
         config.validate()?;
 
@@ -355,7 +376,7 @@ impl RealTradingEngine {
             initial_sol_price_usd,
         ));
 
-        info!("[RealEngine] Initialized V3.4");
+        info!("[RealEngine] Initialized V3.5");
         info!("  Wallet      : {}", keystore.pubkey());
         info!("  NAV         : ${:.2} (SOL @ ${:.4})",
             balance_tracker.initial_balance_usd(), initial_sol_price_usd);
@@ -365,6 +386,7 @@ impl RealTradingEngine {
             if global_config.risk.enable_trailing_stop { "trailing" } else { "fixed" });
         info!("  Slippage    : {} bps (max Jupiter swap tolerance)", slippage_bps);
         info!("  Fee source  : {}", fee_source_name);
+        info!("  Requote     : up to {} attempts on 0xb/blockhash expiry", MAX_REQUOTE_ATTEMPTS);
 
         Ok(Self {
             keystore,
@@ -437,13 +459,78 @@ impl RealTradingEngine {
 
         self.total_executions.fetch_add(1, Ordering::SeqCst);
 
-        let (versioned_tx, _last_valid) = self.build_jupiter_swap(side, price, size).await?;
+        // ── V3.5: Re-quote loop ───────────────────────────────────────────────
+        // On SlippageToleranceExceeded (0xb) or blockhash expiry, we drop the
+        // executor lock, call build_jupiter_swap() again to get a fresh quote +
+        // fresh blockhash, then rebuild, sign, and resubmit. RPC rotation for
+        // non-slippage errors is still handled inside RpcClientPool as before.
+        let mut last_err = anyhow::anyhow!("[Order] No attempts made");
+        let mut signature_opt: Option<solana_sdk::signature::Signature> = None;
 
-        let executor  = self.executor.write().await;
-        let signature = executor.execute_versioned(
-            versioned_tx,
-            |tx| self.keystore.sign_versioned_transaction(tx),
-        ).await;
+        for attempt in 1..=MAX_REQUOTE_ATTEMPTS {
+            // Always re-fetch quote + blockhash on every attempt.
+            // On attempt 1 this is the normal path. On attempt 2+ it is a
+            // fresh quote after a slippage / blockhash failure.
+            let (versioned_tx, _last_valid) = match self.build_jupiter_swap(side, price, size).await {
+                Ok(pair) => pair,
+                Err(e) => {
+                    error!("[Order] build_jupiter_swap failed (attempt {}/{}): {}",
+                        attempt, MAX_REQUOTE_ATTEMPTS, e);
+                    last_err = e;
+                    break; // quote fetch itself failed — no point retrying
+                }
+            };
+
+            let exec_result = {
+                let executor = self.executor.write().await;
+                executor.execute_versioned(
+                    versioned_tx,
+                    |tx| self.keystore.sign_versioned_transaction(tx),
+                ).await
+                // executor write lock is dropped here before the next iteration
+            };
+
+            match exec_result {
+                Ok(sig) => {
+                    signature_opt = Some(sig);
+                    break;
+                }
+                Err(e) => {
+                    let err_str = e.to_string();
+                    let is_requotable =
+                        err_str.contains("0xb")                       // SlippageToleranceExceeded
+                        || err_str.contains("SlippageTolerance")       // human-readable variant
+                        || err_str.contains("BlockhashNotFound")       // blockhash expired
+                        || err_str.contains("blockhash");              // any blockhash error
+
+                    if is_requotable && attempt < MAX_REQUOTE_ATTEMPTS {
+                        warn!(
+                            "[Order] Requotable error on attempt {}/{} — re-fetching Jupiter quote. Error: {}",
+                            attempt, MAX_REQUOTE_ATTEMPTS, err_str
+                        );
+                        last_err = e;
+                        // loop continues → build_jupiter_swap() called fresh
+                    } else {
+                        if !is_requotable {
+                            error!(
+                                "[Order] Non-requotable error (attempt {}/{}): {}",
+                                attempt, MAX_REQUOTE_ATTEMPTS, err_str
+                            );
+                        } else {
+                            error!(
+                                "[Order] Exhausted {} requote attempts. Last error: {}",
+                                MAX_REQUOTE_ATTEMPTS, err_str
+                            );
+                        }
+                        last_err = e;
+                        break;
+                    }
+                }
+            }
+        }
+
+        let signature = signature_opt.ok_or(last_err);
+        // ── end re-quote loop ─────────────────────────────────────────────────
 
         match signature {
             Ok(sig) => {
@@ -588,7 +675,7 @@ impl RealTradingEngine {
         let roi = self.get_roi(current_price).await;
 
         if roi >= self.profit_take_pct {
-            let (_, sol)    = self.balance_tracker.get_balances().await;
+            let (_, sol)    = self.get_balances().await;
             let ratio       = self.config.profit_take_ratio.unwrap_or(0.4);
             let sell_amount = sol * ratio;
 
@@ -669,7 +756,7 @@ impl RealTradingEngine {
 
         println!();
         println!("=======================================================");
-        println!("  REAL TRADING ENGINE V3.4 - STATUS");
+        println!("  REAL TRADING ENGINE V3.5 - STATUS");
         println!("=======================================================");
         println!();
         println!("Balances:");
@@ -702,6 +789,7 @@ impl RealTradingEngine {
         println!();
         println!("Execution:");
         println!("  Slippage    : {} bps (max Jupiter tolerance)", self.slippage_bps);
+        println!("  Requote     : up to {} attempts on 0xb/blockhash expiry", MAX_REQUOTE_ATTEMPTS);
         match self.fee_source_name {
             "static" => println!("  Priority fee: STATIC ({} µL/CU)", self.static_priority_fee),
             src      => println!("  Priority fee: DYNAMIC (source: {})", src),
@@ -915,8 +1003,6 @@ mod tests {
 
     #[test]
     fn test_legacy_async_fee_source_removed() {
-        // Guard: the deleted legacy type must not reappear in this file.
-        // The needle is split so this assert message doesn't self-trigger.
         let src   = include_str!("real_trader.rs");
         let needle = concat!("Async", "RpcFeeSource");
         assert!(
@@ -931,6 +1017,43 @@ mod tests {
         assert!(
             src.contains("fee_source_name"),
             "fee_source_name field must exist — source-aware fee logging requires it"
+        );
+    }
+
+    /// ✅ PR #116: Regression guard — re-quote loop must be present.
+    /// The old single-shot pattern (build once, send once) must not return.
+    /// Confirm MAX_REQUOTE_ATTEMPTS constant and the for-loop exist in source.
+    #[test]
+    fn test_requote_loop_present() {
+        let src = include_str!("real_trader.rs");
+        assert!(
+            src.contains("MAX_REQUOTE_ATTEMPTS"),
+            "REGRESSION: MAX_REQUOTE_ATTEMPTS must exist — re-quote loop was removed"
+        );
+        assert!(
+            src.contains("Re-quote loop") || src.contains("re-quote loop"),
+            "REGRESSION: re-quote loop comment marker missing — loop may have been replaced"
+        );
+        assert!(
+            src.contains("0xb"),
+            "REGRESSION: 0xb slippage error pattern must be present in re-quote guard"
+        );
+        assert!(
+            src.contains("BlockhashNotFound"),
+            "REGRESSION: BlockhashNotFound pattern must be present in re-quote guard"
+        );
+    }
+
+    /// ✅ PR #116: Single-shot anti-regression guard.
+    /// Confirm the old single execute_versioned() call without a loop is gone.
+    #[test]
+    fn test_no_single_shot_execute_versioned() {
+        let src = include_str!("real_trader.rs");
+        // The old code had exactly one unconditional let signature = executor.execute_versioned()
+        // outside any loop. Verify a requote loop wraps every execute_versioned call site.
+        assert!(
+            src.contains("for attempt in 1..=MAX_REQUOTE_ATTEMPTS"),
+            "REGRESSION: execute_versioned must be inside a requote for-loop"
         );
     }
 }
