@@ -2,8 +2,8 @@
 //! REAL TRADER ENGINE V3.4
 //!
 //! V3.4 CHANGES (fix/real-trader-canonical-fee-source — PR #110):
-//! ✅ P0 FIX: AsyncRpcFeeSource replaced by canonical RpcFeeSource (PR #109).
-//!    AsyncRpcFeeSource called getRecentPrioritizationFees(&[]) — empty
+//! ✅ P0 FIX: Async fee source replaced by canonical RpcFeeSource (PR #109).
+//!    Old source called getRecentPrioritizationFees(&[]) — empty
 //!    account keys = global network noise (NFT mints, memecoin spam, voting).
 //!    RpcFeeSource passes [JUP6Lk, SOL, USDC] = Jupiter local fee market.
 //!    This is the correct distribution for our actual swap execution path.
@@ -293,7 +293,6 @@ impl RealTradingEngine {
         //            [JUP6Lk, SOL, USDC] account keys = Jupiter local fee market
         // "helius" → HeliusFeeSource: getPriorityFeeEstimate V2
         //            max(global_percentile, per_account_percentile)
-        // Both supersede the old AsyncRpcFeeSource which used &[] (global noise).
         let (priority_fee_estimator, fee_source_name, static_priority_fee) =
             if global_config.priority_fees.enable_dynamic {
                 let fee_cfg = &global_config.priority_fees;
@@ -915,11 +914,14 @@ mod tests {
     }
 
     #[test]
-    fn test_async_rpc_fee_source_removed() {
-        let src = include_str!("real_trader.rs");
+    fn test_legacy_async_fee_source_removed() {
+        // Guard: the deleted legacy type must not reappear in this file.
+        // The needle is split so this assert message doesn't self-trigger.
+        let src   = include_str!("real_trader.rs");
+        let needle = concat!("Async", "RpcFeeSource");
         assert!(
-            !src.contains("AsyncRpcFeeSource"),
-            "REGRESSION: AsyncRpcFeeSource removed in V3.4 — use canonical RpcFeeSource"
+            !src.contains(needle),
+            "REGRESSION: legacy async fee source removed in V3.4 — use canonical RpcFeeSource"
         );
     }
 
