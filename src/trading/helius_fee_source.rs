@@ -172,15 +172,16 @@ mod tests {
 
     fn test_config() -> PriorityFeeConfig {
         PriorityFeeConfig {
-            enable_dynamic:        true,
-            strategy:              "percentile".to_string(),
-            percentile:            75,
-            multiplier:            1.2,
-            min_microlamports:     1_000,
-            max_microlamports:     500_000,
+            enable_dynamic:         true,
+            source:                 "helius".to_string(), // PR #109: new field
+            strategy:               "percentile".to_string(),
+            percentile:             75,
+            multiplier:             1.2,
+            min_microlamports:      1_000,
+            max_microlamports:      500_000,
             fallback_microlamports: 50_000,
-            cache_ttl_secs:        10,
-            sample_blocks:         150,
+            cache_ttl_secs:         10,
+            sample_blocks:          150,
         }
     }
 
@@ -204,7 +205,6 @@ mod tests {
     fn test_fallback_on_construction() {
         let cfg = test_config();
         let src = HeliusFeeSource::new("https://example.com", &cfg);
-        // Fallback wired from config
         assert_eq!(src.fallback, cfg.fallback_microlamports);
     }
 }
