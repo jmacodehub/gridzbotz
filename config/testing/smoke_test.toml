@@ -17,14 +17,10 @@
 #   ✅ Graceful shutdown + final summary printed
 #
 #  Changelog:
-#   V6.4 (PR #107): sync to master canonical fields — remove stale
-#     max_daily_trades/max_daily_volume_usdc from [security],
-#     add [fees], [trading.fee_filter], seed_orders_bypass,
-#     max_consecutive_losses, enable_trailing_stop,
-#     optimizer_interval_cycles, signal_size_multiplier,
-#     max/min_grid_spacing_pct
+#   V6.4   (PR #107): sync to master canonical fields
 #   V6.4.1: comment out ghost field max_volatility_to_trade
-#     (not yet in TradingConfig — future PR)
+#   V6.4.2: comment out ghost field reposition_threshold_pct in [strategies.grid]
+#     (GridStrategyConfig only accepts: enabled, weight, min_confidence, seed_orders_bypass)
 # ═══════════════════════════════════════════════════════════════════════════
 
 [bot]
@@ -143,7 +139,7 @@ weight         = 1.0
 min_confidence = 0.3
 # PR #106: bypass SmartFeeFilter for initial grid seeding only
 seed_orders_bypass = true
-reposition_threshold_pct = 0.30
+# reposition_threshold_pct = 0.30  # 🔮 Future field — not yet in GridStrategyConfig
 
 [strategies.momentum]
 enabled         = false
