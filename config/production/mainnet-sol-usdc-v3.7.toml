@@ -10,17 +10,23 @@
 #
 #  ✅ V3.6 + PR #99 + PR #100 + PR #101:
 #    ATR Dynamic Spacing, Dual vol gates, Tighter retries
-#    QuickNode fallback, Enhanced regime detection
+#    Helius fallback, Enhanced regime detection
 #    wma_confidence_threshold = 0.65 (PR #100)
 #    Telegram alerts fully wired (PR #101)
 #
-#  ⚠️  SECRETS: rpc_url / rpc_fallback_urls / Telegram credentials
-#    are NOT committed. Set them via environment variables:
+#  ⚠️  SECRETS — RPC keys and Telegram tokens are NEVER committed.
+#    Two options (use either or combine):
+#
+#    Option A — Environment variables (recommended for servers):
 #      export GRIDZBOTZ_RPC_URL="https://solana-mainnet.core.chainstack.com/<KEY>"
-#      export GRIDZBOTZ_RPC_FALLBACK="https://solana-mainnet.quiknode.pro/<KEY>/"
+#      export GRIDZBOTZ_RPC_FALLBACK="https://mainnet.helius-rpc.com/?api-key=<KEY>"
 #      export GRIDZBOTZ_TELEGRAM_TOKEN=YOUR_TOKEN
 #      export GRIDZBOTZ_TELEGRAM_CHAT_ID=YOUR_CHAT_ID
-#    Or fill in the placeholder values below in your local .gitignore'd copy.
+#
+#    Option B — Local secrets file (gitignored, never committed):
+#      Copy mainnet-sol-usdc-v3.7.secrets.toml.template
+#      → mainnet-sol-usdc-v3.7.secrets.toml
+#      Fill in your real keys. The *.secrets.toml pattern is in .gitignore.
 #
 #  Run: cargo run --release -- --config config/production/mainnet-sol-usdc-v3.7.toml
 # ═══════════════════════════════════════════════════════════════════════════
@@ -35,14 +41,14 @@ instance_id     = "mainnet-sol-usdc-v3.7"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# NETWORK — Chainstack primary, QuickNode fallback
-# Replace <CHAINSTACK_KEY> / <QUICKNODE_KEY> in your local .gitignore'd copy.
+# NETWORK — Chainstack primary, Helius fallback
+# Fill real keys in your local *.secrets.toml (gitignored) or via env vars.
+# Uncomment ws_url when WebSocket price streaming is wired.
 # ─────────────────────────────────────────────────────────────────────────────
 [network]
 cluster    = "mainnet-beta"
 rpc_url    = "https://solana-mainnet.core.chainstack.com/CHAINSTACK_KEY_PLACEHOLDER"
 commitment = "confirmed"
-# ws_url is optional — uncomment when you need WebSocket price streaming
 # ws_url = "wss://solana-mainnet.core.chainstack.com/CHAINSTACK_KEY_PLACEHOLDER"
 
 
@@ -52,27 +58,27 @@ require_password = false
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# EXECUTION — Jupiter V6 swap caps + fallback RPC pool
-# jito_tip_lamports is commented out — enable only when Jito bundle routing is
-# wired end-to-end in realtrader.rs (see R&D pipeline).
+# EXECUTION — Jupiter V6 swap caps + Helius fallback RPC
+# jito_tip_lamports: uncomment only when Jito bundle submit is wired in
+# realtrader.rs (R&D pipeline — not yet production-ready).
 # ─────────────────────────────────────────────────────────────────────────────
 [execution]
-max_trade_sol                  = 0.5
-max_trade_size_usdc            = 50.0
-priority_fee_microlamports     = 100_000
-max_slippage_bps               = 150
-confirmation_timeout_secs      = 60
-max_retries                    = 4
-# jito_tip_lamports            = 10_000   # Uncomment when Jito bundle submit is live
-rpc_fallback_urls              = [
-    "https://solana-mainnet.quiknode.pro/QUICKNODE_KEY_PLACEHOLDER/",
+max_trade_sol              = 0.5
+max_trade_size_usdc        = 50.0
+priority_fee_microlamports = 100_000
+max_slippage_bps           = 150
+confirmation_timeout_secs  = 60
+max_retries                = 4
+# jito_tip_lamports        = 10_000   # Uncomment when Jito bundle submit is live
+rpc_fallback_urls          = [
+    "https://mainnet.helius-rpc.com/?api-key=HELIUS_KEY_PLACEHOLDER",
 ]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # PRIORITY FEES — PriorityFeeEstimator V1.1
 # Percentile-based, cached (10s TTL), bounded (1K–500K µLCU).
-# Strategy: "percentile" is the validated production path.
+# "percentile" is the validated production strategy.
 # ─────────────────────────────────────────────────────────────────────────────
 [priority_fees]
 enable_dynamic         = true
@@ -87,8 +93,8 @@ sample_blocks          = 150
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# PAPER TRADING — kept for quick paper regression without a separate TOML
-# Ignored entirely when execution_mode = "live"
+# PAPER TRADING — retained for quick paper regression without a separate TOML.
+# Entirely ignored when execution_mode = "live".
 # ─────────────────────────────────────────────────────────────────────────────
 [paper_trading]
 initial_usdc        = 200.0
@@ -97,7 +103,7 @@ test_duration_hours = 1
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# TRADING — V5.8 fields fully populated
+# TRADING — Config System V5.8: all fields explicitly set
 # ─────────────────────────────────────────────────────────────────────────────
 [trading]
 # Core grid
@@ -108,27 +114,27 @@ max_position_size    = 50.0
 min_usdc_reserve     = 20.0
 min_sol_reserve      = 0.1
 
-# Dynamic grid (V5.8: spacing bounds now config-driven, not hardcoded)
+# Dynamic grid — V5.8: spacing bounds now config-driven (were hardcoded)
 enable_dynamic_grid     = true
 volatility_window       = 100
 enable_adaptive_spacing = true
 reposition_threshold    = 0.30
-max_grid_spacing_pct    = 0.0075   # 0.75% — was hardcoded in GridRebalancerConfig
-min_grid_spacing_pct    = 0.001    # 0.10% — was hardcoded in GridRebalancerConfig
+max_grid_spacing_pct    = 0.0075   # 0.75% — replaces hardcoded GridRebalancerConfig value
+min_grid_spacing_pct    = 0.001    # 0.10% — replaces hardcoded GridRebalancerConfig value
 
 # Auto-rebalance
-enable_auto_rebalance    = true
-enable_smart_rebalance   = true
-rebalance_threshold_pct  = 5.0
-rebalance_cooldown_secs  = 120
+enable_auto_rebalance   = true
+enable_smart_rebalance  = true
+rebalance_threshold_pct = 5.0
+rebalance_cooldown_secs = 120
 
 # Order management
-max_orders_per_side          = 10
-order_refresh_interval_secs  = 120
-enable_market_orders         = false
-enable_fee_optimization      = true
+max_orders_per_side         = 10
+order_refresh_interval_secs = 120
+enable_market_orders        = false
+enable_fee_optimization     = true
 
-# Order lifecycle (production: force-enabled by apply_environment)
+# Order lifecycle — production apply_environment() force-enables this
 enable_order_lifecycle         = true
 order_max_age_minutes          = 5
 order_refresh_interval_minutes = 2
@@ -138,32 +144,32 @@ min_orders_to_maintain         = 8
 min_profit_threshold_pct = 0.25
 max_slippage_pct         = 1.5
 
-# Price bounds (disabled — let regime gate handle range)
+# Price bounds — disabled, regime gate handles range control
 enable_price_bounds = false
 lower_price_bound   = 50.0
 upper_price_bound   = 500.0
 
-# Market regime gate (production env force-enables this; values still explicit for clarity)
-enable_regime_gate       = true
-min_volatility_to_trade  = 0.30   # 0.3% minimum — production floor enforced by apply_environment
-pause_in_very_low_vol    = false
+# Market regime gate — production apply_environment() enforces 0.30% floor
+enable_regime_gate      = true
+min_volatility_to_trade = 0.30
+pause_in_very_low_vol   = false
 
-# Smart position sizing (V5.5)
-# signal_size_multiplier valid range: [0.5, 3.0] when enable=true
-# 1.0 = flat / zero effect — safe default, opt-in via raising the multiplier
+# Smart position sizing — V5.5 / PR #94 Commit 5a
+# signal_size_multiplier range: [0.5, 3.0] when enabled
+# 1.0 = flat (zero effect) — raise to scale order size with signal strength
 enable_smart_position_sizing = true
 signal_size_multiplier       = 1.0
 
-# Adaptive optimizer cadence (V5.3) — default 50 cycles
+# Adaptive optimizer cadence — V5.3 / PR #94 Commit 1 (replaces hardcoded const 50)
 optimizer_interval_cycles = 50
 
-# ── SmartFeeFilter sub-section (V5.4 / PR #94 Commit 3) ──────────────────
-# Levels whose projected fee (in BPS) falls outside [min, max] are skipped.
+# ── SmartFeeFilter — V5.4 / PR #94 Commit 3 ─────────────────────────────
+# Grid levels with projected fee outside [min, max] BPS are silently skipped.
 [trading.fee_filter]
-enable_smart_fee_filter  = true
-min_fee_threshold_bps    = 8    # skip suspiciously cheap levels (stale quote)
-max_fee_threshold_bps    = 50   # skip levels that eat the whole spread
-fee_filter_window_secs   = 30   # rolling avg fee window
+enable_smart_fee_filter = true
+min_fee_threshold_bps   = 8    # skip suspiciously cheap levels (stale quote / bad route)
+max_fee_threshold_bps   = 50   # skip levels that consume the entire spread
+fee_filter_window_secs  = 30   # rolling average fee baseline window
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -177,28 +183,28 @@ consensus_mode = "single"
 # 0.50 lenient | 0.65 balanced | 0.75 strict | 0.85 very strict
 wma_confidence_threshold = 0.65
 
-enable_multi_timeframe       = false
-require_timeframe_alignment  = false
+enable_multi_timeframe      = false
+require_timeframe_alignment = false
 
 [strategies.grid]
-enabled             = true
-weight              = 1.0
-min_confidence      = 0.5
-seed_orders_bypass  = true   # V5.7 / PR #100: skip initial seed sequence on (re)start
+enabled            = true
+weight             = 1.0
+min_confidence     = 0.5
+seed_orders_bypass = true   # V5.7 / PR #100: skip seed sequence on (re)start
 
 [strategies.momentum]
-enabled        = false
-weight         = 0.8
-min_confidence = 0.6
+enabled         = false
+weight          = 0.8
+min_confidence  = 0.6
 lookback_period = 20
 threshold       = 0.02
 
 [strategies.mean_reversion]
-enabled             = false
-weight              = 0.7
-min_confidence      = 0.6
-sma_period          = 20
-std_dev_multiplier  = 2.0
+enabled               = false
+weight                = 0.7
+min_confidence        = 0.6
+sma_period            = 20
+std_dev_multiplier    = 2.0
 strong_buy_threshold  = 5.0
 buy_threshold         = 2.5
 strong_sell_threshold = 5.0
@@ -234,7 +240,7 @@ enable_circuit_breaker        = true
 circuit_breaker_threshold_pct = 4.0
 circuit_breaker_cooldown_secs = 300
 max_consecutive_losses        = 5
-enable_trailing_stop          = false   # V5.2 / PR #89 — opt-in when StopLossManager is production-tested
+enable_trailing_stop          = false   # V5.2 / PR #89 — enable when StopLossManager is production-tested
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -251,7 +257,7 @@ market_impact_coefficient = 0.01
 
 # ─────────────────────────────────────────────────────────────────────────────
 # PYTH — SOL/USD price feed (Hermes HTTP, 500ms polling)
-# feed_id: SOL/USD Pyth mainnet price account
+# feed_id: canonical SOL/USD Pyth mainnet price account
 # ─────────────────────────────────────────────────────────────────────────────
 [pyth]
 http_endpoint      = "https://hermes.pyth.network"
@@ -289,11 +295,11 @@ enabled = false
 #    3. Start a chat with your bot, send /start
 #    4. Visit: https://api.telegram.org/botYOUR_TOKEN/getUpdates
 #       Find "chat":{"id":XXXXXXXXX} — that is your chat_id
-#    5. Export credentials (never commit them):
+#    5. Export credentials (NEVER commit real values):
 #         export GRIDZBOTZ_TELEGRAM_TOKEN=YOUR_TOKEN
 #         export GRIDZBOTZ_TELEGRAM_CHAT_ID=YOUR_CHAT_ID
 #
-#  You will receive:
+#  Notifications:
 #    🚀 Bot started (pair, capital, spacing, WMA gate, mode)
 #    💰 Every SELL fill (price, size, Δ P&L, fill #)
 #    🚨 Circuit breaker tripped (reason, drawdown, cooldown)

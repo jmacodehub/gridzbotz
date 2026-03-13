@@ -69,6 +69,13 @@ config/paper/
 config/production/v5.0_development/
 config/production/v6.0_dev/
 
+# ─────────────────────────────────────────────────────────────────────────
+# Production secrets — RPC keys, Telegram tokens, Jito tips.
+# Template files (*.secrets.toml.template) ARE committed — safe, no real keys.
+# Filled-in secrets files (*.secrets.toml) are NEVER committed.
+# ─────────────────────────────────────────────────────────────────────────
+config/production/*.secrets.toml
+
 # Binary builds
 src/bin/
 
