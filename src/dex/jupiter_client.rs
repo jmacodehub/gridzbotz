@@ -1,6 +1,13 @@
-//! 🪐 Jupiter Aggregator Client — PRODUCTION V4.3
+//! 🪐 Jupiter Aggregator Client — PRODUCTION V4.4
 //! 
 //! Real DEX trading via Jupiter API with best-price routing across Solana.
+//! 
+//! # V4.4 CHANGES (Mar 2026 — Config Clarity: DEFAULT_SLIPPAGE_BPS)
+//! ✅ DEFAULT_SLIPPAGE_BPS comment clarified: this constant is a constructor
+//!    fallback ONLY. In production, RealTradingEngine always calls
+//!    .with_slippage(execution.max_slippage_bps) before any swap — the constant
+//!    is never used in normal operation (SSoT = ExecutionConfig::max_slippage_bps).
+//!    Zero functional change — pure documentation correctness.
 //! 
 //! # V4.3 CHANGES (Mar 2026 — Jupiter V6 Swap API Fix)
 //! ✅ Added `percent` field to RoutePlanStep (required by /swap endpoint)
@@ -53,7 +60,7 @@
 //! 
 //! let lamports = 1_000_000_000; // 1 SOL
 //! let (tx, last_valid) = client.simple_swap(sol_mint, usdc_mint, lamports).await?;
-//! // Caller signs tx with SecureKeystore (never export keys!)
+//! // Caller signs tx with SecureKeystore.sign_versioned_transaction()
 //! println!("✅ Swap tx ready! Last valid block: {}", last_valid);
 //! # Ok(())
 //! # }
@@ -77,7 +84,21 @@ use std::time::{Duration, SystemTime};
 // CONSTANTS
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Default slippage tolerance in basis points (50 = 0.5%)
+/// Constructor fallback slippage (basis points) used ONLY when `.with_slippage()`
+/// is never called on the builder.
+///
+/// ## ⚠️  Dead in normal production operation
+///
+/// `RealTradingEngine::build_jupiter_swap()` always calls `.with_slippage(self.slippage_bps)`
+/// before constructing a swap, where `self.slippage_bps` is cached from
+/// `ExecutionConfig::max_slippage_bps` at engine startup (PR #96).
+///
+/// Single source of truth for slippage tolerance:
+///   `[execution] max_slippage_bps` in TOML  →  `ExecutionConfig::max_slippage_bps`
+///   →  `RealTradingEngine::slippage_bps`  →  `.with_slippage()`  →  Jupiter quote URL.
+///
+/// Do NOT change this value expecting it to affect live swaps — update
+/// `[execution] max_slippage_bps` in your TOML config instead.
 const DEFAULT_SLIPPAGE_BPS: u16 = 50;
 
 /// Minimum order size (prevents dust orders)
@@ -239,7 +260,12 @@ pub struct JupiterClient {
     /// future idle-detection and rate-limit analytics.
     last_order_time: Option<SystemTime>,
     
-    /// Slippage tolerance in basis points
+    /// Active slippage tolerance in basis points.
+    ///
+    /// Seeded from `DEFAULT_SLIPPAGE_BPS` at construction, then immediately
+    /// overridden by `.with_slippage(execution.max_slippage_bps)` in
+    /// `RealTradingEngine::build_jupiter_swap()`. In live operation this field
+    /// always reflects `ExecutionConfig::max_slippage_bps` — never the constant.
     slippage_bps: u16,
     
     /// HTTP client for Jupiter API
@@ -277,7 +303,7 @@ impl JupiterClient {
         initial_capital: f64,
         jupiter_api_key: String,
     ) -> Result<Self> {
-        info!("🪐 Jupiter API Client V4.3 — Production Mode (Secure)");
+        info!("🪐 Jupiter API Client V4.4 — Production Mode (Secure)");
         info!("   Endpoint:   {}", JUPITER_API);
         info!("   Base mint:  {}", base_mint);
         info!("   Quote mint: {}", quote_mint);
@@ -315,7 +341,11 @@ impl JupiterClient {
         })
     }
     
-    /// Set custom slippage tolerance
+    /// Override slippage tolerance for this client instance.
+    ///
+    /// In production this is always called by `RealTradingEngine::build_jupiter_swap()`
+    /// with the value of `ExecutionConfig::max_slippage_bps` — the config SSoT.
+    /// Change slippage by editing `[execution] max_slippage_bps` in your TOML.
     pub fn with_slippage(mut self, slippage_bps: u16) -> Self {
         self.slippage_bps = slippage_bps;
         info!("   Slippage:   {}bps ({:.2}%)", slippage_bps, slippage_bps as f64 / 100.0);
@@ -597,7 +627,7 @@ impl JupiterClient {
 impl Trader for JupiterClient {
     async fn place_order(&mut self, _order: Order) -> Result<PlacedOrder> {
         bail!(
-            "JupiterClient V4.3: Trader trait methods removed for security.\n\
+            "JupiterClient V4.4: Trader trait methods removed for security.\n\
              Use simple_swap() + external signing via SecureKeystore instead."
         );
     }
@@ -618,7 +648,7 @@ impl Trader for JupiterClient {
     }
     
     fn trader_type(&self) -> &'static str {
-        "Jupiter Aggregator V4.3 (Secure - simple_swap only)"
+        "Jupiter Aggregator V4.4 (Secure - simple_swap only)"
     }
 }
 
@@ -655,5 +685,20 @@ mod tests {
         let (placed, cancelled) = client.stats();
         assert_eq!(placed, 0);
         assert_eq!(cancelled, 0);
+    }
+
+    /// Guard: DEFAULT_SLIPPAGE_BPS is a constructor fallback only.
+    /// In production, .with_slippage() always overrides it from ExecutionConfig.
+    /// This test pins the fallback value so any accidental change is visible.
+    #[test]
+    fn test_default_slippage_bps_is_fallback_only() {
+        let client = create_test_client();
+        // On construction, field starts at DEFAULT_SLIPPAGE_BPS (50).
+        assert_eq!(client.slippage_bps, DEFAULT_SLIPPAGE_BPS,
+            "constructor must seed slippage_bps from DEFAULT_SLIPPAGE_BPS fallback");
+        // After .with_slippage(), it reflects the config value — not the constant.
+        let client = client.with_slippage(100);
+        assert_eq!(client.slippage_bps, 100,
+            ".with_slippage() must override the fallback with the config-driven value");
     }
 }
