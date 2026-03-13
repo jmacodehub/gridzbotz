@@ -23,7 +23,7 @@
 //!
 //! PR #107 Commit 5: Compile fixes
 //!   - taker_fee_pct (phantom field) → taker_fee_fraction()/taker_fee_percent()
-//!   - \u0394 → \u{0394} (invalid Rust Unicode escapes)
+//!   - \u{0394} → \u{0394} (invalid Rust Unicode escapes)
 //!   - max/min_grid_spacing_pct added to test_config() TradingConfig literals
 //!
 //! PR #107 Commit 6: Restore Bot trait contract
@@ -35,6 +35,15 @@
 //!   - name() + instance_id() methods restored (were dropped in prior commit)
 //!   - shutdown() restored with Telegram send_shutdown + display_strategy_performance
 //!
+//! PR #107 Commit 7: Wire real GridStateTracker V4.3 API
+//!   - count()                  → level_counts(); used = .0 + .1
+//!   - get_cancellable_levels() → get_all_levels() + filter Pending/BuyFilled
+//!   - get_level(id)            → get_all_levels().find(|l| l.id == id)
+//!   - mark_cancelled(id)       → cancel_level(id)
+//!   - update_level(level)      → removed (tracker owns in-place mutation)
+//!   - create_level() → u64 ID  → level.id / set_buy/sell_order removed
+//!   - Type casts: profitable/unprofitable_trades as u64, adjustment_count as u32
+//!
 //! PR #105 Commit 3: GridRebalancer switched to .add_execution_only()
 //!   (avoids WMA deadlock — see V6.3 header for full root-cause)
 //! PR #102 Commit 3: level_id mark-filled + CB delta P&L fix.
@@ -44,7 +53,7 @@
 //! PR #94  (Commit 6): GridBotStats observability.
 //! PR #93: CircuitBreaker wired.
 //!
-//! March 13, 2026 - V6.4: fee-reconciliation wired (PR #107 C2+C4+C5+C6) 💰
+//! March 13, 2026 - V6.4: fee-reconciliation wired (PR #107 C2+C4+C5+C6+C7) 💰
 //! March 12, 2026 - V6.3: GridRebalancer execution-only (PR #105 C3) 🔥
 //! March 12, 2026 - V6.2: fill level_id + CB delta P&L (PR #102) ✅
 //! March 11, 2026 - V6.1: Telegram alerts wired (PR #101) 📲
@@ -71,6 +80,7 @@ use crate::trading::{
     TradingEngine, OrderSide, GridStateTracker,
     EnhancedMetrics, AdaptiveOptimizer, PriceFeed,
 };
+use crate::trading::grid_level::GridLevelStatus;
 use crate::risk::CircuitBreaker;
 use crate::config::Config;
 use crate::utils::TelegramBot;
@@ -286,8 +296,10 @@ impl GridBot {
         self.grid_initialized = true;
         self.last_price = Some(initial_price);
 
-        let total_levels = self.config.trading.grid_levels as usize;
-        let used_levels  = self.grid_state.count().await;
+        // C7: level_counts() returns (pending, buy_filled, completed)
+        let total_levels            = self.config.trading.grid_levels as usize;
+        let (pending, buy_filled, _) = self.grid_state.level_counts().await;
+        let used_levels             = pending + buy_filled;
         self.enhanced_metrics.update_grid_stats(total_levels, used_levels);
 
         let wallet = self.engine.get_wallet().await;
@@ -331,20 +343,33 @@ impl GridBot {
             self.place_grid_orders(current_price).await
                 .context("Emergency grid initialization failed")?;
             self.grid_initialized = true;
-            let total = self.config.trading.grid_levels as usize;
-            let used  = self.grid_state.count().await;
-            self.enhanced_metrics.update_grid_stats(total, used);
+            let total                = self.config.trading.grid_levels as usize;
+            let (p, b, _)            = self.grid_state.level_counts().await;
+            self.enhanced_metrics.update_grid_stats(total, p + b);
             return Ok(());
         }
 
         info!("[BOT] Repositioning grid: ${:.4} -> ${:.4}", last_price, current_price);
         let reposition_start = Instant::now();
         let trading_pair     = self.config.trading_pair();
-        let cancellable      = self.grid_state.get_cancellable_levels().await;
-        let mut cancelled    = 0;
 
+        // C7: get_all_levels() + filter Pending or BuyFilled — these are
+        // the levels that still have open orders that can be cancelled.
+        let all_levels   = self.grid_state.get_all_levels().await;
+        let cancellable: Vec<u64> = all_levels
+            .iter()
+            .filter(|l| {
+                l.status == GridLevelStatus::Pending
+                    || l.status == GridLevelStatus::BuyFilled
+            })
+            .map(|l| l.id)
+            .collect();
+
+        let mut cancelled = 0;
         for level_id in cancellable {
-            if let Some(level) = self.grid_state.get_level(level_id).await {
+            // Re-fetch the level snapshot to get order IDs
+            let levels_snap = self.grid_state.get_all_levels().await;
+            if let Some(level) = levels_snap.iter().find(|l| l.id == level_id) {
                 if let Some(id) = &level.buy_order_id {
                     self.engine.cancel_order(id).await
                         .unwrap_or_else(|e| warn!("[BOT] Cancel buy failed: {}", e));
@@ -355,7 +380,8 @@ impl GridBot {
                         .unwrap_or_else(|e| warn!("[BOT] Cancel sell failed: {}", e));
                     cancelled += 1;
                 }
-                self.grid_state.mark_cancelled(level_id).await;
+                // C7: mark_cancelled → cancel_level
+                self.grid_state.cancel_level(level_id).await;
                 if let Some(r) = &self.intent_registry {
                     r.remove(&(trading_pair.clone(), level_id));
                 }
@@ -366,9 +392,9 @@ impl GridBot {
         self.place_grid_orders(current_price).await?;
         self.grid_repositions += 1;
         self.last_reposition_time = Some(Instant::now());
-        let total = self.config.trading.grid_levels as usize;
-        let used  = self.grid_state.count().await;
-        self.enhanced_metrics.update_grid_stats(total, used);
+        let total     = self.config.trading.grid_levels as usize;
+        let (p, b, _) = self.grid_state.level_counts().await;
+        self.enhanced_metrics.update_grid_stats(total, p + b);
         info!("[BOT] Repositioned in {}ms", reposition_start.elapsed().as_millis());
         Ok(())
     }
@@ -401,14 +427,19 @@ impl GridBot {
         for i in 1..=buy_levels.min(sell_levels) {
             let buy_price  = current_price * (1.0 - grid_spacing * i as f64);
             let sell_price = current_price * (1.0 + grid_spacing * i as f64);
-            let mut level  = self.grid_state.create_level(buy_price, sell_price, effective_size).await;
+
+            // C7: create_level() returns u64 ID — not a GridLevel struct.
+            // The tracker owns the level; we work with the ID only.
+            let level_id = self.grid_state.create_level(buy_price, sell_price, effective_size).await;
 
             if let Some(registry) = &self.intent_registry {
-                let key = (pair.clone(), level.id);
+                let key = (pair.clone(), level_id);
                 match registry.entry(key) {
                     dashmap::Entry::Occupied(e) => {
                         self.intent_conflicts += 1;
-                        warn!("[INTENT] Level {} owned by '{}' — skipping", level.id, e.get());
+                        warn!("[INTENT] Level {} owned by '{}' — skipping", level_id, e.get());
+                        // Cancel the just-created level so it doesn't linger
+                        self.grid_state.cancel_level(level_id).await;
                         continue;
                     }
                     dashmap::Entry::Vacant(e) => {
@@ -425,9 +456,9 @@ impl GridBot {
             }
 
             match self.engine.place_limit_order_with_level(
-                OrderSide::Buy, buy_price, effective_size, Some(level.id)
+                OrderSide::Buy, buy_price, effective_size, Some(level_id)
             ).await {
-                Ok(id) => { level.set_buy_order(id); orders_placed += 1; self.total_orders_placed += 1; }
+                Ok(_id) => { orders_placed += 1; self.total_orders_placed += 1; }
                 Err(e) => { warn!("[BOT] Buy failed @ ${:.4}: {}", buy_price, e); orders_failed += 1; continue; }
             }
 
@@ -435,17 +466,15 @@ impl GridBot {
                 .should_place_order(OrderSide::Sell, sell_price, min_order_sol, &stats).await
             {
                 orders_filtered += 1;
-                self.grid_state.update_level(level).await;
                 continue;
             }
 
             match self.engine.place_limit_order_with_level(
-                OrderSide::Sell, sell_price, effective_size, Some(level.id)
+                OrderSide::Sell, sell_price, effective_size, Some(level_id)
             ).await {
-                Ok(id) => { level.set_sell_order(id); orders_placed += 1; self.total_orders_placed += 1; }
+                Ok(_id) => { orders_placed += 1; self.total_orders_placed += 1; }
                 Err(e) => { warn!("[BOT] Sell failed @ ${:.4}: {}", sell_price, e); orders_failed += 1; }
             }
-            self.grid_state.update_level(level).await;
         }
 
         self.orders_filtered_session += orders_filtered as u64;
@@ -627,14 +656,16 @@ impl GridBot {
             win_rate:                perf_stats.win_rate,
             total_fees:              perf_stats.total_fees,
             trading_paused:          cb_status.is_tripped,
-            profitable_trades:       self.enhanced_metrics.profitable_trades,
-            unprofitable_trades:     self.enhanced_metrics.unprofitable_trades,
+            // C7 type casts: EnhancedMetrics stores these as usize; GridBotStats expects u64
+            profitable_trades:       self.enhanced_metrics.profitable_trades as u64,
+            unprofitable_trades:     self.enhanced_metrics.unprofitable_trades as u64,
             max_drawdown:            self.enhanced_metrics.max_drawdown,
             signal_execution_ratio:  self.enhanced_metrics.signal_execution_ratio,
             grid_efficiency:         self.enhanced_metrics.grid_efficiency,
             current_spacing_percent: self.adaptive_optimizer.current_spacing_percent,
             current_position_size:   self.adaptive_optimizer.current_position_size,
-            optimization_count:      self.adaptive_optimizer.adjustment_count,
+            // C7 type cast: AdaptiveOptimizer.adjustment_count is u64; GridBotStats expects u32
+            optimization_count:      self.adaptive_optimizer.adjustment_count as u32,
             total_fills_tracked:     self.total_fills_tracked,
             intent_conflicts:        self.intent_conflicts,
             fee_checks:              fee_checked,
