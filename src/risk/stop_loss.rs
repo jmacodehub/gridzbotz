@@ -255,6 +255,9 @@ mod tests {
                 optimizer_interval_cycles: 50,
                 fee_filter: FeeFilterConfig::default(),
                 signal_size_multiplier: 1.0,
+                // ✅ PR #107 C2: config-driven grid spacing bounds
+                max_grid_spacing_pct: 0.0075,
+                min_grid_spacing_pct: 0.001,
             },
             strategies: StrategiesConfig::default(),
             execution: ExecutionConfig::default(),
