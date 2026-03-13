@@ -6,6 +6,11 @@
 //!    Config::from_file() so GRIDZBOTZ_* vars reach resolve_secrets()
 //! ✅ Replaced unmaintained `dotenv` crate with `dotenvy` (maintained fork)
 //!
+//! fix/usdc-balance-helius-routing:
+//! ✅ fetch_wallet_balances() gains `token_rpc_url: Option<&str>` param
+//! ✅ execution.rpc_fallback_urls[0] passed as token_rpc_url so
+//!    get_token_accounts_by_owner routes to Helius (Chainstack 403 fix)
+//!
 //! V5.8 CHANGES (PR #86 — Multi-Bot Orchestrator):
 //! ✅ --orchestrate <PATH> flag — PATH A fleet mode via Orchestrator V1.0
 //! ✅ PATH B (single-bot) is zero-regression — identical to V5.7
@@ -269,10 +274,17 @@ fn load_configuration(args: &Args) -> Result<Config> {
 // WALLET BALANCE QUERY  (live mode, PATH B only)
 // Delegates to trading::wallet_utils — single source of truth shared with
 // orchestrator.rs so the RPC logic never diverges between the two paths.
+//
+// token_rpc_url: Helius fallback for get_token_accounts_by_owner.
+// Chainstack blocks that method (403) regardless of plan tier.
 // ═══════════════════════════════════════════════════════════════════════════
 
-async fn fetch_wallet_balances(rpc_url: &str, wallet_path: &str) -> Result<(f64, f64)> {
-    fetch_wallet_balances_for_orchestrator(rpc_url, wallet_path).await
+async fn fetch_wallet_balances(
+    rpc_url:       &str,
+    wallet_path:   &str,
+    token_rpc_url: Option<&str>,
+) -> Result<(f64, f64)> {
+    fetch_wallet_balances_for_orchestrator(rpc_url, wallet_path, token_rpc_url).await
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -305,9 +317,16 @@ async fn initialize_components(config: &Config) -> Result<(Box<dyn Bot>, Arc<Pri
 
     info!("🛠️  Building TradingEngine via factory: {}", engine_mode_label(config));
     let params = if config.bot.is_live() {
+        // Route get_token_accounts_by_owner to Helius fallback.
+        // Chainstack returns 403 on this method regardless of plan tier.
+        let token_rpc_url = config.execution.rpc_fallback_urls
+            .as_ref()
+            .and_then(|v| v.first())
+            .map(String::as_str);
         let (usdc, sol) = fetch_wallet_balances(
             &config.network.rpc_url,
             &config.security.wallet_path,
+            token_rpc_url,
         ).await.context("Failed to query on-chain wallet balances")?;
         EngineParams { live_price: Some(initial_price), wallet_balances: Some((usdc, sol)) }
     } else {
