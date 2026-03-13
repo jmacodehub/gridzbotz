@@ -1,6 +1,14 @@
 //! ═══════════════════════════════════════════════════════════════════════
 //! Telegram Bot Integration — PR #103 Hardened
 //!
+//! V2.1 changes (fix/telegram-token-log-leak):
+//! ✅ fire() warn! now masks the token in error output.
+//!    reqwest’s error Display includes the full request URL:
+//!      https://api.telegram.org/bot<TOKEN>/sendMessage
+//!    This leaked the live token into logs on every failed send.
+//!    Fix: sanitize_error() strips the URL segment and replaces
+//!    the token with [REDACTED]. Error category is preserved.
+//!
 //! V2 changes (PR #103 — fix/cb-reconcile-telegram-hardening):
 //! ✅ client: Client stored as struct field — reqwest connection pool
 //!    reused across all send_*() calls. Previously Client::new() was
@@ -10,7 +18,7 @@
 //!    trading cycle because send_fill() etc. are .await-ed in grid_bot.
 //! ✅ .error_for_status()? added — Telegram returns HTTP 200 with
 //!    {"ok":false} on bad token/chat_id. Previously fire() silently
-//!    "succeeded" on credential errors. Now warns loudly in logs.
+//!    “succeeded” on credential errors. Now warns loudly in logs.
 //!
 //! V1 (PR #101 — Full Alert Suite):
 //! Provides real-time mobile notifications for live trading events.
@@ -141,7 +149,7 @@ impl TelegramBot {
         total_fills: u64,
     ) {
         if !self.enabled { return; }
-        let emoji = if side == "SELL" { "💰" } else { "🛒" };
+        let emoji = if side == "SELL" { "💰" } else { "🛍" };
         let pnl_str = if pnl >= 0.0 {
             format!("+${pnl:.4}")
         } else {
@@ -254,7 +262,7 @@ impl TelegramBot {
         self.fire(&msg).await;
     }
 
-    // ── Legacy methods (preserved unchanged) ────────────────────────────
+    // ── Legacy methods (preserved unchanged) ────────────────────────────────────
 
     /// 🎉 Paper test complete (legacy).
     pub async fn send_test_complete(&self, name: &str, roi: f64, duration: f64) {
@@ -278,13 +286,23 @@ impl TelegramBot {
 
 impl TelegramBot {
     /// Fire-and-forget HTTP POST with 5s timeout.
-    /// Errors (network failure OR Telegram API {"ok":false}) are warned
-    /// but never propagated — trading loop safety is non-negotiable.
+    /// Errors are sanitized before logging — the token is NEVER printed.
+    /// Error category (HTTP status, timeout, etc.) is preserved for debugging.
     async fn fire(&self, text: &str) {
         debug!("[TELEGRAM] Sending: {:.60}…", text);
         if let Err(e) = self.send(text).await {
-            warn!("[TELEGRAM] Send failed (non-fatal): {}", e);
+            warn!("[TELEGRAM] Send failed (non-fatal): {}", Self::sanitize_error(&e.to_string(), &self.token));
         }
+    }
+
+    /// Redact the bot token from error strings.
+    /// reqwest includes the full URL in its Display impl, which exposes
+    /// the token. This replaces the token segment with [REDACTED].
+    fn sanitize_error(err: &str, token: &str) -> String {
+        if token.is_empty() {
+            return err.to_string();
+        }
+        err.replace(token, "[REDACTED]")
     }
 
     /// POST to Telegram sendMessage API.
@@ -354,11 +372,26 @@ mod tests {
 
     #[test]
     fn test_client_is_reused_not_per_call() {
-        // Structural guard: TelegramBot must hold a Client field.
-        // If this compiles, the field exists — Client::new() per-call
-        // regression cannot silently re-enter (the field would be unused).
         let bot = disabled_bot();
         let _: &Client = &bot.client;
+    }
+
+    #[test]
+    fn test_sanitize_error_redacts_token() {
+        let token = "8636276483:AAGNhXIACBCtA7fojCUk8rvWh7FYT5pl8T8";
+        let err   = format!("HTTP status client error (404 Not Found) for url \
+                             (https://api.telegram.org/bot{}/sendMessage)", token);
+        let sanitized = TelegramBot::sanitize_error(&err, token);
+        assert!(!sanitized.contains(token), "token must not appear in sanitized error");
+        assert!(sanitized.contains("[REDACTED]"), "[REDACTED] must be present");
+        assert!(sanitized.contains("404"), "HTTP status must be preserved");
+    }
+
+    #[test]
+    fn test_sanitize_error_empty_token_noop() {
+        let err = "some error without token";
+        let sanitized = TelegramBot::sanitize_error(err, "");
+        assert_eq!(sanitized, err);
     }
 
     #[tokio::test]
