@@ -58,7 +58,6 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::str::FromStr;
-use std::time::Duration;
 use tokio::sync::RwLock;
 use super::priority_fee_estimator::{PriorityFeeEstimator, FeeDataSource};
 use super::rpc_fee_source::RpcFeeSource;
@@ -302,7 +301,6 @@ impl RealTradingEngine {
 
                 let source: Arc<dyn FeeDataSource> = match fee_cfg.source.as_str() {
                     "helius" => {
-                        // Helius RPC URL from env — falls back gracefully if absent
                         let helius_url = std::env::var("GRIDZBOTZ_HELIUS_RPC_URL")
                             .unwrap_or_else(|_| {
                                 log::warn!(
@@ -322,7 +320,7 @@ impl RealTradingEngine {
                              [JUP6Lk+SOL+USDC local market] ⚡",
                             rpc_url
                         );
-                        Arc::new(RpcFeeSource::new(rpc_url.clone(), Duration::from_secs(5)))
+                        Arc::new(RpcFeeSource::new(rpc_url.clone()))
                     }
                 };
 
@@ -905,7 +903,6 @@ mod tests {
 
     #[test]
     fn test_reconcile_not_called_in_process_price_update() {
-        // Structural guard: process_price_update must NOT call reconcile_balances.
         let src = include_str!("real_trader.rs");
         let fn_body_start = src.find("async fn process_price_update").unwrap();
         let after = &src[fn_body_start..];
@@ -917,9 +914,6 @@ mod tests {
         );
     }
 
-    /// V3.4 guard: AsyncRpcFeeSource must not exist anywhere in this file.
-    /// It used &[] account keys (global noise). Canonical RpcFeeSource uses
-    /// [JUP6Lk, SOL, USDC] (Jupiter local fee market).
     #[test]
     fn test_async_rpc_fee_source_removed() {
         let src = include_str!("real_trader.rs");
@@ -929,8 +923,6 @@ mod tests {
         );
     }
 
-    /// V3.4 guard: fee_source_name field must be present on the engine struct.
-    /// Proves source-aware logging is wired, not just compile-checked.
     #[test]
     fn test_fee_source_name_field_exists() {
         let src = include_str!("real_trader.rs");
