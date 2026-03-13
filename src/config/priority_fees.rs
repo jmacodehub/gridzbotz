@@ -1,5 +1,13 @@
 //! ═══════════════════════════════════════════════════════════════════════════
-//! ⚡ PRIORITY FEE CONFIG V1.0 — Dynamic Compute-Unit Priority Fees
+//! ⚡ PRIORITY FEE CONFIG V1.1 — Dynamic Compute-Unit Priority Fees
+//!
+//! V1.1 CHANGES (feat/dynamic-priority-fee-sources — PR #109):
+//! ✅ Added `source` field: "rpc" | "helius"
+//!    - "rpc"    → RpcFeeSource (standard getRecentPrioritizationFees)
+//!                 Works on any RPC. Chainstack primary.
+//!    - "helius" → HeliusFeeSource (getPriorityFeeEstimate, V2 algo)
+//!                 Helius only. Requires GRIDZBOTZ_HELIUS_RPC_URL in .env.
+//! ✅ Backwards-compatible: serde default = "rpc", all existing TOMLs unaffected.
 //!
 //! Controls how Solana priority fees are calculated for transactions.
 //! Supports dynamic estimation via getRecentPrioritizationFees RPC call
@@ -8,7 +16,7 @@
 //! When `enable_dynamic = false` (default), falls back to the static
 //! `execution.priority_fee_microlamports` value.
 //!
-//! March 2026 — V1.0 ⚡
+//! March 2026 — V1.1 ⚡
 //! ═══════════════════════════════════════════════════════════════════════════
 
 use serde::{Deserialize, Serialize};
@@ -18,14 +26,15 @@ use anyhow::{Result, bail};
 // DEFAULTS
 // ═══════════════════════════════════════════════════════════════════════════
 
-fn default_strategy() -> String { "percentile".to_string() }
-fn default_percentile() -> u8 { 50 }
-fn default_multiplier() -> f64 { 1.2 }
-fn default_min_microlamports() -> u64 { 1_000 }
-fn default_max_microlamports() -> u64 { 500_000 }
-fn default_fallback_microlamports() -> u64 { 100_000 }
-fn default_cache_ttl_secs() -> u64 { 10 }
-fn default_sample_blocks() -> u64 { 150 }
+fn default_strategy()              -> String { "percentile".to_string() }
+fn default_source()                -> String { "rpc".to_string() }
+fn default_percentile()            -> u8     { 50 }
+fn default_multiplier()            -> f64    { 1.2 }
+fn default_min_microlamports()     -> u64    { 1_000 }
+fn default_max_microlamports()     -> u64    { 500_000 }
+fn default_fallback_microlamports() -> u64   { 100_000 }
+fn default_cache_ttl_secs()        -> u64    { 10 }
+fn default_sample_blocks()         -> u64    { 150 }
 
 // ═══════════════════════════════════════════════════════════════════════════
 // PRIORITY FEE CONFIG
@@ -41,6 +50,7 @@ fn default_sample_blocks() -> u64 { 150 }
 /// ```toml
 /// [priority_fees]
 /// enable_dynamic = true
+/// source = "rpc"                 # "rpc" (any RPC) | "helius" (Helius only)
 /// strategy = "percentile"        # "percentile" | "fixed"
 /// percentile = 50                # P50 = median (range: 25-99)
 /// multiplier = 1.2               # 20% headroom above computed fee
@@ -57,6 +67,12 @@ pub struct PriorityFeeConfig {
     /// When false, uses `execution.priority_fee_microlamports` (static).
     #[serde(default)]
     pub enable_dynamic: bool,
+
+    /// Fee data source:
+    /// - `"rpc"`    : Standard getRecentPrioritizationFees (any RPC provider)
+    /// - `"helius"` : Helius getPriorityFeeEstimate (V2, local-market-aware)
+    #[serde(default = "default_source")]
+    pub source: String,
 
     /// Fee estimation strategy:
     /// - `"percentile"`: Nth percentile of recent fees (recommended)
@@ -85,7 +101,7 @@ pub struct PriorityFeeConfig {
     pub max_microlamports: u64,
 
     /// Fallback fee when RPC estimation fails (microlamports).
-    /// Default: 5000 (matches current static priority_fee_microlamports).
+    /// Default: 100_000.
     #[serde(default = "default_fallback_microlamports")]
     pub fallback_microlamports: u64,
 
@@ -103,15 +119,16 @@ pub struct PriorityFeeConfig {
 impl Default for PriorityFeeConfig {
     fn default() -> Self {
         Self {
-            enable_dynamic: false,
-            strategy: default_strategy(),
-            percentile: default_percentile(),
-            multiplier: default_multiplier(),
-            min_microlamports: default_min_microlamports(),
-            max_microlamports: default_max_microlamports(),
+            enable_dynamic:         false,
+            source:                 default_source(),
+            strategy:               default_strategy(),
+            percentile:             default_percentile(),
+            multiplier:             default_multiplier(),
+            min_microlamports:      default_min_microlamports(),
+            max_microlamports:      default_max_microlamports(),
             fallback_microlamports: default_fallback_microlamports(),
-            cache_ttl_secs: default_cache_ttl_secs(),
-            sample_blocks: default_sample_blocks(),
+            cache_ttl_secs:         default_cache_ttl_secs(),
+            sample_blocks:          default_sample_blocks(),
         }
     }
 }
@@ -126,6 +143,13 @@ impl PriorityFeeConfig {
     pub fn validate(&self) -> Result<()> {
         if !self.enable_dynamic {
             return Ok(());
+        }
+
+        match self.source.as_str() {
+            "rpc" | "helius" => {}
+            other => bail!(
+                "priority_fees.source must be 'rpc' or 'helius', got '{}'", other
+            ),
         }
 
         match self.strategy.as_str() {
@@ -174,6 +198,7 @@ mod tests {
     fn test_defaults() {
         let cfg = PriorityFeeConfig::default();
         assert!(!cfg.enable_dynamic);
+        assert_eq!(cfg.source, "rpc");
         assert_eq!(cfg.strategy, "percentile");
         assert_eq!(cfg.percentile, 50);
         assert!((cfg.multiplier - 1.2).abs() < f64::EPSILON);
@@ -192,10 +217,28 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_valid_dynamic() {
+    fn test_validate_valid_dynamic_rpc() {
         let mut cfg = PriorityFeeConfig::default();
         cfg.enable_dynamic = true;
+        cfg.source = "rpc".to_string();
         assert!(cfg.validate().is_ok());
+    }
+
+    #[test]
+    fn test_validate_valid_dynamic_helius() {
+        let mut cfg = PriorityFeeConfig::default();
+        cfg.enable_dynamic = true;
+        cfg.source = "helius".to_string();
+        assert!(cfg.validate().is_ok());
+    }
+
+    #[test]
+    fn test_validate_bad_source() {
+        let mut cfg = PriorityFeeConfig::default();
+        cfg.enable_dynamic = true;
+        cfg.source = "quicknode".to_string();
+        let err = cfg.validate().unwrap_err();
+        assert!(err.to_string().contains("source"));
     }
 
     #[test]
@@ -264,6 +307,7 @@ mod tests {
         let toml_str = toml::to_string(&original).expect("serialize");
         let restored: PriorityFeeConfig = toml::from_str(&toml_str).expect("deserialize");
         assert_eq!(original.percentile, restored.percentile);
+        assert_eq!(original.source, restored.source);
         assert_eq!(original.max_microlamports, restored.max_microlamports);
     }
 
@@ -271,19 +315,33 @@ mod tests {
     fn test_serde_empty_uses_defaults() {
         let cfg: PriorityFeeConfig = toml::from_str("").expect("empty should use defaults");
         assert!(!cfg.enable_dynamic);
+        assert_eq!(cfg.source, "rpc");
         assert_eq!(cfg.strategy, "percentile");
         assert_eq!(cfg.fallback_microlamports, 100_000);
     }
 
     #[test]
-    fn test_serde_partial_override() {
+    fn test_serde_partial_override_with_source() {
         let toml_str = r#"
 enable_dynamic = true
+source = "helius"
 percentile = 75
 "#;
         let cfg: PriorityFeeConfig = toml::from_str(toml_str).expect("partial override");
         assert!(cfg.enable_dynamic);
+        assert_eq!(cfg.source, "helius");
         assert_eq!(cfg.percentile, 75);
         assert_eq!(cfg.multiplier, 1.2); // default preserved
+    }
+
+    #[test]
+    fn test_serde_existing_toml_without_source_uses_default() {
+        // Existing TOMLs without `source` field must deserialize cleanly
+        let toml_str = r#"
+enable_dynamic = true
+percentile = 50
+"#;
+        let cfg: PriorityFeeConfig = toml::from_str(toml_str).expect("backwards compat");
+        assert_eq!(cfg.source, "rpc");  // default kicks in
     }
 }

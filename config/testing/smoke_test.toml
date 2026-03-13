@@ -1,5 +1,5 @@
 # ═══════════════════════════════════════════════════════════════════════════
-#  🧪 SMOKE TEST CONFIG — V6.4 (PR #107)
+#  🧪 SMOKE TEST CONFIG — V6.5 (PR #109)
 #  Purpose: Quick wiring check — fills, fees, lifecycle, feed all working
 #  Fills expected: 2–10 (regime gate DISABLED, tight 0.08% spacing)
 #  Duration: 5 minutes / 3,000 cycles @ 100ms
@@ -22,11 +22,12 @@
 #   V6.4.1: comment out ghost field max_volatility_to_trade
 #   V6.4.2: comment out ghost field reposition_threshold_pct in [strategies.grid]
 #   V6.4.3: set test_duration_minutes = 5 (was defaulting to 1 hour)
+#   V6.5   (PR #109): enable_dynamic=true, source="rpc" — live fee estimation
 # ═══════════════════════════════════════════════════════════════════════════
 
 [bot]
 name           = "SmokeTest-Bot"
-version        = "6.4.0"
+version        = "6.5.0"
 environment    = "testing"
 execution_mode = "paper"
 instance_id    = "smoke-test-1"
@@ -50,8 +51,11 @@ max_slippage_bps           = 100
 confirmation_timeout_secs  = 60
 max_retries                = 3
 
+# PR #109: Dynamic fee estimation enabled — source="rpc" (Chainstack compatible)
+# Switch source to "helius" and set GRIDZBOTZ_HELIUS_RPC_URL for enhanced accuracy.
 [priority_fees]
-enable_dynamic         = false
+enable_dynamic         = true
+source                 = "rpc"
 strategy               = "percentile"
 percentile             = 50
 multiplier             = 1.2
@@ -180,14 +184,14 @@ strong_histogram_threshold = 0.5
 min_warmup_periods         = 26
 
 [risk]
-max_position_size_pct         = 40.0   # Relaxed — don’t restrict smoke test
-max_drawdown_pct              = 50.0   # Don’t trip circuit breaker
+max_position_size_pct         = 40.0   # Relaxed — don't restrict smoke test
+max_drawdown_pct              = 50.0   # Don't trip circuit breaker
 stop_loss_pct                 = 20.0
 take_profit_pct               = 50.0
 enable_circuit_breaker        = false  # Disabled — allow free trading
 circuit_breaker_threshold_pct = 99.0
 circuit_breaker_cooldown_secs = 60
-# PR #79: consecutive-loss guard (high — don’t trip on smoke test)
+# PR #79: consecutive-loss guard (high — don't trip on smoke test)
 max_consecutive_losses = 50
 # PR #89: fixed stop (default) — no trailing stop in smoke test
 enable_trailing_stop = false
