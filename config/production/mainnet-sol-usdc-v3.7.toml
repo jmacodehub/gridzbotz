@@ -65,7 +65,7 @@ require_password = false
 [execution]
 max_trade_sol              = 0.5
 max_trade_size_usdc        = 50.0
-priority_fee_microlamports = 100_000
+priority_fee_microlamports = 10_000
 max_slippage_bps           = 150
 confirmation_timeout_secs  = 60
 max_retries                = 4
@@ -83,9 +83,9 @@ rpc_fallback_urls          = [
 [priority_fees]
 enable_dynamic         = true
 strategy               = "percentile"
-percentile             = 50
+percentile             = 75
 multiplier             = 1.2
-min_microlamports      = 1_000
+min_microlamports      = 2_000
 max_microlamports      = 500_000
 fallback_microlamports = 100_000
 cache_ttl_secs         = 10
@@ -107,7 +107,7 @@ test_duration_hours = 1
 # ─────────────────────────────────────────────────────────────────────────────
 [trading]
 # Core grid
-grid_levels          = 20
+grid_levels          = 10
 grid_spacing_percent = 0.18
 min_order_size       = 0.05
 max_position_size    = 50.0
@@ -129,7 +129,7 @@ rebalance_threshold_pct = 5.0
 rebalance_cooldown_secs = 120
 
 # Order management
-max_orders_per_side         = 10
+max_orders_per_side         = 5
 order_refresh_interval_secs = 120
 enable_market_orders        = false
 enable_fee_optimization     = true
@@ -138,7 +138,7 @@ enable_fee_optimization     = true
 enable_order_lifecycle         = true
 order_max_age_minutes          = 5
 order_refresh_interval_minutes = 2
-min_orders_to_maintain         = 8
+min_orders_to_maintain         = 4
 
 # Risk / profitability
 min_profit_threshold_pct = 0.25
@@ -151,7 +151,7 @@ upper_price_bound   = 500.0
 
 # Market regime gate — production apply_environment() enforces 0.30% floor
 enable_regime_gate      = true
-min_volatility_to_trade = 0.30
+min_volatility_to_trade = 0.05
 pause_in_very_low_vol   = false
 
 # Smart position sizing — V5.5 / PR #94 Commit 5a
@@ -279,7 +279,7 @@ enable_file_logging = true
 
 [metrics]
 enable_metrics = true
-stats_interval = 50
+stats_interval = 3000
 
 
 [database]
