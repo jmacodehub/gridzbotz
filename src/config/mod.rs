@@ -1,5 +1,15 @@
 //! ═══════════════════════════════════════════════════════════════════════════
-//! 🎛️  UNIFIED CONFIGURATION SYSTEM V5.8 - GRIDZBOTZ
+//! 🎛️  UNIFIED CONFIGURATION SYSTEM V5.9 - GRIDZBOTZ
+//!
+//! V5.9 ADDITIONS (fix/wire-resolve-secrets-into-from-file):
+//! ✅ Config::from_file(): secrets::resolve_secrets() now called automatically
+//!    - Inserted between apply_environment_defaults() and validate()
+//!    - Env vars GRIDZBOTZ_RPC_URL / GRIDZBOTZ_WALLET_PATH /
+//!      GRIDZBOTZ_JUPITER_API_KEY / GRIDZBOTZ_JITO_TIP_LAMPORTS /
+//!      GRIDZBOTZ_FALLBACK_RPC_URL override TOML values at load time
+//!    - Paper mode: missing env vars tolerated (warn only)
+//!    - Live mode:  GRIDZBOTZ_JUPITER_API_KEY required; wallet + RPC enforced
+//!    - Zero breaking changes — all 46 TOMLs, all tests unchanged
 //!
 //! V5.8 ADDITIONS (PR #107 — fix/fee-reconciliation):
 //! ✅ TradingConfig: max_grid_spacing_pct + min_grid_spacing_pct added
@@ -63,6 +73,7 @@
 //! V5.0 ADDITIONS (Stage 1 — Feb 23, 2026):
 //! ✅ execution_mode, instance_id, ExecutionConfig, BotConfig helpers
 //!
+//! March 13, 2026 - V5.9: resolve_secrets wired into from_file() 🔐
 //! March 13, 2026 - V5.8: max/min_grid_spacing_pct added (PR #107 Commit 1) 📐
 //! March 12, 2026 - V5.7: seed_orders_bypass added to GridStrategyConfig (PR #100) 🔧
 //! March 11, 2026 - V5.6: wma_confidence_threshold added (PR #99 Commit 1) 🎯
@@ -438,7 +449,7 @@ impl FeeFilterConfig {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// TRADING CONFIGURATION - V5.8 ENHANCED! 📐
+// TRADING CONFIGURATION - V5.9 ENHANCED! 🔐
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -1379,6 +1390,13 @@ impl Config {
         Self::from_file("config/master.toml")
     }
 
+    /// Load, resolve secrets, and validate a config file.
+    ///
+    /// Pipeline (V5.9):
+    ///   1. Parse TOML → Config
+    ///   2. apply_environment_defaults() — env-specific field overrides
+    ///   3. secrets::resolve_secrets()  — GRIDZBOTZ_* env vars override TOML
+    ///   4. validate()                  — bail on invalid state
     pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
         let path = path.as_ref();
         info!("🔧 Loading configuration from: {}", path.display());
@@ -1388,6 +1406,9 @@ impl Config {
             .context("Failed to parse TOML configuration")?;
         info!("🌍 Applying environment overrides: {}", config.bot.environment);
         config.apply_environment_defaults();
+        // V5.9: inject secrets from GRIDZBOTZ_* env vars before validation
+        secrets::resolve_secrets(&mut config)
+            .context("Secret resolution failed")?;
         config.validate()
             .context("Configuration validation failed")?;
         info!("✅ Configuration loaded and validated successfully!\n");
@@ -1444,7 +1465,7 @@ impl Config {
     pub fn display_summary(&self) {
         let border = "═".repeat(78);
         println!("\n{}", border);
-        println!("  🤖 GRIDZBOTZ V5.8 - CONFIGURATION");
+        println!("  🤖 GRIDZBOTZ V5.9 - CONFIGURATION");
         println!("{}\n", border);
 
         println!("📋 BOT: {} v{} [{}]", self.bot.name, self.bot.version, self.bot.environment);
@@ -1578,7 +1599,7 @@ impl ConfigBuilder {
             config: Config {
                 bot: BotConfig {
                     name: "GridzBot-Builder".to_string(),
-                    version: "5.8.0".to_string(),
+                    version: "5.9.0".to_string(),
                     environment: "testing".to_string(),
                     execution_mode: "paper".to_string(),
                     instance_id: None,
@@ -1690,7 +1711,7 @@ impl Default for ConfigBuilder {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// TESTS — V5.8 max/min_grid_spacing_pct + carried-forward suites
+// TESTS — V5.9 resolve_secrets wiring + carried-forward suites
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[cfg(test)]
