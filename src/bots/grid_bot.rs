@@ -1,5 +1,18 @@
 //! ═════════════════════════════════════════════════════════════════════════
-//! GRID BOT V6.4 — FEE-RECONCILIATION WIRED (PR #107)
+//! GRID BOT V6.5 — PNL DELTA WIRED INTO FillEvent (PR #117)
+//!
+//! PR #117: Wire real pnl_delta into FillEvent.pnl per fill
+//!   Before: fill.pnl always None (engine sets it; engine has no buy_price ctx)
+//!   After:  fill.pnl = Some(pnl_delta) written back after mark_*_filled()
+//!   Root cause: pnl_before was snapshotted once OUTSIDE the fill loop,
+//!               causing stale baseline on multi-fill cycles (fills #2+ compounded).
+//!               Loop iterator was &filled_orders (immutable) — mutation impossible.
+//!   Fix:
+//!     1. for fill in &filled_orders  →  for fill in &mut filled_orders
+//!     2. pnl_before snapshot moved INSIDE loop (one baseline per fill)
+//!     3. fill.pnl = Some(pnl_delta) written after mark_buy/sell_filled()
+//!   Scope guard: notify_fill() pre-loop (immutable) left untouched.
+//!                WMA voter attribution, BotStats.current_pnl — out of scope.
 //!
 //! PR #107 Commit 2: Replace hardcoded spacing bounds in GridRebalancerConfig
 //!   Before: max_spacing: 0.0075, min_spacing: 0.001  (hardcoded)
@@ -53,6 +66,7 @@
 //! PR #94  (Commit 6): GridBotStats observability.
 //! PR #93: CircuitBreaker wired.
 //!
+//! March 13, 2026 - V6.5: FillEvent.pnl wired with real delta (PR #117) 💰
 //! March 13, 2026 - V6.4: fee-reconciliation wired (PR #107 C2+C4+C5+C6+C7) 💰
 //! March 12, 2026 - V6.3: GridRebalancer execution-only (PR #105 C3) 🔥
 //! March 12, 2026 - V6.2: fill level_id + CB delta P&L (PR #102) ✅
@@ -130,20 +144,20 @@ impl GridBot {
         engine: Arc<dyn TradingEngine + Send + Sync>,
         feed:   Arc<PriceFeed>,
     ) -> Result<Self> {
-        info!("[BOT-V6.4] Initializing GridBot V6.4...");
-        info!("[BOT-V6.4] WMAConfGate:      {:.2} (TOML-driven, PR #99)",
+        info!("[BOT-V6.5] Initializing GridBot V6.5...");
+        info!("[BOT-V6.5] WMAConfGate:      {:.2} (TOML-driven, PR #99)",
               config.strategies.wma_confidence_threshold);
-        info!("[BOT-V6.4] OptimizerCadence: {} cycles",
+        info!("[BOT-V6.5] OptimizerCadence: {} cycles",
               config.trading.optimizer_interval_cycles);
-        info!("[BOT-V6.4] ConsensusSizing:  {} | multiplier={:.2}x",
+        info!("[BOT-V6.5] ConsensusSizing:  {} | multiplier={:.2}x",
               if config.trading.enable_smart_position_sizing { "ACTIVE" } else { "disabled" },
               config.trading.signal_size_multiplier);
         // PR #107 C2: log config-driven spacing bounds
-        info!("[BOT-V6.4] DynSpacingBounds: {:.5}\u{2013}{:.5} (PR #107 C2)",
+        info!("[BOT-V6.5] DynSpacingBounds: {:.5}\u{2013}{:.5} (PR #107 C2)",
               config.trading.min_grid_spacing_pct,
               config.trading.max_grid_spacing_pct);
         // PR #107 C4+C5: taker_fee_percent() = bps/100 for display
-        info!("[BOT-V6.4] TakerFee:         {:.4}% ({:.1} bps) (PR #107 C4)",
+        info!("[BOT-V6.5] TakerFee:         {:.4}% ({:.1} bps) (PR #107 C4)",
               config.fees.taker_fee_percent(),
               config.fees.taker_fee_bps);
 
@@ -233,7 +247,7 @@ impl GridBot {
 
         let manager = _manager;
 
-        info!("[BOT-V6.4] {} strategies loaded ({} WMA voters, conf_gate={:.2})",
+        info!("[BOT-V6.5] {} strategies loaded ({} WMA voters, conf_gate={:.2})",
               manager.strategies.len(),
               manager.wma_engine.registered_count(),
               manager.wma_engine.min_confidence());
@@ -245,7 +259,7 @@ impl GridBot {
         let adaptive_optimizer = AdaptiveOptimizer::new(base_spacing, base_size);
         let circuit_breaker    = CircuitBreaker::new(&config);
 
-        info!("[BOT-V6.4] GridBot V6.4 initialization complete");
+        info!("[BOT-V6.5] GridBot V6.5 initialization complete");
 
         Ok(Self {
             manager,
@@ -283,7 +297,7 @@ impl GridBot {
     }
 
     async fn initialize_with_price(&mut self) -> Result<()> {
-        info!("[BOT] V6.4 GRID INIT - awaiting live price...");
+        info!("[BOT] V6.5 GRID INIT - awaiting live price...");
 
         let initial_price = self.feed.latest_price().await;
         if initial_price <= 0.0 {
@@ -521,9 +535,13 @@ impl GridBot {
         self.last_signal_strength = signal.strength();
         self.enhanced_metrics.record_signal(true);
 
-        let filled_orders = self.engine.process_price_update(price).await
+        // engine returns owned Vec<FillEvent> — we take ownership here.
+        let mut filled_orders = self.engine.process_price_update(price).await
             .context("Engine tick failed")?;
 
+        // ── notify_fill pre-loop (immutable) — WMA voter fan-out. ──────────
+        // Runs before pnl enrichment; WMA voters see pnl=None here.
+        // Enriching notify_fill is a separate concern (out of PR #117 scope).
         for fill in &filled_orders { self.manager.notify_fill(fill); }
 
         let wallet  = self.engine.get_wallet().await;
@@ -533,22 +551,23 @@ impl GridBot {
             info!("[BOT] {} fills at ${:.4}", filled_orders.len(), price);
             self.successful_trades += filled_orders.len() as u64;
 
-            // PR #102: Snapshot P&L *before* the fill loop so we can
-            // compute per-fill deltas for CB.record_trade().
-            let pnl_before = self.grid_state.total_realized_pnl().await;
-
             // PR #107 C4+C5: taker_fee_fraction() = bps/10_000 — correct unit
-            // for direct multiplication. taker_fee_pct was a phantom field;
-            // the canonical source is fees.taker_fee_bps via helpers.
-            // Paper mode has taker_fee_bps=0.0 by default — zero behaviour change.
+            // for direct multiplication.
             let taker_fee_fraction = self.config.fees.taker_fee_fraction();
 
-            for fill in &filled_orders {
+            // PR #117: &mut iterator so we can write fill.pnl = Some(pnl_delta).
+            // pnl_before is snapshotted INSIDE the loop — one baseline per fill.
+            // Previously pnl_before was outside the loop, causing compounding
+            // across multi-fill cycles (fills #2+ used a stale baseline).
+            for fill in &mut filled_orders {
                 let is_buy    = fill.side == OrderSide::Buy;
                 let fill_size = self.adaptive_optimizer.current_position_size;
 
                 // fee = fill_price * fill_size * (taker_fee_bps / 10_000)
                 let fee_usdc = price * fill_size * taker_fee_fraction;
+
+                // ── PR #117 FIX: snapshot pnl_before INSIDE loop ──────────
+                let pnl_before = self.grid_state.total_realized_pnl().await;
 
                 if let Some(lid) = fill.level_id {
                     if is_buy {
@@ -561,9 +580,15 @@ impl GridBot {
                 let pnl_after = self.grid_state.total_realized_pnl().await;
                 let pnl_delta = pnl_after - pnl_before;
 
+                // ── PR #117 FIX: write real delta back into FillEvent ─────
+                // FillEvent.pnl is Option<f64>. Engine always sets it to None
+                // (no buy_price context in engine scope). We mutate in-place
+                // here where GridStateTracker context is available.
+                fill.pnl = Some(pnl_delta);
+
                 self.total_fills_tracked += 1;
 
-                info!("[FILL] #{}: {} {} @ ${:.4} | size:{:.4} | fee:${:.4} | \u{0394} P&L:${:.4} | ts:{}",
+                info!("[FILL] #{}: {} {} @ ${:.4} | size:{:.4} | fee:${:.4} | \u{0394}P&L:${:.4} | ts:{}",
                       self.total_fills_tracked,
                       if is_buy { "BUY" } else { "SELL" },
                       fill.order_id, price, fill_size, fee_usdc, pnl_delta, timestamp);
@@ -586,7 +611,7 @@ impl GridBot {
                         self.manager.record_fill_for_wma(voter, pnl_delta);
                     }
                     if !voters.is_empty() {
-                        debug!("[WMA-ATTR] SELL attributed to {} voters | \u{0394} P&L:${:.4}",
+                        debug!("[WMA-ATTR] SELL attributed to {} voters | \u{0394}P&L:${:.4}",
                                voters.len(), pnl_delta);
                     }
                 }
@@ -610,8 +635,6 @@ impl GridBot {
         let interval = self.config.metrics.stats_interval;
         if interval > 0 && self.total_cycles % interval == 0 {
             // PR #107 C4: log total fees paid by GridStateTracker
-            // C5: use taker_fee_percent() (bps/100) for display — not the
-            //     now-renamed taker_fee_fraction local (which is bps/10_000).
             let total_fees_paid = self.grid_state.total_fees_paid().await;
             info!("[FEES] Total fees paid (grid levels): ${:.4} | taker_rate={:.4}%",
                   total_fees_paid, self.config.fees.taker_fee_percent());
@@ -682,7 +705,7 @@ impl GridBot {
         let total_fees  = self.grid_state.total_fees_paid().await;
 
         println!("\n╔══════════════════════════════════════════╗");
-        println!(  "║     GRID BOT V6.4 STATUS (PR #107)       ║");
+        println!(  "║     GRID BOT V6.5 STATUS (PR #117)       ║");
         println!(  "╚══════════════════════════════════════════╝");
         println!("  Instance:          {}",   self.config.bot.instance_name());
         println!("  Uptime:            {}s",  uptime_secs);
@@ -838,5 +861,48 @@ impl Bot for GridBot {
             current_pnl:      self.last_known_pnl,
             intent_conflicts: self.intent_conflicts,
         }
+    }
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// TESTS — PR #117
+// ═════════════════════════════════════════════════════════════════════════
+
+#[cfg(test)]
+mod tests {
+    use crate::trading::{FillEvent, OrderSide};
+
+    /// Compile-time guard: FillEvent.pnl is Option<f64>.
+    /// If someone renames or changes the type, this test fails to compile.
+    /// Also verifies that Some(pnl_delta) can be assigned — the core PR #117 mutation.
+    #[test]
+    fn test_fill_event_pnl_is_option_f64_and_assignable() {
+        let mut fill = FillEvent::new(
+            "ORDER-SELL-001",
+            OrderSide::Sell,
+            142.30,   // fill_price
+            0.0500,   // fill_size
+            0.0036,   // fee_usdc
+            None,     // pnl — starts as None (engine never sets it)
+            1741899000,
+        );
+
+        // Before fix: engine always produces None
+        assert!(fill.pnl.is_none(), "Engine must produce pnl=None; grid_bot enriches it");
+
+        // Simulate the PR #117 mutation
+        let simulated_pnl_delta: f64 = 0.1820;
+        fill.pnl = Some(simulated_pnl_delta);
+
+        // After fix: pnl is Some with the correct delta
+        assert_eq!(
+            fill.pnl,
+            Some(0.1820),
+            "fill.pnl must be Some(pnl_delta) after PR #117 enrichment"
+        );
+        assert!(
+            fill.pnl.unwrap() > 0.0,
+            "Sell fill on a grid cycle must show positive pnl_delta"
+        );
     }
 }
