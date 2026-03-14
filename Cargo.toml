@@ -1,11 +1,11 @@
 [package]
 name = "solana-grid-bot"
-version = "0.2.5"  # 🔥 V2.5 - Regime Gate + Smart Fees + Order Lifecycle!
+version = "7.0.0"
 edition = "2021"
 rust-version = "1.75"
-default-run = "solana-grid-bot"  # 🎯 NEW: Default binary for cargo run
+default-run = "solana-grid-bot"
 authors = ["J-MC <jmc@solana-trading.com>"]
-description = "⚡ Production-grade Solana grid trading bot with V2.5 enhancements: Market Regime Gate, Smart Fee Filtering, Dynamic Order Lifecycle, and AI-powered optimization"
+description = "Production-grade Solana grid trading bot — V7.0 Forensics Edition: configurable regime gate with volatility ceiling, dynamic priority fees (percentile-based), Jupiter V6 swaps, full order lifecycle management, multi-strategy consensus engine"
 documentation = "https://docs.rs/solana-grid-bot"
 homepage = "https://github.com/j-mc/solana-grid-bot"
 repository = "https://github.com/j-mc/solana-grid-bot"
@@ -26,7 +26,7 @@ exclude = [
 ]
 
 # ═══════════════════════════════════════════════════════════════════════════
-# DEPENDENCIES - V5.0 Jupiter-Powered Real Trading
+# DEPENDENCIES - V7.0 Jupiter-Powered Real Trading
 # ═══════════════════════════════════════════════════════════════════════════
 
 [dependencies]
@@ -57,7 +57,7 @@ ahash = "0.8.11"
 hashbrown = "0.14"
 
 # ───────────────────────────────────────────────────────────────────────────
-# 🪐 JUPITER DEX INTEGRATION - V5.0 HTTP API (No SDK conflicts!)
+# 🪐 JUPITER DEX INTEGRATION - V7.0 HTTP API (No SDK conflicts!)
 # ───────────────────────────────────────────────────────────────────────────
 # We use Jupiter HTTP API v6 directly - no SDK needed!
 # Our custom JupiterClient handles quote fetching and swap instruction building
@@ -99,7 +99,7 @@ validator = { version = "0.18", features = ["derive"] }
 shellexpand = "3.1"       # Path expansion for keystore files (~/path support)
 
 # ───────────────────────────────────────────────────────────────────────────
-# CLI & User Interface - V2.5 GIGA MODE! 🔥💎🚀
+# CLI & User Interface
 # ───────────────────────────────────────────────────────────────────────────
 clap = { version = "4.5", features = ["derive", "color", "suggestions", "env"] }
 colored = "2.1"
@@ -155,42 +155,39 @@ proptest = "1.5"
 pretty_assertions = "1.4"
 
 # ═══════════════════════════════════════════════════════════════════════════
-# FEATURE FLAGS - V5.0 Jupiter-Powered Real Trading
+# FEATURE FLAGS - V7.0 Forensics Edition
 # ═══════════════════════════════════════════════════════════════════════════
 
 [features]
-default = ["simulation", "v25-enhancements"]
+default = ["simulation"]
 
-# ── V5.0 Features ────────────────────────────────────────────────────────────
+# ── Core Trading Features ─────────────────────────────────────────────────
 jupiter-dex = []          # 🪐 Jupiter DEX integration for real swaps
-
-# ── V2.5 Features ────────────────────────────────────────────────────────────
-v25-enhancements = []     # ✅ Market Regime Gate + Smart Fees + Order Lifecycle
-regime-gate = []          # 🚫 Market regime detection & auto-pause
+regime-gate = []          # 🚫 Market regime detection & auto-pause (volatility floor + ceiling)
 smart-fees = []           # 💰 Dynamic fee filtering per regime
 order-lifecycle = []      # 🔄 Auto-refresh & staleness detection
 dynamic-spacing = []      # 📊 Volatility-based grid spacing
 
-# ── V4.0 Features ────────────────────────────────────────────────────────────
-grid-state-machine = []   # 🎯 Grid level tracking with buy/sell pairing (always enabled in v4.0)
+# ── Grid State Machine ────────────────────────────────────────────────────
+grid-state-machine = []   # 🎯 Grid level tracking with buy/sell pairing
 
-# ── Trading Modes (mutually exclusive) ─────────────────────────────────────────────────
+# ── Trading Modes (mutually exclusive) ───────────────────────────────────
 simulation = []           # ✅ Safe simulation mode (no real orders) - DEFAULT
 paper-trading = []        # 📝 Paper trading (tracks but doesn't execute)
 live-trading = []         # ⚠️  LIVE MODE - Real money! Requires security module
 security = []             # 🔐 Security module with keystore & signing (required for live-trading)
 
-# ── Optional Integrations ────────────────────────────────────────────────────────
+# ── Optional Integrations ─────────────────────────────────────────────────
 websockets = ["tokio-tungstenite", "futures-util"]
 database = ["sqlx"]
 metrics = ["prometheus"]
 tracing-full = ["tracing", "tracing-subscriber"]
 caching = ["redis"]
 
-# ── Feature Bundles ────────────────────────────────────────────────────────────
-full = ["v25-enhancements", "jupiter-dex", "websockets", "database", "metrics", "tracing-full", "caching"]
-production = ["live-trading", "security", "jupiter-dex", "v25-enhancements", "database", "metrics", "tracing-full"]
-development = ["simulation", "v25-enhancements", "tracing-full"]
+# ── Feature Bundles ───────────────────────────────────────────────────────
+full = ["jupiter-dex", "websockets", "database", "metrics", "tracing-full", "caching"]
+production = ["live-trading", "security", "jupiter-dex", "database", "metrics", "tracing-full"]
+development = ["simulation", "tracing-full"]
 
 # ═══════════════════════════════════════════════════════════════════════════
 # BUILD PROFILES - Maximum Performance Optimization
@@ -229,7 +226,7 @@ path = "src/main.rs"
 required-features = []
 
 # ═══════════════════════════════════════════════════════════════════════════
-# EXAMPLES - V2.5 Testing & Analysis Suite
+# EXAMPLES - Testing & Analysis Suite
 # ═══════════════════════════════════════════════════════════════════════════
 
 # TODO: Fix examples to use updated APIs
@@ -238,13 +235,13 @@ required-features = []
 # - paper_trading_demo.rs: Uses old feed_ids import path
 # - Files missing: auto_optimizer.rs, profile_test.rs, extended_test.rs, live_dashboard.rs
 
-# ── Working Examples ─────────────────────────────────────────────────────────────
+# ── Working Examples ──────────────────────────────────────────────────────
 # [[example]]
 # name = "master_giga"
 # path = "examples/master_giga.rs"
 # required-features = []
 
-# ── WebSocket Examples (Optional) ────────────────────────────────────────────────────
+# ── WebSocket Examples (Optional) ─────────────────────────────────────────
 # [[example]]
 # name = "debug_websocket"
 # path = "examples/debug_websocket.rs"
@@ -288,7 +285,7 @@ ignored = ["lazy_static"]  # Used via macro expansion
 sign-commit = true
 sign-tag = true
 pre-release-commit-message = "chore: Release v{{version}} 🚀"
-tag-message = "Release v{{version}} - PROJECT FLASH"
+tag-message = "Release v{{version}} — V7.0 Forensics Edition"
 tag-name = "v{{version}}"
 
 # ═══════════════════════════════════════════════════════════════════════════
