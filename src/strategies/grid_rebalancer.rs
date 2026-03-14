@@ -1,5 +1,18 @@
 //! ═════════════════════════════════════════════════════════════════════════
-//! 🔥📎 GRID REBALANCER V6.0 - ORDER LIFECYCLE ENGINE (PR #119)
+//! 🔥📎 GRID REBALANCER V6.1 - CONFIGURABLE VOL FLOOR (PR #124)
+//!
+//! V6.1 (PR #124 — Configurable Vol Floor):
+//!   ✅ GridRebalancerConfig: vol_floor_resume_pct: f64
+//!      Replaces hardcoded 0.3 in apply_environment("development") and
+//!      apply_environment("production"). Default 0.05 matches live mainnet.
+//!      #[serde(default)] — all existing TOMLs parse unchanged.
+//!   ✅ GridRebalancerBuilder: vol_floor_resume_pct() setter
+//!   ✅ 5 new tests:
+//!      - default is 0.05
+//!      - serde roundtrip absent TOML field → 0.05
+//!      - production enforcer uses vol_floor_resume_pct, not 0.3
+//!      - development cap uses vol_floor_resume_pct, not 0.3
+//!      - production does NOT stomp a value already above the floor
 //!
 //! V6.0 (PR #119 — Order Lifecycle Engine):
 //!   ✅ check_stale_orders(&GridStateTracker, current_price) -> Vec<u64>
@@ -34,6 +47,7 @@
 //!
 //! PR #98 fix: name() returns "GridRebalancer" (stable WMA HashMap key).
 //!
+//! March 14, 2026 - V6.1: Configurable vol floor (PR #124) 🔧
 //! March 14, 2026 - V6.0: Order Lifecycle Engine (PR #119 C1) ⏰
 //! March 12, 2026 - V5.5: Seed bypass + record_execution (PR #106) 🌱
 //! March 2026     - V5.4: SmartFeeFilter wired (PR #94 C4)
@@ -294,10 +308,19 @@ pub struct GridRebalancerConfig {
     // ── V5.5: Seed bypass ────────────────────────────────────────────
     #[serde(default = "default_seed_orders_bypass")]
     pub seed_orders_bypass: bool,
+
+    // ── V6.1: Configurable vol floor ─────────────────────────────────
+    /// Minimum volatility floor applied by apply_environment().
+    /// Replaces hardcoded 0.3 in both "development" cap and "production"
+    /// safety raise. Default 0.05 matches live mainnet tuning Mar 2026.
+    /// TOML key: vol_floor_resume_pct (omit → uses default 0.05).
+    #[serde(default = "default_gr_vol_floor_resume_pct")]
+    pub vol_floor_resume_pct: f64,
 }
 
-fn default_high_fill_threshold() -> f64 { 0.10 }
-fn default_seed_orders_bypass() -> bool { true }
+fn default_high_fill_threshold()     -> f64  { 0.10 }
+fn default_seed_orders_bypass()      -> bool { true }
+fn default_gr_vol_floor_resume_pct() -> f64  { 0.05 }
 
 impl Default for GridRebalancerConfig {
     fn default() -> Self {
@@ -328,6 +351,8 @@ impl Default for GridRebalancerConfig {
             fill_rate_threshold: 0.10,
 
             seed_orders_bypass: true,
+
+            vol_floor_resume_pct: default_gr_vol_floor_resume_pct(),
         }
     }
 }
@@ -390,7 +415,7 @@ impl GridRebalancerConfig {
             "development" => {
                 info!("\u{1f527} Development mode: Moderate regime gate");
                 if self.min_volatility_to_trade > 0.5 {
-                    self.min_volatility_to_trade = 0.3;
+                    self.min_volatility_to_trade = self.vol_floor_resume_pct;
                 }
             }
             "production" => {
@@ -399,9 +424,10 @@ impl GridRebalancerConfig {
                     warn!("\u{26a0}\u{fe0f} Force-enabling regime gate for production!");
                     self.enable_regime_gate = true;
                 }
-                if self.min_volatility_to_trade < 0.3 {
-                    warn!("\u{26a0}\u{fe0f} Raising min_volatility to $0.30 for production safety");
-                    self.min_volatility_to_trade = 0.3;
+                if self.min_volatility_to_trade < self.vol_floor_resume_pct {
+                    warn!("\u{26a0}\u{fe0f} Raising min_volatility to {:.3} for production safety",
+                          self.vol_floor_resume_pct);
+                    self.min_volatility_to_trade = self.vol_floor_resume_pct;
                 }
             }
             _ => warn!("\u{26a0}\u{fe0f} Unknown environment '{}', using defaults", environment),
@@ -410,7 +436,7 @@ impl GridRebalancerConfig {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// GRID REBALANCER - V6.0
+// GRID REBALANCER - V6.1
 // ═══════════════════════════════════════════════════════════════════════════
 
 pub struct GridRebalancer {
@@ -455,7 +481,7 @@ impl GridRebalancer {
         config.validate().context("GridRebalancer config validation failed")?;
 
         info!("\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}");
-        info!("\u{1f3af} Grid Rebalancer V6.0 Initializing...");
+        info!("\u{1f3af} Grid Rebalancer V6.1 Initializing...");
         info!("\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}");
         info!("\u{1f4ca} CORE: spacing={:.3}% size={} SOL reserves=${:.0}/{} SOL",
               config.grid_spacing * 100.0, config.order_size,
@@ -477,9 +503,10 @@ impl GridRebalancer {
         info!("\u{1f4b0} FEES: maker={:.1}bps taker={:.1}bps slippage={:.1}bps multiplier={:.1}x",
               fees.maker_fee_bps, fees.taker_fee_bps,
               fees.slippage_bps, fees.min_profit_multiplier);
-        info!("\u{1f6e1}\u{fe0f} REGIME GATE: {} | min_vol=${:.4} (dollar std-dev)",
+        info!("\u{1f6e1}\u{fe0f} REGIME GATE: {} | min_vol=${:.4} | vol_floor={:.3}",
               if config.enable_regime_gate { "\u{2705}" } else { "\u{274c} FREE" },
-              config.min_volatility_to_trade);
+              config.min_volatility_to_trade,
+              config.vol_floor_resume_pct);
         info!("\u{1f9e0} ADAPTIVE: fill-feedback bias \u{2705} | level analytics \u{2705} | fill_rate_thr={:.2}",
               config.fill_rate_threshold);
         info!("\u{1f331} SEED BYPASS: {} (fee filter enforced after mark_seeding_complete())",
@@ -915,6 +942,10 @@ impl GridRebalancerBuilder {
         self.config.seed_orders_bypass = bypass;
         self
     }
+    pub fn vol_floor_resume_pct(mut self, v: f64) -> Self {
+        self.config.vol_floor_resume_pct = v;
+        self
+    }
     pub fn build(self) -> Result<GridRebalancer> { GridRebalancer::with_fees(self.config, self.fees) }
 }
 
@@ -1185,6 +1216,95 @@ mod tests {
     }
 
     // ─────────────────────────────────────────────────────────────────────
+    // V6.1: Configurable vol floor tests
+    // ─────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_gr_vol_floor_default_is_0_05() {
+        let cfg = GridRebalancerConfig::default();
+        assert!(
+            (cfg.vol_floor_resume_pct - 0.05).abs() < 1e-9,
+            "default vol_floor_resume_pct must be 0.05, got {}",
+            cfg.vol_floor_resume_pct
+        );
+    }
+
+    #[test]
+    fn test_gr_vol_floor_serde_absent_field_uses_default() {
+        let toml_str = r#"
+            grid_spacing = 0.002
+            order_size = 0.1
+            min_usdc_balance = 100.0
+            min_sol_balance = 0.1
+            enabled = true
+            enable_dynamic_spacing = true
+            enable_fee_filtering = true
+            volatility_window_seconds = 600
+            max_spacing = 0.0075
+            min_spacing = 0.001
+            enable_regime_gate = true
+            min_volatility_to_trade = 0.05
+            pause_in_very_low_vol = true
+            enable_order_lifecycle = true
+            order_max_age_minutes = 10
+            order_refresh_interval_minutes = 5
+            min_orders_to_maintain = 8
+        "#;
+        let cfg: GridRebalancerConfig = toml::from_str(toml_str)
+            .expect("TOML parse failed");
+        assert!(
+            (cfg.vol_floor_resume_pct - 0.05).abs() < 1e-9,
+            "absent vol_floor_resume_pct must deserialize to 0.05, got {}",
+            cfg.vol_floor_resume_pct
+        );
+    }
+
+    #[test]
+    fn test_gr_production_uses_vol_floor_not_hardcoded_0_3() {
+        let mut cfg = GridRebalancerConfig {
+            min_volatility_to_trade: 0.02,
+            vol_floor_resume_pct: 0.05,
+            ..GridRebalancerConfig::default()
+        };
+        cfg.apply_environment("production");
+        assert!(
+            (cfg.min_volatility_to_trade - 0.05).abs() < 1e-9,
+            "production must raise to vol_floor_resume_pct (0.05), not 0.3; got {}",
+            cfg.min_volatility_to_trade
+        );
+    }
+
+    #[test]
+    fn test_gr_development_uses_vol_floor_not_hardcoded_0_3() {
+        let mut cfg = GridRebalancerConfig {
+            min_volatility_to_trade: 0.8,
+            vol_floor_resume_pct: 0.05,
+            ..GridRebalancerConfig::default()
+        };
+        cfg.apply_environment("development");
+        assert!(
+            (cfg.min_volatility_to_trade - 0.05).abs() < 1e-9,
+            "development cap must use vol_floor_resume_pct (0.05), not 0.3; got {}",
+            cfg.min_volatility_to_trade
+        );
+    }
+
+    #[test]
+    fn test_gr_production_no_stomp_above_floor() {
+        let mut cfg = GridRebalancerConfig {
+            min_volatility_to_trade: 0.10,
+            vol_floor_resume_pct: 0.05,
+            ..GridRebalancerConfig::default()
+        };
+        cfg.apply_environment("production");
+        assert!(
+            (cfg.min_volatility_to_trade - 0.10).abs() < 1e-9,
+            "production must NOT lower a value already above the floor; got {}",
+            cfg.min_volatility_to_trade
+        );
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
     // V6.0: Order Lifecycle Engine tests
     // ─────────────────────────────────────────────────────────────────────
 
@@ -1211,16 +1331,12 @@ mod tests {
         let config = GridRebalancerConfig {
             enable_order_lifecycle: true,
             order_max_age_minutes: 1,
-            order_refresh_interval_minutes: 60, // 1-hour throttle
+            order_refresh_interval_minutes: 60,
             ..GridRebalancerConfig::default()
         };
         let gr      = GridRebalancer::new(config).expect("build");
         let tracker = GridStateTracker::new();
-        // Level is old enough in theory (age=0 but max_age=1min so NOT stale yet)
         tracker.create_level(85.0, 86.0, 0.1).await;
-
-        // last_lifecycle_check was set to Instant::now() in with_fees() constructor
-        // → elapsed < 60min → throttle must suppress
         let stale = gr.check_stale_orders(&tracker, 85.5).await;
         assert!(stale.is_empty(), "throttle must suppress check within refresh interval");
     }
@@ -1230,22 +1346,6 @@ mod tests {
     #[tokio::test]
     async fn test_lifecycle_never_cancels_buy_filled_level() {
         use crate::trading::grid_level::GridStateTracker;
-
-        // Use order_refresh_interval_minutes=0 to bypass throttle,
-        // order_max_age_minutes=1 but level is brand-new so age check
-        // won't fire. We're testing status guard, not age guard.
-        // Set max_age=0 equivalent via a 0-second Duration by patching
-        // order_max_age_minutes to 0 is rejected by validate(), so we
-        // use a freshly-created BuyFilled level and 0-age max to confirm
-        // the status check fires BEFORE the age check.
-        //
-        // Strategy: create Pending + BuyFilled levels, set max_age=1min
-        // but bypass interval via last_lifecycle_check manipulation is
-        // not directly possible in tests. Instead verify that a BuyFilled
-        // level is NOT in the result even after full lifecycle pass.
-        //
-        // We accept that a fresh Pending level (age < max_age) is also
-        // not stale — the important invariant is BuyFilled is always absent.
         let config = GridRebalancerConfig {
             enable_order_lifecycle: true,
             order_max_age_minutes: 1,
@@ -1254,13 +1354,9 @@ mod tests {
         };
         let gr      = GridRebalancer::new(config).expect("build");
         let tracker = GridStateTracker::new();
-
         let _id_pending   = tracker.create_level(85.0, 86.0, 0.1).await;
         let id_buy_filled = tracker.create_level(84.0, 85.0, 0.1).await;
         tracker.mark_buy_filled(id_buy_filled, 0.0).await;
-
-        // Throttle active — returns empty, but that's fine:
-        // the assertion is that id_buy_filled is never present.
         let stale = gr.check_stale_orders(&tracker, 85.5).await;
         assert!(!stale.contains(&id_buy_filled),
             "BuyFilled level must NEVER appear in stale set");
