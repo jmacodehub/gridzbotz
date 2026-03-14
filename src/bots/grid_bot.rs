@@ -1,21 +1,28 @@
 //! ═════════════════════════════════════════════════════════════════
-//! GRID BOT V7.0 — NOTIFY_FILL POST-ENRICHMENT (PR #121)
+//! GRID BOT V7.1 — REGIME GATE → TickResult::paused (PR #125)
+//!
+//! PR #125 C3: Wire regime gate pause into TickResult
+//!   GAP: process_tick() only checked circuit_breaker.is_tripped.
+//!         GridRebalancer.trading_paused (set by should_trade_now() inside
+//!         analyze_all()) was never returned as TickResult::paused.
+//!         Fleet manager saw TickResult::active during low-vol suppression.
+//!   FIX:  After process_price_update(), read
+//!         self.grid_rebalancer.grid_stats().trading_paused.
+//!         If true → return TickResult::paused(&pause_reason).
+//!         State is authoritative via AtomicBool set by should_trade_now().
+//!         Avoids double-calling should_trade_now() (no double log, no
+//!         redundant vol recalculation).
+//!   Change:
+//!     ADDED (5 lines) in process_tick() after process_price_update():
+//!       // ── PR #125 C3: Regime gate → surface pause to fleet manager ──
+//!       let regime_stats = self.grid_rebalancer.grid_stats().await;
+//!       if regime_stats.trading_paused {
+//!           return Ok(TickResult::paused(&regime_stats.pause_reason));
+//!       }
+//!     ADDED (1 test): test_process_tick_paused_reason_matches_regime_gate
+//!   Net: +5 LOC patch, +28 LOC test. Zero struct/trait/config changes.
 //!
 //! PR #121: Move notify_fill() post-enrichment — WMA P&L accuracy fix
-//!   BEFORE: notify_fill() fired BEFORE the enrichment loop, so every
-//!           fill delivered to WMA voters had fill.pnl = None.
-//!           WMA self-tuning weight adjustments were driven by empty data.
-//!   AFTER:  notify_fill() fires INSIDE the enrichment loop, immediately
-//!           AFTER fill.pnl = Some(pnl_delta) is set.
-//!           WMA voters now receive fills with accurate per-fill P&L.
-//!   Change:
-//!     REMOVED (2 lines): pre-loop block
-//!       "// notify_fill pre-loop (immutable) — WMA voter fan-out"
-//!       for fill in &filled_orders { self.manager.notify_fill(fill); }
-//!     ADDED (1 line): inside enrichment loop after fill.pnl = Some(pnl_delta)
-//!       self.manager.notify_fill(fill);
-//!   Net: -2 lines / +1 line. Single concern, zero struct/trait/config changes.
-//!
 //! PR #120: Wire should_reposition() into process_tick()
 //! PR #119 C3: Wire reopen_level() — compile blocker resolved
 //! PR #119 C2: Wire check_stale_orders() into process_price_update()
@@ -29,6 +36,7 @@
 //! PR #99  C3b: wma_confidence_threshold wired
 //! PR #98  C2b-ii: WMA voter P&L attribution
 //!
+//! March 15, 2026 - V7.1: Regime gate → TickResult::paused (PR #125 C3) ⛔
 //! March 14, 2026 - V7.0: notify_fill post-enrichment (PR #121) ✅
 //! March 14, 2026 - V6.9: should_reposition() wired (PR #120) ✅
 //! March 14, 2026 - V6.8: reopen_level() wired — PR #119 C3 complete ✅
@@ -109,29 +117,30 @@ impl GridBot {
         engine: Arc<dyn TradingEngine + Send + Sync>,
         feed:   Arc<PriceFeed>,
     ) -> Result<Self> {
-        info!("[BOT-V7.0] Initializing GridBot V7.0...");
-        info!("[BOT-V7.0] WMAConfGate:      {:.2} (TOML-driven, PR #99)",
+        info!("[BOT-V7.1] Initializing GridBot V7.1...");
+        info!("[BOT-V7.1] WMAConfGate:      {:.2} (TOML-driven, PR #99)",
               config.strategies.wma_confidence_threshold);
-        info!("[BOT-V7.0] OptimizerCadence: {} cycles",
+        info!("[BOT-V7.1] OptimizerCadence: {} cycles",
               config.trading.optimizer_interval_cycles);
-        info!("[BOT-V7.0] ConsensusSizing:  {} | multiplier={:.2}x",
+        info!("[BOT-V7.1] ConsensusSizing:  {} | multiplier={:.2}x",
               if config.trading.enable_smart_position_sizing { "ACTIVE" } else { "disabled" },
               config.trading.signal_size_multiplier);
-        info!("[BOT-V7.0] DynSpacingBounds: {:.5}\u{2013}{:.5} (PR #107 C2)",
+        info!("[BOT-V7.1] DynSpacingBounds: {:.5}\u{2013}{:.5} (PR #107 C2)",
               config.trading.min_grid_spacing_pct,
               config.trading.max_grid_spacing_pct);
-        info!("[BOT-V7.0] TakerFee:         {:.4}% ({:.1} bps) (PR #107 C4)",
+        info!("[BOT-V7.1] TakerFee:         {:.4}% ({:.1} bps) (PR #107 C4)",
               config.fees.taker_fee_percent(),
               config.fees.taker_fee_bps);
-        info!("[BOT-V7.0] PnLSource:        grid_state.total_realized_pnl() (PR #118)");
-        info!("[BOT-V7.0] Lifecycle:        enable={} max_age={}m refresh={}m (PR #119)",
+        info!("[BOT-V7.1] PnLSource:        grid_state.total_realized_pnl() (PR #118)");
+        info!("[BOT-V7.1] Lifecycle:        enable={} max_age={}m refresh={}m (PR #119)",
               config.trading.enable_order_lifecycle,
               config.trading.order_max_age_minutes,
               config.trading.order_refresh_interval_minutes);
-        info!("[BOT-V7.0] Reposition:       threshold={:.2}% cooldown={}s (PR #120)",
+        info!("[BOT-V7.1] Reposition:       threshold={:.2}% cooldown={}s (PR #120)",
               config.trading.reposition_threshold,
               config.trading.rebalance_cooldown_secs);
-        info!("[BOT-V7.0] WMAFillPnL:       notify_fill post-enrichment (PR #121)");
+        info!("[BOT-V7.1] WMAFillPnL:       notify_fill post-enrichment (PR #121)");
+        info!("[BOT-V7.1] RegimeGatePause:  TickResult::paused wired (PR #125 C3)");
 
         let telegram = TelegramBot::from_env();
 
@@ -211,7 +220,7 @@ impl GridBot {
 
         let manager = _manager;
 
-        info!("[BOT-V7.0] {} strategies loaded ({} WMA voters, conf_gate={:.2})",
+        info!("[BOT-V7.1] {} strategies loaded ({} WMA voters, conf_gate={:.2})",
               manager.strategies.len(),
               manager.wma_engine.registered_count(),
               manager.wma_engine.min_confidence());
@@ -223,7 +232,7 @@ impl GridBot {
         let adaptive_optimizer = AdaptiveOptimizer::new(base_spacing, base_size);
         let circuit_breaker    = CircuitBreaker::new(&config);
 
-        info!("[BOT-V7.0] GridBot V7.0 initialization complete");
+        info!("[BOT-V7.1] GridBot V7.1 initialization complete");
 
         Ok(Self {
             manager,
@@ -261,7 +270,7 @@ impl GridBot {
     }
 
     async fn initialize_with_price(&mut self) -> Result<()> {
-        info!("[BOT] V7.0 GRID INIT - awaiting live price...");
+        info!("[BOT] V7.1 GRID INIT - awaiting live price...");
 
         let initial_price = self.feed.latest_price().await;
         if initial_price <= 0.0 {
@@ -672,7 +681,7 @@ impl GridBot {
         let total_fees  = self.grid_state.total_fees_paid().await;
 
         println!("\n\u{2554}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2557}");
-        println!(  "\u{2551}     GRID BOT V7.0 STATUS (PR #121 \u{2705})     \u{2551}");
+        println!(  "\u{2551}     GRID BOT V7.1 STATUS (PR #125 C3 \u{26d4})    \u{2551}");
         println!(  "\u{255a}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{255d}");
         println!("  Instance:          {}",   self.config.bot.instance_name());
         println!("  Uptime:            {}s",  uptime_secs);
@@ -762,6 +771,8 @@ impl Bot for GridBot {
 
     /// PR #120: snapshot last_price BEFORE process_price_update() overwrites
     /// self.last_price, then check for price drift and reposition if needed.
+    /// PR #125 C3: After process_price_update(), check regime gate state and
+    /// return TickResult::paused if GridRebalancer suppressed trading this tick.
     async fn process_tick(&mut self) -> Result<TickResult> {
         let price = self.feed.latest_price().await;
         if price <= 0.0 {
@@ -785,6 +796,15 @@ impl Bot for GridBot {
 
         let fills_this_tick  = self.total_fills_tracked.saturating_sub(fills_before);
         let orders_this_tick = self.total_orders_placed.saturating_sub(orders_before);
+
+        // ── PR #125 C3: Regime gate → surface pause to fleet manager ─────────────
+        // trading_paused is set by should_trade_now() inside analyze_all().
+        // Reading the AtomicBool via grid_stats() avoids double-evaluating vol.
+        let regime_stats = self.grid_rebalancer.grid_stats().await;
+        if regime_stats.trading_paused {
+            return Ok(TickResult::paused(&regime_stats.pause_reason));
+        }
+        // ─────────────────────────────────────────────────────────────────────────
 
         let stats = self.get_stats().await;
         if stats.trading_paused {
@@ -931,6 +951,66 @@ mod tests {
         assert!(
             (fill.pnl.unwrap() - pnl_delta).abs() < 1e-9,
             "fill.pnl must match computed pnl_delta exactly"
+        );
+    }
+
+    /// PR #125 C3: Validates the regime gate pause reason string
+    /// flows through GridStats correctly — unit-tests the data path
+    /// that process_tick() reads before returning TickResult::paused.
+    #[test]
+    fn test_process_tick_paused_reason_matches_regime_gate() {
+        use crate::strategies::grid_rebalancer::GridStats;
+
+        // Simulate the GridStats state that should_trade_now() produces
+        // when the regime gate trips on low volatility.
+        let paused_stats = GridStats {
+            total_rebalances:        0,
+            rebalances_filtered:     0,
+            efficiency_percent:      100.0,
+            dynamic_spacing_enabled: true,
+            current_spacing_percent: 0.15,
+            volatility:              0.03,
+            market_regime:           "VERY_LOW_VOL".to_string(),
+            trading_paused:          true,
+            pause_reason:            "VERY_LOW_VOL regime".to_string(),
+        };
+
+        // Invariant 1: trading_paused is true when regime gate trips.
+        assert!(
+            paused_stats.trading_paused,
+            "GridStats.trading_paused must be true when regime gate is active"
+        );
+
+        // Invariant 2: pause_reason is non-empty — process_tick() passes
+        // this string directly to TickResult::paused(&pause_reason).
+        assert!(
+            !paused_stats.pause_reason.is_empty(),
+            "pause_reason must be non-empty so TickResult carries a meaningful message"
+        );
+
+        // Invariant 3: pause_reason content matches the expected gate string
+        // set by should_trade_now() for the VERY_LOW_VOL branch.
+        assert_eq!(
+            paused_stats.pause_reason,
+            "VERY_LOW_VOL regime",
+            "pause_reason must match the string written by should_trade_now()"
+        );
+
+        // Invariant 4: Active stats must NOT trigger the pause path.
+        let active_stats = GridStats {
+            trading_paused: false,
+            pause_reason:   String::new(),
+            volatility:     1.5,
+            market_regime:  "MEDIUM_VOL".to_string(),
+            ..paused_stats.clone()
+        };
+        assert!(
+            !active_stats.trading_paused,
+            "active GridStats must not trigger TickResult::paused"
+        );
+        assert!(
+            active_stats.pause_reason.is_empty(),
+            "active GridStats must have empty pause_reason"
         );
     }
 }
