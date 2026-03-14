@@ -1,5 +1,13 @@
 # ═══════════════════════════════════════════════════════════════════════════
-#  🏆 MASTER V5.6.1 — GRIDZBOTZ — CANONICAL CONFIG TEMPLATE
+#  🏆 MASTER V6.1 — GRIDZBOTZ — CANONICAL CONFIG TEMPLATE
+#
+#  V6.1 (PR #124 — Configurable Vol Floor):
+#  ✅ GridRebalancerConfig: vol_floor_resume_pct: f64 (default 0.05)
+#     Replaces hardcoded 0.3 in apply_environment() for both "development"
+#     cap and "production" safety raise. Default 0.05 matches live mainnet.
+#     #[serde(default)] — all existing TOMLs parse unchanged.
+#     TOML impact: NONE — vol_floor_resume_pct is internal to GridRebalancer.
+#     To lower the regime gate floor, reduce min_volatility_to_trade below.
 #
 #  V5.6.1 (PR #106 — Fix Initial Grid Seeding / Orders=0 problem):
 #  ✅ [strategies.grid] seed_orders_bypass added (default: true)
@@ -59,7 +67,7 @@
 #  config/
 #  ├── master.toml                       ← you are here (canonical template)
 #  ├── production/
-#  │   └── mainnet-sol-usdc-v1.toml      ← live mainnet (DO NOT EDIT carelessly)
+#  │   └── mainnet-sol-usdc-v3.7.toml   ← live mainnet pilot (current)
 #  ├── optimized/
 #  │   └── tuned-mar2-2026.toml          ← latest paper-validated params
 #  ├── rd/                               ← experimental R&D profiles
@@ -74,24 +82,39 @@
 #
 #    Paper test (smoke):        cargo run --release -- --config config/testing/smoke_test.toml --paper --duration-minutes 5
 #    Paper test (30 min):       cargo run --release -- --config config/master.toml --paper --duration-minutes 30
-#    Live (mainnet):            cargo run --release -- --config config/production/mainnet-sol-usdc-v1.toml
+#    Live (mainnet):            cargo run --release -- --config config/production/mainnet-sol-usdc-v3.7.toml
 #    R&D scalper:               cargo run --release -- --config config/rd/scalper-profile.toml --paper
 #    R&D multi-strategy:        cargo run --release -- --config config/rd/multi-strategy-profile.toml --paper
 #
 #  Multi-bot example:
-#    cargo run --release -- --config config/production/mainnet-sol-usdc-v1.toml --bot-id sol_1 &
+#    cargo run --release -- --config config/production/mainnet-sol-usdc-v3.7.toml --bot-id sol_1 &
 #    cargo run --release -- --config config/rd/scalper-profile.toml --paper --bot-id scalper_rd_1 &
 #
 #  ── TRADING PROFILES QUICK REFERENCE ───────────────────────────────────
 #
 #  Profile            Levels  Spacing  Lifecycle  Use-case
 #  ─────────────────  ──────  ───────  ─────────  ────────────────────────────
-#  Mainnet (live)       20    0.18%    5/2min     Production, Battle Royale winner
+#  Mainnet (live)       10    0.18%    5/2min     Production pilot (V3.7)
 #  Tuned Mar2 (paper)   20    0.12%    5/2min     Paper validation
 #  Scalper (R&D)        50    0.08%    5/3min     High-freq, low-vol sideways
 #  Multi-Strat (R&D)    22    0.25%    10/5min    Trending/momentum markets
 #  Master (default)     35    0.15%    10/5min    Baseline template
 #  Smoke test           20    0.08%    5/2min     CI / quick wiring check
+#
+#  ── VOL FLOOR TUNING GUIDE (V6.1) ───────────────────────────────────────
+#
+#  The vol floor is enforced inside GridRebalancerConfig.apply_environment().
+#  It is NOT a TOML field — it defaults to 0.05 inside the Rust struct.
+#  To lower the effective trading threshold, set min_volatility_to_trade
+#  to your desired floor in [trading]. apply_environment("production") will
+#  only raise it if it is BELOW the internal floor (0.05). Example:
+#
+#    min_volatility_to_trade = 0.02   # trades when vol ≥ 0.02% (lower than default)
+#    # apply_environment() will NOT stomp this — it is already above 0.0
+#    # and the internal floor (0.05) only raises values that are BELOW it.
+#
+#  ⚠️  If min_volatility_to_trade < 0.05, production apply_environment()
+#      will raise it back to 0.05. Set to ≥ 0.05 to control the floor yourself.
 #
 # ═══════════════════════════════════════════════════════════════════════════
 
@@ -101,7 +124,7 @@
 # ═══════════════════════════════════════════════════════════════════════════
 [bot]
 name    = "GridzBot-Master"
-version = "5.6.1"    # V5.6.1 — PR #106: seed bypass fixes Orders=0 on low-vol
+version = "6.1.0"    # V6.1 — PR #124: configurable vol floor in GridRebalancer
 environment = "testing"              # testing | development | production
 
 # 🔑 EXECUTION MODE — The single most important knob:
@@ -120,7 +143,7 @@ environment = "testing"              # testing | development | production
 #      - Requires [security] section with valid wallet_path
 #
 # CLI override: --mode live or --paper (takes precedence over this setting)
-# For first live test: cargo run -- --config config/production/mainnet-sol-usdc-v1.toml
+# For first live test: cargo run -- --config config/production/mainnet-sol-usdc-v3.7.toml
 #
 execution_mode = "paper"             # Default: paper (safe)
 
@@ -179,7 +202,7 @@ max_trade_sol = 0.5
 # 🆕 V5.4.1: Max USDC value per single trade — moved HERE from [security]
 # where it was silently ignored. Whichever limit (max_trade_sol OR
 # max_trade_size_usdc) hits first wins.
-# Production reference: mainnet-sol-usdc-v1 uses $50 for conservative start.
+# Production reference: mainnet-sol-usdc-v3.7 uses $50 for conservative start.
 max_trade_size_usdc = 250.0
 
 # Priority fee in microlamports added to every transaction.
@@ -316,8 +339,14 @@ upper_price_bound   = 300.0
 # ⚠️  UNIT SYSTEM: volatility() returns TRUE PERCENTAGE.
 #   Real SOL markets: ~0.001% – 0.015% per 100-cycle window.
 #   Paper/testing floor: 0.0 (always trade — disable gate)
-#   Production floor:    0.02% (filters only true dead-flat markets)
+#   Production floor:    0.05% (V6.1 default — filters only true dead-flat markets)
 #   Production ceiling:  8.0%  (pause in extreme events — from multi-v5-ai research)
+#
+# V6.1 VOL FLOOR NOTE:
+#   apply_environment("production") raises min_volatility_to_trade to 0.05 if
+#   it is currently below that value. This is the GridRebalancerConfig internal
+#   default (vol_floor_resume_pct = 0.05). Set min_volatility_to_trade ≥ 0.05
+#   in production TOMLs to control the floor directly without being overridden.
 #
 # Scalper exception: min_volatility_to_trade=0.01, pause_in_very_low_vol=false
 # (scalpers WANT quiet markets — only pause for HIGH volatility via ceiling)
