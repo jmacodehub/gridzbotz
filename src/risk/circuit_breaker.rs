@@ -351,6 +351,7 @@ mod tests {
                 upper_price_bound: 150.0,
                 enable_regime_gate: false,
                 min_volatility_to_trade: 0.0,
+                vol_floor_resume_pct: 0.05,
                 pause_in_very_low_vol: false,
                 enable_order_lifecycle: false,
                 order_max_age_minutes: 60,

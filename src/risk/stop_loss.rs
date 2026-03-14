@@ -248,6 +248,7 @@ mod tests {
                 enable_order_lifecycle: false,
                 order_max_age_minutes: 60,
                 order_refresh_interval_minutes: 30,
+                vol_floor_resume_pct: 0.05,
                 min_orders_to_maintain: 5,
                 enable_adaptive_spacing: false,
                 enable_smart_position_sizing: false,
