@@ -1,91 +1,43 @@
 //! ═════════════════════════════════════════════════════════════════
-//! GRID BOT V6.6 — BotStats.current_pnl WIRED TO REALIZED P&L (PR #118)
+//! GRID BOT V6.8 — ORDER LIFECYCLE ENGINE COMPLETE (PR #119 C3)
+//!
+//! PR #119 C3: Wire reopen_level() — compile blocker resolved
+//!   GridStateTracker::reopen_level(id, buy_price, sell_price) added
+//!   in grid_level.rs V4.4. Replaces the non-existent call in C2:
+//!     BEFORE (C2): self.grid_state.reopen_level(level_id, price, sell_price)
+//!                  → compile error: method not found
+//!     AFTER  (C3): same call now resolves — resets prices, clears order
+//!                  handles, restarts age clock, transitions → Pending.
+//!   level_id preserved → intent registry key stays valid.
+//!
+//! PR #119 C2: Wire check_stale_orders() into process_price_update()
+//!   After last_known_pnl snapshot (PR #118 fix) and before
+//!   enhanced_metrics.update_portfolio_value(), on every tick:
+//!     1. call grid_rebalancer.check_stale_orders(&grid_state, price)
+//!        → returns Vec<u64> of cancelled Pending level IDs
+//!     2. for each stale ID: reopen_level() + place fresh buy limit
+//!        → total_orders_placed increments per successful re-place
+//!   check_stale_orders() is throttled internally
+//!   (order_refresh_interval_minutes) so the call is cheap on hot path.
+//!
+//! PR #119 C1: grid_rebalancer.rs V6.0 — check_stale_orders() method
+//!   (see grid_rebalancer.rs header for full detail)
 //!
 //! PR #118: Wire total_realized_pnl() into BotStats.current_pnl
-//!   Before: self.last_known_pnl = wallet.pnl_usdc(price)
-//!           → unrealized NAV drift (SOL price vs initial value)
-//!           → fleet heartbeat shows bot "losing" on SOL dip even
-//!             when the grid printed positive realized P&L on every fill
-//!   After:  self.last_known_pnl = self.grid_state.total_realized_pnl().await
-//!           → locked-in grid trading profit (sum of all sell-cycle deltas)
-//!   Impact: BotStats.current_pnl → OrchestratorStats.fleet_pnl now shows
-//!           real trading performance across the entire fleet.
-//!   Scope guard: display_status(), shutdown(), Telegram heartbeat all
-//!           already read last_known_pnl — no other changes needed.
-//!   Zero changes to BotStats, OrchestratorStats, bot_trait.rs, any TOML.
-//!
 //! PR #117: Wire real pnl_delta into FillEvent.pnl per fill
-//!   Before: fill.pnl always None (engine sets it; engine has no buy_price ctx)
-//!   After:  fill.pnl = Some(pnl_delta) written back after mark_*_filled()
-//!   Root cause: pnl_before was snapshotted once OUTSIDE the fill loop,
-//!               causing stale baseline on multi-fill cycles (fills #2+ compounded).
-//!               Loop iterator was &filled_orders (immutable) — mutation impossible.
-//!   Fix:
-//!     1. for fill in &filled_orders  →  for fill in &mut filled_orders
-//!     2. pnl_before snapshot moved INSIDE loop (one baseline per fill)
-//!     3. fill.pnl = Some(pnl_delta) written after mark_buy/sell_filled()
-//!   Scope guard: notify_fill() pre-loop (immutable) left untouched.
-//!                WMA voter attribution, BotStats.current_pnl — out of scope.
+//! PR #107: fee-reconciliation, dynamic spacing bounds, Bot trait contract
+//! PR #105 C3: GridRebalancer switched to add_execution_only()
+//! PR #102 C3: level_id mark-filled + CB delta P&L fix
+//! PR #101 C2: TelegramBot wired
+//! PR #99  C3b: wma_confidence_threshold wired
+//! PR #98  C2b-ii: WMA voter P&L attribution
 //!
-//! PR #107 Commit 2: Replace hardcoded spacing bounds in GridRebalancerConfig
-//!   Before: max_spacing: 0.0075, min_spacing: 0.001  (hardcoded)
-//!   After:  max_spacing: config.trading.max_grid_spacing_pct
-//!           min_spacing: config.trading.min_grid_spacing_pct
-//!   Defaults are identical — zero behaviour change on all 46 TOMLs.
-//!   Per-pair configs can now override via:
-//!     [trading]
-//!     max_grid_spacing_pct = 0.010   # 1.0%
-//!     min_grid_spacing_pct = 0.002   # 0.2%
-//!
-//! PR #107 Commit 4: Thread fee_usdc into mark_buy/sell_filled
-//!   Source: fees.taker_fee_bps from FeesConfig (single source of truth)
-//!   Helpers: taker_fee_fraction() = bps/10_000 (for multiplication)
-//!            taker_fee_percent()  = bps/100    (for display/logging)
-//!   Formula: fee_usdc = fill_price * fill_size * taker_fee_fraction()
-//!   mark_buy_filled(lid, fee_usdc)  — accumulates on GridLevel.fees_paid
-//!   mark_sell_filled(lid, fee_usdc) — accumulates + computes NET P&L
-//!   GridStateTracker.total_fees_paid() logged at stats heartbeat interval.
-//!   Paper mode uses taker_fee_bps=0.0 by default — zero behaviour change.
-//!
-//! PR #107 Commit 5: Compile fixes
-//!   - taker_fee_pct (phantom field) → taker_fee_fraction()/taker_fee_percent()
-//!   - \u{0394} → \u{0394} (invalid Rust Unicode escapes)
-//!   - max/min_grid_spacing_pct added to test_config() TradingConfig literals
-//!
-//! PR #107 Commit 6: Restore Bot trait contract
-//!   - tick(price, ts) → process_tick(&mut self)  [trait requires no args]
-//!   - TickResult::Continue → TickResult::active/paused/shutdown constructors
-//!   - async fn stats() → fn stats() (sync — trait is sync)
-//!   - BotStats fields restored: instance_id, bot_type, total_fills,
-//!     total_orders, uptime_secs, is_paused, current_pnl, intent_conflicts
-//!   - name() + instance_id() methods restored (were dropped in prior commit)
-//!   - shutdown() restored with Telegram send_shutdown + display_strategy_performance
-//!
-//! PR #107 Commit 7: Wire real GridStateTracker V4.3 API
-//!   - count()                  → level_counts(); used = .0 + .1
-//!   - get_cancellable_levels() → get_all_levels() + filter Pending/BuyFilled
-//!   - get_level(id)            → get_all_levels().find(|l| l.id == id)
-//!   - mark_cancelled(id)       → cancel_level(id)
-//!   - update_level(level)      → removed (tracker owns in-place mutation)
-//!   - create_level() → u64 ID  → level.id / set_buy/sell_order removed
-//!   - Type casts: profitable/unprofitable_trades as u64, adjustment_count as u32
-//!
-//! PR #105 Commit 3: GridRebalancer switched to .add_execution_only()
-//!   (avoids WMA deadlock — see V6.3 header for full root-cause)
-//! PR #102 Commit 3: level_id mark-filled + CB delta P&L fix.
-//! PR #101 Commit 2: TelegramBot wired into GridBot.
-//! PR #99  Commit 3b: wma_confidence_threshold fully wired end-to-end.
-//! PR #98  Commit 2b-ii: WMA voter P&L attribution wired.
-//! PR #94  (Commit 6): GridBotStats observability.
-//! PR #93: CircuitBreaker wired.
-//!
+//! March 14, 2026 - V6.8: reopen_level() wired — PR #119 C3 complete ✅
+//! March 14, 2026 - V6.7: Lifecycle engine wired (PR #119 C2) ⏰
 //! March 14, 2026 - V6.6: BotStats.current_pnl → realized P&L (PR #118) 💰
 //! March 13, 2026 - V6.5: FillEvent.pnl wired with real delta (PR #117) 💰
-//! March 13, 2026 - V6.4: fee-reconciliation wired (PR #107 C2+C4+C5+C6+C7) 💰
+//! March 13, 2026 - V6.4: fee-reconciliation wired (PR #107) 💰
 //! March 12, 2026 - V6.3: GridRebalancer execution-only (PR #105 C3) 🔥
-//! March 12, 2026 - V6.2: fill level_id + CB delta P&L (PR #102) ✅
-//! March 11, 2026 - V6.1: Telegram alerts wired (PR #101) 📲
-//! March 11, 2026 - V6.0: wma_confidence_threshold fully wired (PR #99) 🎯
 //! ═════════════════════════════════════════════════════════════════
 
 use std::sync::Arc;
@@ -140,11 +92,10 @@ pub struct GridBot {
     total_fills_tracked:    u64,
     total_orders_placed:    u64,
     /// PR #118: stores total_realized_pnl() — locked-in grid trading profit.
-    /// Previously stored wallet.pnl_usdc(price) — unrealized NAV drift.
     last_known_pnl:         f64,
     intent_registry:        Option<IntentRegistry>,
     intent_conflicts:       u64,
-    /// PR #101: Telegram notifier. No-op if env vars absent.
+    /// PR #101: Telegram notifier.
     telegram:               TelegramBot,
     /// PR #101: Edge-detection for CB state transitions.
     last_cb_tripped:        bool,
@@ -160,22 +111,25 @@ impl GridBot {
         engine: Arc<dyn TradingEngine + Send + Sync>,
         feed:   Arc<PriceFeed>,
     ) -> Result<Self> {
-        info!("[BOT-V6.6] Initializing GridBot V6.6...");
-        info!("[BOT-V6.6] WMAConfGate:      {:.2} (TOML-driven, PR #99)",
+        info!("[BOT-V6.8] Initializing GridBot V6.8...");
+        info!("[BOT-V6.8] WMAConfGate:      {:.2} (TOML-driven, PR #99)",
               config.strategies.wma_confidence_threshold);
-        info!("[BOT-V6.6] OptimizerCadence: {} cycles",
+        info!("[BOT-V6.8] OptimizerCadence: {} cycles",
               config.trading.optimizer_interval_cycles);
-        info!("[BOT-V6.6] ConsensusSizing:  {} | multiplier={:.2}x",
+        info!("[BOT-V6.8] ConsensusSizing:  {} | multiplier={:.2}x",
               if config.trading.enable_smart_position_sizing { "ACTIVE" } else { "disabled" },
               config.trading.signal_size_multiplier);
-        info!("[BOT-V6.6] DynSpacingBounds: {:.5}\u{2013}{:.5} (PR #107 C2)",
+        info!("[BOT-V6.8] DynSpacingBounds: {:.5}\u{2013}{:.5} (PR #107 C2)",
               config.trading.min_grid_spacing_pct,
               config.trading.max_grid_spacing_pct);
-        info!("[BOT-V6.6] TakerFee:         {:.4}% ({:.1} bps) (PR #107 C4)",
+        info!("[BOT-V6.8] TakerFee:         {:.4}% ({:.1} bps) (PR #107 C4)",
               config.fees.taker_fee_percent(),
               config.fees.taker_fee_bps);
-        // PR #118: confirm realized P&L source at boot
-        info!("[BOT-V6.6] PnLSource:        grid_state.total_realized_pnl() (PR #118)");
+        info!("[BOT-V6.8] PnLSource:        grid_state.total_realized_pnl() (PR #118)");
+        info!("[BOT-V6.8] Lifecycle:        enable={} max_age={}m refresh={}m (PR #119)",
+              config.trading.enable_order_lifecycle,
+              config.trading.order_max_age_minutes,
+              config.trading.order_refresh_interval_minutes);
 
         let telegram = TelegramBot::from_env();
 
@@ -255,7 +209,7 @@ impl GridBot {
 
         let manager = _manager;
 
-        info!("[BOT-V6.6] {} strategies loaded ({} WMA voters, conf_gate={:.2})",
+        info!("[BOT-V6.8] {} strategies loaded ({} WMA voters, conf_gate={:.2})",
               manager.strategies.len(),
               manager.wma_engine.registered_count(),
               manager.wma_engine.min_confidence());
@@ -267,7 +221,7 @@ impl GridBot {
         let adaptive_optimizer = AdaptiveOptimizer::new(base_spacing, base_size);
         let circuit_breaker    = CircuitBreaker::new(&config);
 
-        info!("[BOT-V6.6] GridBot V6.6 initialization complete");
+        info!("[BOT-V6.8] GridBot V6.8 initialization complete");
 
         Ok(Self {
             manager,
@@ -305,7 +259,7 @@ impl GridBot {
     }
 
     async fn initialize_with_price(&mut self) -> Result<()> {
-        info!("[BOT] V6.6 GRID INIT - awaiting live price...");
+        info!("[BOT] V6.8 GRID INIT - awaiting live price...");
 
         let initial_price = self.feed.latest_price().await;
         if initial_price <= 0.0 {
@@ -452,7 +406,7 @@ impl GridBot {
                 match registry.entry(key) {
                     dashmap::Entry::Occupied(e) => {
                         self.intent_conflicts += 1;
-                        warn!("[INTENT] Level {} owned by '{}' — skipping", level_id, e.get());
+                        warn!("[INTENT] Level {} owned by '{}' \u{2014} skipping", level_id, e.get());
                         self.grid_state.cancel_level(level_id).await;
                         continue;
                     }
@@ -514,7 +468,7 @@ impl GridBot {
                     self.config.risk.circuit_breaker_cooldown_secs,
                 ).await;
             }
-            debug!("[CB] Trading halted — skipping tick at ${:.4}", price);
+            debug!("[CB] Trading halted \u{2014} skipping tick at ${:.4}", price);
             return Ok(());
         }
 
@@ -538,7 +492,7 @@ impl GridBot {
         let mut filled_orders = self.engine.process_price_update(price).await
             .context("Engine tick failed")?;
 
-        // ── notify_fill pre-loop (immutable) — WMA voter fan-out. ──────────
+        // \u{2500}\u{2500} notify_fill pre-loop (immutable) \u{2014} WMA voter fan-out \u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}
         for fill in &filled_orders { self.manager.notify_fill(fill); }
 
         let wallet  = self.engine.get_wallet().await;
@@ -551,7 +505,6 @@ impl GridBot {
             let taker_fee_fraction = self.config.fees.taker_fee_fraction();
 
             // PR #117: &mut so fill.pnl = Some(pnl_delta) compiles.
-            // pnl_before inside loop = one clean baseline per fill.
             for fill in &mut filled_orders {
                 let is_buy    = fill.side == OrderSide::Buy;
                 let fill_size = self.adaptive_optimizer.current_position_size;
@@ -604,13 +557,37 @@ impl GridBot {
             }
         }
 
-        // ── PR #118 FIX: source last_known_pnl from total_realized_pnl() ──
-        // Before: wallet.pnl_usdc(price) — unrealized NAV drift vs initial
-        //         value, conflates "SOL price moved" with "grid made money".
-        // After:  grid_state.total_realized_pnl() — sum of all locked-in
-        //         sell-cycle deltas, the only number that counts for trading
-        //         performance. Flows into BotStats.current_pnl → fleet_pnl.
+        // \u{2500}\u{2500} PR #118: source last_known_pnl from total_realized_pnl() \u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}
         self.last_known_pnl = self.grid_state.total_realized_pnl().await;
+
+        // \u{2500}\u{2500} PR #119 C2/C3: Order Lifecycle Engine \u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}
+        // Throttled internally by order_refresh_interval_minutes — cheap on hot path.
+        // Returns Vec<u64> of cancelled Pending level IDs; GridBot re-places at
+        // current market price so the grid stays fully seeded at all times.
+        let stale_ids = self.grid_rebalancer
+            .check_stale_orders(&self.grid_state, price)
+            .await;
+
+        if !stale_ids.is_empty() {
+            let order_size = self.adaptive_optimizer.current_position_size;
+            for level_id in stale_ids {
+                // Re-quote at fresh prices — same level_id preserved for intent registry.
+                let sell_price = price * (1.0 + self.config.trading.grid_spacing_percent / 100.0);
+                self.grid_state.reopen_level(level_id, price, sell_price).await;
+
+                match self.engine.place_limit_order_with_level(
+                    OrderSide::Buy, price, order_size, Some(level_id)
+                ).await {
+                    Ok(_id) => {
+                        self.total_orders_placed += 1;
+                        debug!("[LIFECYCLE] Re-placed level {} buy @ ${:.4}", level_id, price);
+                    }
+                    Err(e) => {
+                        warn!("[LIFECYCLE] Re-place failed for level {}: {}", level_id, e);
+                    }
+                }
+            }
+        }
 
         self.enhanced_metrics.update_portfolio_value(new_nav);
 
@@ -637,7 +614,7 @@ impl GridBot {
                 self.config.bot.instance_name(),
                 price,
                 new_nav,
-                self.last_known_pnl,   // now realized P&L ✅
+                self.last_known_pnl,
                 wallet.roi(price),
                 self.total_fills_tracked,
                 perf.win_rate,
@@ -666,7 +643,7 @@ impl GridBot {
             grid_repositions:        self.grid_repositions,
             open_orders,
             total_value_usdc:        wallet.total_value_usdc(current_price),
-            pnl_usdc:                self.last_known_pnl,   // PR #118: realized
+            pnl_usdc:                self.last_known_pnl,
             roi_percent:             wallet.roi(current_price),
             win_rate:                perf_stats.win_rate,
             total_fees:              perf_stats.total_fees,
@@ -695,7 +672,7 @@ impl GridBot {
         let total_fees  = self.grid_state.total_fees_paid().await;
 
         println!("\n\u{2554}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2557}");
-        println!(  "\u{2551}     GRID BOT V6.6 STATUS (PR #118)       \u{2551}");
+        println!(  "\u{2551}     GRID BOT V6.8 STATUS (PR #119 ✅)     \u{2551}");
         println!(  "\u{255a}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{255d}");
         println!("  Instance:          {}",   self.config.bot.instance_name());
         println!("  Uptime:            {}s",  uptime_secs);
@@ -706,7 +683,6 @@ impl GridBot {
         println!("  Open Orders:       {}",   stats.open_orders);
         println!();
         println!("  Portfolio Value:   ${:.2}", stats.total_value_usdc);
-        // PR #118: label confirms realized source
         println!("  Realized P&L:      ${:.4} (grid fills only)", stats.pnl_usdc);
         println!("  ROI:               {:.2}%", stats.roi_percent);
         println!("  Win Rate:          {:.1}%", stats.win_rate * 100.0);
@@ -787,7 +763,7 @@ impl Bot for GridBot {
     async fn process_tick(&mut self) -> Result<TickResult> {
         let price = self.feed.latest_price().await;
         if price <= 0.0 {
-            warn!("[BOT::process_tick] Invalid price {:.4} — shutdown", price);
+            warn!("[BOT::process_tick] Invalid price {:.4} \u{2014} shutdown", price);
             return Ok(TickResult::shutdown());
         }
         let ts = chrono::Utc::now().timestamp();
@@ -819,7 +795,7 @@ impl Bot for GridBot {
             self.session_start.elapsed().as_secs(),
             self.total_fills_tracked,
             self.total_orders_placed,
-            self.last_known_pnl,   // now realized P&L ✅
+            self.last_known_pnl,
             wallet.roi(final_price),
             perf.win_rate,
         ).await;
@@ -839,21 +815,20 @@ impl Bot for GridBot {
             total_orders:     self.total_orders_placed,
             uptime_secs:      self.session_start.elapsed().as_secs(),
             is_paused:        self.circuit_breaker.status().is_tripped,
-            current_pnl:      self.last_known_pnl,   // PR #118: realized ✅
+            current_pnl:      self.last_known_pnl,
             intent_conflicts: self.intent_conflicts,
         }
     }
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-// TESTS — PR #118
+// TESTS
 // ═══════════════════════════════════════════════════════════════════════
 
 #[cfg(test)]
 mod tests {
     use crate::trading::{FillEvent, OrderSide};
 
-    /// PR #117 guard: FillEvent.pnl is Option<f64> and enrichable.
     #[test]
     fn test_fill_event_pnl_is_option_f64_and_assignable() {
         let mut fill = FillEvent::new(
@@ -871,9 +846,6 @@ mod tests {
         assert!(fill.pnl.unwrap() > 0.0);
     }
 
-    /// PR #118 guard: BotStats.current_pnl field is f64.
-    /// Ensures no type regression; the source swap (wallet → realized)
-    /// is an async runtime concern, verified by the log + integration test.
     #[test]
     fn test_bot_stats_current_pnl_is_f64() {
         use crate::bots::bot_trait::BotStats;
@@ -885,27 +857,19 @@ mod tests {
             total_orders:     10,
             uptime_secs:      300,
             is_paused:        false,
-            current_pnl:      0.3640,   // simulated 2-fill realized P&L
+            current_pnl:      0.3640,
             intent_conflicts: 0,
         };
-        // Type guard: if current_pnl ever changes type, this fails to compile
         let pnl: f64 = stats.current_pnl;
-        assert!(pnl > 0.0, "Realized P&L should be positive after profitable fills");
+        assert!(pnl > 0.0);
         assert!((pnl - 0.3640).abs() < 1e-9);
     }
 
-    /// PR #118 guard: realized P&L accumulates correctly across fills.
-    /// Simulates what total_realized_pnl() returns after N sell cycles.
     #[test]
     fn test_realized_pnl_accumulates_across_fills() {
-        // Simulate 3 sell-cycle deltas as GridStateTracker would compute them
         let fill_deltas: Vec<f64> = vec![0.1820, 0.1750, 0.1920];
         let total_realized: f64 = fill_deltas.iter().sum();
-
-        // This is what last_known_pnl holds after 3 fills with PR #118
         assert!((total_realized - 0.5490).abs() < 1e-9);
-
-        // Verify each delta is positive (profitable grid cycle)
         for delta in &fill_deltas {
             assert!(*delta > 0.0);
         }

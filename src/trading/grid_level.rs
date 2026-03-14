@@ -1,5 +1,15 @@
 //! ═══════════════════════════════════════════════════════════════════════════
-//! 📊 GRID LEVEL STATE TRACKER V4.3 - GRIDZBOTZ
+//! 📊 GRID LEVEL STATE TRACKER V4.4 - GRIDZBOTZ
+//!
+//! V4.4 ADDITIONS (PR #119 — feat/order-lifecycle-engine, Commit 3):
+//! ✅ GridStateTracker: reopen_level(id, buy_price, sell_price)
+//!    - Resets buy_price / sell_price to new market prices
+//!    - Clears buy_order_id / sell_order_id (old handles invalidated)
+//!    - Resets created_at to Instant::now() (age clock restarts)
+//!    - Transitions status back to Pending
+//!    - Preserves level_id — intent registry key stays valid
+//!    - No-op (with warning) if level_id is unknown
+//! ✅ 1 new async unit test: test_reopen_level_resets_state()
 //!
 //! V4.3 ADDITIONS (PR #107 — fix/fee-reconciliation, Commit 3):
 //! ✅ GridLevel: fees_paid: f64 field added (default 0.0)
@@ -33,6 +43,7 @@ use tokio::sync::RwLock;
 ///   Pending → BuyFilled → Cancelled   (partial fill cancelled)
 ///   Pending → Cancelled               (unfilled cancel)
 ///   Any state → Repositioning          (grid rebalance in progress)
+///   Any state → Pending               (reopen_level() re-quotes a stale level)
 #[derive(Debug, Clone, PartialEq)]
 pub enum GridLevelStatus {
     /// Buy order placed, not yet filled.
@@ -125,6 +136,21 @@ impl GridLevel {
         self.status = GridLevelStatus::Repositioning;
     }
 
+    /// Re-quote a stale level at fresh prices.
+    ///
+    /// Resets buy/sell prices, clears stale order handles, restarts the
+    /// age clock, and transitions back to `Pending`. The level `id` is
+    /// preserved so the intent-registry key remains valid.
+    /// Called by `GridStateTracker::reopen_level()`.
+    pub fn reopen(&mut self, buy_price: f64, sell_price: f64) {
+        self.buy_price    = buy_price;
+        self.sell_price   = sell_price;
+        self.buy_order_id  = None;
+        self.sell_order_id = None;
+        self.created_at   = Instant::now();
+        self.status       = GridLevelStatus::Pending;
+    }
+
     /// Seconds elapsed since this level was created.
     pub fn age_seconds(&self) -> u64 {
         self.created_at.elapsed().as_secs()
@@ -171,7 +197,7 @@ impl GridLevel {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// GRID STATE TRACKER - V4.3
+// GRID STATE TRACKER - V4.4
 // ═══════════════════════════════════════════════════════════════════════════
 
 /// Thread-safe tracker for all active grid levels.
@@ -207,6 +233,20 @@ impl GridStateTracker {
         let level = GridLevel::new(id, buy_price, sell_price, quantity);
         self.levels.write().await.insert(id, level);
         id
+    }
+
+    /// Re-quote a stale level at fresh prices, preserving its `level_id`.
+    ///
+    /// Resets `buy_price`, `sell_price`, clears order handles, restarts the
+    /// age clock, and transitions status back to `Pending`.
+    /// The `level_id` is **not** changed — the intent-registry key stays valid.
+    /// No-op (with warning) if `level_id` is unknown.
+    pub async fn reopen_level(&self, level_id: u64, buy_price: f64, sell_price: f64) {
+        let mut levels = self.levels.write().await;
+        match levels.get_mut(&level_id) {
+            Some(level) => level.reopen(buy_price, sell_price),
+            None => log::warn!("reopen_level: unknown level_id={}", level_id),
+        }
     }
 
     /// Mark the buy side filled, accumulating `fee_usdc` into the level's fees_paid.
@@ -511,5 +551,36 @@ mod tests {
             (total - 0.14).abs() < 1e-9,
             "total fees must sum all level fees; expected 0.14, got {:.6}", total
         );
+    }
+
+    // ── V4.4: reopen_level tests ────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_reopen_level_resets_state() {
+        let tracker = GridStateTracker::new();
+
+        // Create a level and simulate a stale pending state.
+        let id = tracker.create_level(100.0, 101.0, 1.0).await;
+
+        // Re-quote at fresh prices (simulates lifecycle engine re-place).
+        tracker.reopen_level(id, 135.0, 136.35).await;
+
+        let levels = tracker.get_all_levels().await;
+        let level  = levels.iter().find(|l| l.id == id)
+            .expect("level must still exist after reopen");
+
+        // id preserved — intent registry key stays valid.
+        assert_eq!(level.id, id);
+        // Prices updated.
+        assert!((level.buy_price  - 135.0).abs()  < 1e-9, "buy_price must be 135.0");
+        assert!((level.sell_price - 136.35).abs() < 1e-9, "sell_price must be 136.35");
+        // Order handles cleared.
+        assert!(level.buy_order_id.is_none(),  "buy_order_id must be cleared");
+        assert!(level.sell_order_id.is_none(), "sell_order_id must be cleared");
+        // Age clock restarted — level must be fresh.
+        assert!(level.age_seconds() < 2, "age must be < 2s after reopen");
+        // Status back to Pending.
+        assert_eq!(level.status, GridLevelStatus::Pending,
+            "status must be Pending after reopen, got {:?}", level.status);
     }
 }
