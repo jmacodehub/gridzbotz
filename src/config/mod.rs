@@ -1,5 +1,22 @@
 //! ═══════════════════════════════════════════════════════════════════════════
-//! 🎛️  UNIFIED CONFIGURATION SYSTEM V6.0 - GRIDZBOTZ
+//! 🎛️  UNIFIED CONFIGURATION SYSTEM V7.0 - GRIDZBOTZ
+//!
+//! V7.0 ADDITIONS (fix/v7-pre-launch-blockers):
+//! ✅ Header bumped to V7.0 — pre-launch blocker sprint
+//!    - Aligns config version with lib.rs V7.0 banner
+//!    - display_summary banner updated: V5.9 → V7.0
+//!    - ConfigBuilder default version: 5.9.0 → 7.0.0
+//!    - Zero breaking changes — all TOMLs, all tests unchanged
+//!
+//! V6.0 ADDITIONS (fix/regime-gate-configurable-vol-floor):
+//! ✅ TradingConfig: vol_floor_resume_pct added
+//!    - Replaces hardcoded 0.3 floor in apply_environment("production")
+//!    - Default: 0.05 — matches live mainnet tuning Mar 14, 2026
+//!    - Validation: none (float, any non-negative value accepted)
+//!    - Builder: vol_floor_resume_pct() setter added
+//!    - Tests: 5 new cases (default, absent TOML, serde roundtrip,
+//!      prod enforcer raises, prod enforcer does not stomp)
+//!    - Zero breaking changes — all 46 TOMLs, all tests unchanged
 //!
 //! V5.9 ADDITIONS (fix/wire-resolve-secrets-into-from-file):
 //! ✅ Config::from_file(): secrets::resolve_secrets() now called automatically
@@ -73,6 +90,7 @@
 //! V5.0 ADDITIONS (Stage 1 — Feb 23, 2026):
 //! ✅ execution_mode, instance_id, ExecutionConfig, BotConfig helpers
 //!
+//! March 15, 2026 - V7.0: pre-launch blocker sprint — header/banner bump 🚀
 //! March 14, 2026 - V6.0: vol_floor_resume_pct — configurable prod vol floor (PR fix/regime-gate-configurable-vol-floor) 🎛️
 //! March 13, 2026 - V5.9: resolve_secrets wired into from_file() 🔐
 //! March 13, 2026 - V5.8: max/min_grid_spacing_pct added (PR #107 Commit 1) 📐
@@ -450,7 +468,7 @@ impl FeeFilterConfig {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// TRADING CONFIGURATION - V5.9 ENHANCED! 🔐
+// TRADING CONFIGURATION - V7.0 🚀
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -1482,7 +1500,7 @@ impl Config {
     pub fn display_summary(&self) {
         let border = "═".repeat(78);
         println!("\n{}", border);
-        println!("  🤖 GRIDZBOTZ V5.9 - CONFIGURATION");
+        println!("  🤖 GRIDZBOTZ V7.0 - CONFIGURATION");
         println!("{}\n", border);
 
         println!("📋 BOT: {} v{} [{}]", self.bot.name, self.bot.version, self.bot.environment);
@@ -1616,7 +1634,7 @@ impl ConfigBuilder {
             config: Config {
                 bot: BotConfig {
                     name: "GridzBot-Builder".to_string(),
-                    version: "5.9.0".to_string(),
+                    version: "7.0.0".to_string(),
                     environment: "testing".to_string(),
                     execution_mode: "paper".to_string(),
                     instance_id: None,
@@ -1716,7 +1734,7 @@ impl ConfigBuilder {
         self
     }
 
-        /// PR fix/regime-gate: Set configurable production vol floor.
+    /// PR fix/regime-gate: Set configurable production vol floor.
     /// Replaces hardcoded 0.3 in apply_environment("production").
     pub fn vol_floor_resume_pct(mut self, floor: f64) -> Self {
         self.config.trading.vol_floor_resume_pct = floor; self
