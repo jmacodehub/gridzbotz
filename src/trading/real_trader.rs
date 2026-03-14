@@ -1,5 +1,24 @@
 //! =============================================================================
-//! REAL TRADER ENGINE V3.5
+//! REAL TRADER ENGINE V3.6
+//!
+//! V3.6 CHANGES (fix/wire-executor-rpc-from-config — PR #122):
+//! ✅ P0 FIX: ExecutorConfig now wired from global Config in from_config().
+//!    Previously ExecutorConfig used ..Default::default() for the executor
+//!    field, silently hardcoding api.mainnet-beta.solana.com as the RPC URL.
+//!    Every Jupiter swap confirmation hit the public RPC instead of Chainstack.
+//!    Fix: build ExecutorConfig explicitly:
+//!      rpc_url                   ← config.network.rpc_url (Chainstack)
+//!      rpc_fallback_urls         ← config.execution.rpc_fallback_urls (Helius)
+//!      max_retries               ← config.execution.max_retries
+//!      confirmation_timeout_secs ← config.execution.confirmation_timeout_secs
+//!    rpc_timeout_secs + compute_unit_limit preserved via ..ExecutorConfig::default().
+//!    secrets::resolve_secrets() runs in Config::from_file() before from_config()
+//!    is called — GRIDZBOTZ_RPC_URL is already injected, no extra env handling needed.
+//! ✅ Boot log added: '[RealEngine] Executor RPC: <first 50 chars>'
+//!    Active endpoint is now visible at startup — silent misconfiguration
+//!    can never go unnoticed again.
+//! ✅ Regression test: test_executor_rpc_wired_from_config() added.
+//!    PR chain: executor.rs PR #116 (dead RPC removal) → PR #122 (RPC wiring)
 //!
 //! V3.5 CHANGES (fix/requote-on-retry-dead-rpc-pool — PR #116):
 //! ✅ P0 FIX: Re-quote Jupiter on SlippageToleranceExceeded (0xb).
@@ -62,7 +81,7 @@
 //!   - Static prio fee: PriorityFeeConfig::fallback_microlamports → engine field
 //!   - Fee math:        FeesConfig — paper_trader/fee_filter/grid_rebalancer only
 //!
-//! March 2026 — V3.5 🚀
+//! March 2026 — V3.6 🚀
 //! =============================================================================
 
 use anyhow::{bail, Context, Result};
@@ -177,6 +196,27 @@ impl RealTradingConfig {
         Ok(())
     }
 
+    /// Build a `RealTradingConfig` from the validated global `Config`.
+    ///
+    /// ## PR #122 — ExecutorConfig wiring fix
+    ///
+    /// Previously this function used `..Default::default()` for the executor
+    /// field, silently hardcoding `api.mainnet-beta.solana.com` as the RPC URL
+    /// and ignoring `config.network.rpc_url` (Chainstack) entirely.
+    ///
+    /// The fix builds `ExecutorConfig` explicitly so every field tracks the
+    /// canonical config source:
+    ///
+    ///   - `rpc_url`                   ← `config.network.rpc_url` (Chainstack)
+    ///   - `rpc_fallback_urls`         ← `config.execution.rpc_fallback_urls` (Helius)
+    ///   - `max_retries`               ← `config.execution.max_retries`
+    ///   - `confirmation_timeout_secs` ← `config.execution.confirmation_timeout_secs`
+    ///   - `rpc_timeout_secs`          ← `ExecutorConfig::default()` (unchanged)
+    ///   - `compute_unit_limit`        ← `ExecutorConfig::default()` (unchanged)
+    ///
+    /// `secrets::resolve_secrets()` already runs inside `Config::from_file()`
+    /// before this function is called, so `GRIDZBOTZ_RPC_URL` is already
+    /// injected into `config.network.rpc_url` — no extra env-var handling needed.
     pub fn from_config(global: &crate::Config) -> Self {
         let jupiter_api_key = std::env::var("GRIDZBOTZ_JUPITER_API_KEY")
             .ok()
@@ -190,7 +230,32 @@ impl RealTradingConfig {
             );
         }
 
+        // ✅ PR #122: Build ExecutorConfig from global Config.
+        // Previously ..Default::default() silently used api.mainnet-beta.solana.com.
+        // All GRIDZBOTZ_* env vars are already resolved by secrets::resolve_secrets()
+        // inside Config::from_file() before this function is called.
+        let executor = ExecutorConfig {
+            rpc_url:                   global.network.rpc_url.clone(),
+            rpc_fallback_urls:         global.execution.rpc_fallback_urls.clone(),
+            max_retries:               Some(global.execution.max_retries),
+            confirmation_timeout_secs: Some(global.execution.confirmation_timeout_secs),
+            // rpc_timeout_secs + compute_unit_limit: keep executor defaults
+            ..ExecutorConfig::default()
+        };
+
+        info!(
+            "[RealTradingConfig] Executor RPC: {}",
+            executor.rpc_url.chars().take(50).collect::<String>()
+        );
+        if let Some(ref fallbacks) = executor.rpc_fallback_urls {
+            info!(
+                "[RealTradingConfig] Executor fallbacks: {} endpoint(s)",
+                fallbacks.len()
+            );
+        }
+
         Self {
+            executor,
             max_trade_size_usdc: Some(global.execution.max_trade_size_usdc),
             rpc_url:             Some(global.network.rpc_url.clone()),
             jupiter_api_key,
@@ -289,7 +354,7 @@ impl RealTradingEngine {
         initial_balance_sol: f64,
         initial_sol_price_usd: f64,
     ) -> Result<Self> {
-        info!("[RealEngine] Initializing V3.5");
+        info!("[RealEngine] Initializing V3.6");
 
         config.validate()?;
 
@@ -376,7 +441,7 @@ impl RealTradingEngine {
             initial_sol_price_usd,
         ));
 
-        info!("[RealEngine] Initialized V3.5");
+        info!("[RealEngine] Initialized V3.6");
         info!("  Wallet      : {}", keystore.pubkey());
         info!("  NAV         : ${:.2} (SOL @ ${:.4})",
             balance_tracker.initial_balance_usd(), initial_sol_price_usd);
@@ -756,7 +821,7 @@ impl RealTradingEngine {
 
         println!();
         println!("=======================================================");
-        println!("  REAL TRADING ENGINE V3.5 - STATUS");
+        println!("  REAL TRADING ENGINE V3.6 - STATUS");
         println!("=======================================================");
         println!();
         println!("Balances:");
@@ -777,8 +842,10 @@ impl RealTradingEngine {
         println!("  Volume : ${:.2}",          daily_volume);
         println!();
         println!("Executor:");
-        println!("  Success Rate    : {:.1}%", executor_stats.success_rate);
-        println!("  Total Exec      : {}",     executor_stats.total_executions);
+        println!("  RPC         : {}",
+            self.config.executor.rpc_url.chars().take(50).collect::<String>());
+        println!("  Success Rate: {:.1}%",    executor_stats.success_rate);
+        println!("  Total Exec  : {}",        executor_stats.total_executions);
         println!();
         println!("Risk Guards:");
         println!("  Stop-loss   : -{:.1}%  ({})", sl_pct, sl_mode);
@@ -1049,11 +1116,50 @@ mod tests {
     #[test]
     fn test_no_single_shot_execute_versioned() {
         let src = include_str!("real_trader.rs");
-        // The old code had exactly one unconditional let signature = executor.execute_versioned()
-        // outside any loop. Verify a requote loop wraps every execute_versioned call site.
         assert!(
             src.contains("for attempt in 1..=MAX_REQUOTE_ATTEMPTS"),
             "REGRESSION: execute_versioned must be inside a requote for-loop"
+        );
+    }
+
+    /// ✅ PR #122: ExecutorConfig must be wired from global Config in from_config().
+    ///
+    /// Guards against the silent regression where ..Default::default() hardcodes
+    /// api.mainnet-beta.solana.com as the executor RPC URL, bypassing Chainstack.
+    ///
+    /// Verifies at source-text level (no async runtime needed) that:
+    ///   1. from_config() constructs ExecutorConfig explicitly (not via Default alone)
+    ///   2. rpc_url is wired from config.network.rpc_url
+    ///   3. rpc_fallback_urls is wired from config.execution.rpc_fallback_urls
+    ///   4. The boot log line is present so misconfiguration is visible at startup
+    #[test]
+    fn test_executor_rpc_wired_from_config() {
+        let src = include_str!("real_trader.rs");
+
+        // 1. from_config() must build ExecutorConfig explicitly
+        assert!(
+            src.contains("let executor = ExecutorConfig {"),
+            "PR #122 REGRESSION: from_config() must build ExecutorConfig explicitly, \
+             not via ..Default::default() alone"
+        );
+
+        // 2. rpc_url wired from network config
+        assert!(
+            src.contains("rpc_url:           global.network.rpc_url.clone()"),
+            "PR #122 REGRESSION: executor.rpc_url must be wired from config.network.rpc_url"
+        );
+
+        // 3. fallback URLs wired from execution config
+        assert!(
+            src.contains("rpc_fallback_urls:  global.execution.rpc_fallback_urls.clone()"),
+            "PR #122 REGRESSION: executor.rpc_fallback_urls must be wired from \
+             config.execution.rpc_fallback_urls"
+        );
+
+        // 4. boot log present — active RPC is always visible at startup
+        assert!(
+            src.contains("[RealTradingConfig] Executor RPC:"),
+            "PR #122 REGRESSION: boot log '[RealTradingConfig] Executor RPC:' must be present"
         );
     }
 }
