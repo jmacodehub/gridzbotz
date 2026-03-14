@@ -1231,6 +1231,8 @@ mod tests {
 
     #[test]
     fn test_gr_vol_floor_serde_absent_field_uses_default() {
+        // spacing_mode is present (required — no #[serde(default)] on SpacingMode).
+        // vol_floor_resume_pct is intentionally ABSENT to exercise its serde default.
         let toml_str = r#"
             grid_spacing = 0.002
             order_size = 0.1
@@ -1249,6 +1251,7 @@ mod tests {
             order_max_age_minutes = 10
             order_refresh_interval_minutes = 5
             min_orders_to_maintain = 8
+            spacing_mode = "volatility_buckets"
         "#;
         let cfg: GridRebalancerConfig = toml::from_str(toml_str)
             .expect("TOML parse failed");
@@ -1342,23 +1345,24 @@ mod tests {
     }
 
     /// BuyFilled levels must NEVER be returned as stale — they represent
-    /// open positions where cancelling = realised loss, not a re-quote.
+    /// open positions where cancelling = realised loss.
     #[tokio::test]
     async fn test_lifecycle_never_cancels_buy_filled_level() {
-        use crate::trading::grid_level::GridStateTracker;
         let config = GridRebalancerConfig {
             enable_order_lifecycle: true,
-            order_max_age_minutes: 1,
-            order_refresh_interval_minutes: 60,
+            order_max_age_minutes: 0,
+            order_refresh_interval_minutes: 0,
             ..GridRebalancerConfig::default()
         };
         let gr      = GridRebalancer::new(config).expect("build");
         let tracker = GridStateTracker::new();
-        let _id_pending   = tracker.create_level(85.0, 86.0, 0.1).await;
-        let id_buy_filled = tracker.create_level(84.0, 85.0, 0.1).await;
-        tracker.mark_buy_filled(id_buy_filled, 0.0).await;
-        let stale = gr.check_stale_orders(&tracker, 85.5).await;
-        assert!(!stale.contains(&id_buy_filled),
-            "BuyFilled level must NEVER appear in stale set");
+        let id = tracker.create_level(85.0, 86.0, 0.1).await;
+        tracker.mark_buy_filled(id, 85.0).await;
+
+        let stale = gr.check_stale_orders(&tracker, 90.0).await;
+        assert!(
+            !stale.contains(&id),
+            "BuyFilled level must never appear in stale cancellation list"
+        );
     }
 }
