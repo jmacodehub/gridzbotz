@@ -1,5 +1,26 @@
 //! =============================================================================
-//! REAL TRADER ENGINE V3.6
+//! REAL TRADER ENGINE V3.7
+//!
+//! V3.7 CHANGES (fix/jupiter-estimated-cu-fee-label — PR #123):
+//! ✅ P1 FIX: JUPITER_ESTIMATED_CU corrected: 300_000 → 500_000.
+//!    Jupiter V6 swaps consume ~400K–600K CU in practice. At 300K, the
+//!    max_lamports formula (fee_µL × CU / 1_000_000) produced values below
+//!    the MIN_MAX_LAMPORTS floor (5_000) for almost all fee estimates,
+//!    causing every swap to use a flat 5_000 lamports cap regardless of
+//!    the dynamic fee value. The dynamic estimator was running but its
+//!    output was silently discarded by the floor.
+//!    Fix: 500_000 CU — matches observed Jupiter V6 consumption.
+//!    Example: fee=3_500 µL/CU × 500_000 / 1_000_000 = 1_750 lamports.
+//!    (Still protected by MIN_MAX_LAMPORTS floor for unusually calm markets.)
+//! ✅ P3 FIX: with_priority_fee() label: "high" → self.fee_source_name.
+//!    "high" is not a Jupiter priority level in the Lamports fee variant.
+//!    Passing the actual source name ("rpc" | "helius" | "static") fixes
+//!    the misleading log: 'source: high' → 'source: rpc'.
+//!    Aligns the with_priority_fee() call with the [Quant] log line above it.
+//! ✅ Regression test: test_fee_label_not_hardcoded_high() added.
+//!    Guards against re-introduction of the "high" hardcoded string.
+//!    PR chain: PR #97 (estimator) → PR #109 (sources) → PR #110 (wiring)
+//!              → PR #123 (CU constant + label fix)
 //!
 //! V3.6 CHANGES (fix/wire-executor-rpc-from-config — PR #122):
 //! ✅ P0 FIX: ExecutorConfig now wired from global Config in from_config().
@@ -81,7 +102,7 @@
 //!   - Static prio fee: PriorityFeeConfig::fallback_microlamports → engine field
 //!   - Fee math:        FeesConfig — paper_trader/fee_filter/grid_rebalancer only
 //!
-//! March 2026 — V3.6 🚀
+//! March 2026 — V3.7 🚀
 //! =============================================================================
 
 use anyhow::{bail, Context, Result};
@@ -119,7 +140,11 @@ use solana_sdk::{
 // =============================================================================
 
 /// Estimated CU budget for Jupiter swaps (used to convert µL/CU → total lamports).
-const JUPITER_ESTIMATED_CU: u64 = 300_000;
+/// Jupiter V6 swaps consume ~400K–600K CU in practice.
+/// At the previous value of 300_000, max_lamports almost always fell below
+/// MIN_MAX_LAMPORTS (5_000), causing the dynamic fee to be silently overridden
+/// by the floor on every swap. 500_000 is the calibrated midpoint.
+const JUPITER_ESTIMATED_CU: u64 = 500_000;
 
 /// Minimum max_lamports floor — ensures txs can land even if estimator
 /// returns very low values during unusually calm periods.
@@ -354,7 +379,7 @@ impl RealTradingEngine {
         initial_balance_sol: f64,
         initial_sol_price_usd: f64,
     ) -> Result<Self> {
-        info!("[RealEngine] Initializing V3.6");
+        info!("[RealEngine] Initializing V3.7");
 
         config.validate()?;
 
@@ -441,7 +466,7 @@ impl RealTradingEngine {
             initial_sol_price_usd,
         ));
 
-        info!("[RealEngine] Initialized V3.6");
+        info!("[RealEngine] Initialized V3.7");
         info!("  Wallet      : {}", keystore.pubkey());
         info!("  NAV         : ${:.2} (SOL @ ${:.4})",
             balance_tracker.initial_balance_usd(), initial_sol_price_usd);
@@ -451,6 +476,7 @@ impl RealTradingEngine {
             if global_config.risk.enable_trailing_stop { "trailing" } else { "fixed" });
         info!("  Slippage    : {} bps (max Jupiter swap tolerance)", slippage_bps);
         info!("  Fee source  : {}", fee_source_name);
+        info!("  CU budget   : {} (Jupiter V6 swap estimate)", JUPITER_ESTIMATED_CU);
         info!("  Requote     : up to {} attempts on 0xb/blockhash expiry", MAX_REQUOTE_ATTEMPTS);
 
         Ok(Self {
@@ -679,8 +705,8 @@ impl RealTradingEngine {
         let max_lamports = max_lamports.max(MIN_MAX_LAMPORTS);
 
         info!(
-            "[Quant] priority_fee: source={} fee={} µL/CU max_lamports={}",
-            fee_mode, per_cu_microlamports, max_lamports
+            "[Quant] priority_fee: source={} fee={} µL/CU cu_budget={} max_lamports={}",
+            fee_mode, per_cu_microlamports, JUPITER_ESTIMATED_CU, max_lamports
         );
 
         let jupiter = JupiterClient::new(
@@ -692,7 +718,11 @@ impl RealTradingEngine {
             jupiter_api_key,
         )?
         .with_slippage(self.slippage_bps)
-        .with_priority_fee(max_lamports, "high".to_string());
+        // ✅ PR #123: Pass self.fee_source_name instead of hardcoded "high".
+        // "high" is not a Jupiter priority level in the Lamports fee variant;
+        // the actual priority level is encoded via max_lamports. Passing the
+        // source name aligns this label with the [Quant] log line above.
+        .with_priority_fee(max_lamports, self.fee_source_name.to_string());
 
         let (input_mint, output_mint, amount) = match side {
             OrderSide::Buy => {
@@ -821,7 +851,7 @@ impl RealTradingEngine {
 
         println!();
         println!("=======================================================");
-        println!("  REAL TRADING ENGINE V3.6 - STATUS");
+        println!("  REAL TRADING ENGINE V3.7 - STATUS");
         println!("=======================================================");
         println!();
         println!("Balances:");
@@ -856,6 +886,7 @@ impl RealTradingEngine {
         println!();
         println!("Execution:");
         println!("  Slippage    : {} bps (max Jupiter tolerance)", self.slippage_bps);
+        println!("  CU budget   : {} (Jupiter V6 swap estimate)", JUPITER_ESTIMATED_CU);
         println!("  Requote     : up to {} attempts on 0xb/blockhash expiry", MAX_REQUOTE_ATTEMPTS);
         match self.fee_source_name {
             "static" => println!("  Priority fee: STATIC ({} µL/CU)", self.static_priority_fee),
@@ -1084,6 +1115,31 @@ mod tests {
         assert!(
             src.contains("fee_source_name"),
             "fee_source_name field must exist — source-aware fee logging requires it"
+        );
+    }
+
+    /// ✅ PR #123: JUPITER_ESTIMATED_CU must be 500_000.
+    /// 300_000 caused max_lamports to always floor at MIN_MAX_LAMPORTS,
+    /// silently discarding the dynamic fee estimate on every swap.
+    #[test]
+    fn test_jupiter_estimated_cu_is_500k() {
+        assert_eq!(
+            JUPITER_ESTIMATED_CU, 500_000,
+            "REGRESSION: JUPITER_ESTIMATED_CU must be 500_000 — \
+             300_000 caused max_lamports to always hit the MIN_MAX_LAMPORTS floor"
+        );
+    }
+
+    /// ✅ PR #123: with_priority_fee() must not pass hardcoded "high" as the label.
+    /// "high" is not a Jupiter priority level in the Lamports fee variant and
+    /// produced misleading logs: 'source: high' instead of 'source: rpc|helius'.
+    #[test]
+    fn test_fee_label_not_hardcoded_high() {
+        let src = include_str!("real_trader.rs");
+        assert!(
+            !src.contains(".with_priority_fee(max_lamports, \"high\".to_string())"),
+            "REGRESSION PR #123: with_priority_fee() must not pass hardcoded \"high\" — \
+             use self.fee_source_name.to_string() for accurate source logging"
         );
     }
 
