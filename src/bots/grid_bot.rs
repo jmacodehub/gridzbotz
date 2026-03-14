@@ -1,12 +1,21 @@
 //! ═════════════════════════════════════════════════════════════════
-//! GRID BOT V6.7 — ORDER LIFECYCLE ENGINE WIRED (PR #119 C2)
+//! GRID BOT V6.8 — ORDER LIFECYCLE ENGINE COMPLETE (PR #119 C3)
+//!
+//! PR #119 C3: Wire reopen_level() — compile blocker resolved
+//!   GridStateTracker::reopen_level(id, buy_price, sell_price) added
+//!   in grid_level.rs V4.4. Replaces the non-existent call in C2:
+//!     BEFORE (C2): self.grid_state.reopen_level(level_id, price, sell_price)
+//!                  → compile error: method not found
+//!     AFTER  (C3): same call now resolves — resets prices, clears order
+//!                  handles, restarts age clock, transitions → Pending.
+//!   level_id preserved → intent registry key stays valid.
 //!
 //! PR #119 C2: Wire check_stale_orders() into process_price_update()
 //!   After last_known_pnl snapshot (PR #118 fix) and before
 //!   enhanced_metrics.update_portfolio_value(), on every tick:
 //!     1. call grid_rebalancer.check_stale_orders(&grid_state, price)
 //!        → returns Vec<u64> of cancelled Pending level IDs
-//!     2. for each stale ID: place fresh buy limit at current price
+//!     2. for each stale ID: reopen_level() + place fresh buy limit
 //!        → total_orders_placed increments per successful re-place
 //!   check_stale_orders() is throttled internally
 //!   (order_refresh_interval_minutes) so the call is cheap on hot path.
@@ -23,6 +32,7 @@
 //! PR #99  C3b: wma_confidence_threshold wired
 //! PR #98  C2b-ii: WMA voter P&L attribution
 //!
+//! March 14, 2026 - V6.8: reopen_level() wired — PR #119 C3 complete ✅
 //! March 14, 2026 - V6.7: Lifecycle engine wired (PR #119 C2) ⏰
 //! March 14, 2026 - V6.6: BotStats.current_pnl → realized P&L (PR #118) 💰
 //! March 13, 2026 - V6.5: FillEvent.pnl wired with real delta (PR #117) 💰
@@ -101,22 +111,22 @@ impl GridBot {
         engine: Arc<dyn TradingEngine + Send + Sync>,
         feed:   Arc<PriceFeed>,
     ) -> Result<Self> {
-        info!("[BOT-V6.7] Initializing GridBot V6.7...");
-        info!("[BOT-V6.7] WMAConfGate:      {:.2} (TOML-driven, PR #99)",
+        info!("[BOT-V6.8] Initializing GridBot V6.8...");
+        info!("[BOT-V6.8] WMAConfGate:      {:.2} (TOML-driven, PR #99)",
               config.strategies.wma_confidence_threshold);
-        info!("[BOT-V6.7] OptimizerCadence: {} cycles",
+        info!("[BOT-V6.8] OptimizerCadence: {} cycles",
               config.trading.optimizer_interval_cycles);
-        info!("[BOT-V6.7] ConsensusSizing:  {} | multiplier={:.2}x",
+        info!("[BOT-V6.8] ConsensusSizing:  {} | multiplier={:.2}x",
               if config.trading.enable_smart_position_sizing { "ACTIVE" } else { "disabled" },
               config.trading.signal_size_multiplier);
-        info!("[BOT-V6.7] DynSpacingBounds: {:.5}\u{2013}{:.5} (PR #107 C2)",
+        info!("[BOT-V6.8] DynSpacingBounds: {:.5}\u{2013}{:.5} (PR #107 C2)",
               config.trading.min_grid_spacing_pct,
               config.trading.max_grid_spacing_pct);
-        info!("[BOT-V6.7] TakerFee:         {:.4}% ({:.1} bps) (PR #107 C4)",
+        info!("[BOT-V6.8] TakerFee:         {:.4}% ({:.1} bps) (PR #107 C4)",
               config.fees.taker_fee_percent(),
               config.fees.taker_fee_bps);
-        info!("[BOT-V6.7] PnLSource:        grid_state.total_realized_pnl() (PR #118)");
-        info!("[BOT-V6.7] Lifecycle:        enable={} max_age={}m refresh={}m (PR #119)",
+        info!("[BOT-V6.8] PnLSource:        grid_state.total_realized_pnl() (PR #118)");
+        info!("[BOT-V6.8] Lifecycle:        enable={} max_age={}m refresh={}m (PR #119)",
               config.trading.enable_order_lifecycle,
               config.trading.order_max_age_minutes,
               config.trading.order_refresh_interval_minutes);
@@ -199,7 +209,7 @@ impl GridBot {
 
         let manager = _manager;
 
-        info!("[BOT-V6.7] {} strategies loaded ({} WMA voters, conf_gate={:.2})",
+        info!("[BOT-V6.8] {} strategies loaded ({} WMA voters, conf_gate={:.2})",
               manager.strategies.len(),
               manager.wma_engine.registered_count(),
               manager.wma_engine.min_confidence());
@@ -211,7 +221,7 @@ impl GridBot {
         let adaptive_optimizer = AdaptiveOptimizer::new(base_spacing, base_size);
         let circuit_breaker    = CircuitBreaker::new(&config);
 
-        info!("[BOT-V6.7] GridBot V6.7 initialization complete");
+        info!("[BOT-V6.8] GridBot V6.8 initialization complete");
 
         Ok(Self {
             manager,
@@ -249,7 +259,7 @@ impl GridBot {
     }
 
     async fn initialize_with_price(&mut self) -> Result<()> {
-        info!("[BOT] V6.7 GRID INIT - awaiting live price...");
+        info!("[BOT] V6.8 GRID INIT - awaiting live price...");
 
         let initial_price = self.feed.latest_price().await;
         if initial_price <= 0.0 {
@@ -550,7 +560,7 @@ impl GridBot {
         // \u{2500}\u{2500} PR #118: source last_known_pnl from total_realized_pnl() \u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}
         self.last_known_pnl = self.grid_state.total_realized_pnl().await;
 
-        // \u{2500}\u{2500} PR #119: Order Lifecycle Engine \u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}
+        // \u{2500}\u{2500} PR #119 C2/C3: Order Lifecycle Engine \u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}
         // Throttled internally by order_refresh_interval_minutes — cheap on hot path.
         // Returns Vec<u64> of cancelled Pending level IDs; GridBot re-places at
         // current market price so the grid stays fully seeded at all times.
@@ -561,9 +571,8 @@ impl GridBot {
         if !stale_ids.is_empty() {
             let order_size = self.adaptive_optimizer.current_position_size;
             for level_id in stale_ids {
-                // Re-quote: new sell target is current_price + grid_spacing
+                // Re-quote at fresh prices — same level_id preserved for intent registry.
                 let sell_price = price * (1.0 + self.config.trading.grid_spacing_percent / 100.0);
-                // Update the level with fresh prices in the tracker
                 self.grid_state.reopen_level(level_id, price, sell_price).await;
 
                 match self.engine.place_limit_order_with_level(
@@ -663,7 +672,7 @@ impl GridBot {
         let total_fees  = self.grid_state.total_fees_paid().await;
 
         println!("\n\u{2554}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2557}");
-        println!(  "\u{2551}     GRID BOT V6.7 STATUS (PR #119)       \u{2551}");
+        println!(  "\u{2551}     GRID BOT V6.8 STATUS (PR #119 ✅)     \u{2551}");
         println!(  "\u{255a}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{255d}");
         println!("  Instance:          {}",   self.config.bot.instance_name());
         println!("  Uptime:            {}s",  uptime_secs);
