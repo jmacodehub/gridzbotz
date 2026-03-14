@@ -1,5 +1,5 @@
 //! ═══════════════════════════════════════════════════════════════════════════
-//! 🎛️  UNIFIED CONFIGURATION SYSTEM V5.9 - GRIDZBOTZ
+//! 🎛️  UNIFIED CONFIGURATION SYSTEM V6.0 - GRIDZBOTZ
 //!
 //! V5.9 ADDITIONS (fix/wire-resolve-secrets-into-from-file):
 //! ✅ Config::from_file(): secrets::resolve_secrets() now called automatically
@@ -73,6 +73,7 @@
 //! V5.0 ADDITIONS (Stage 1 — Feb 23, 2026):
 //! ✅ execution_mode, instance_id, ExecutionConfig, BotConfig helpers
 //!
+//! March 14, 2026 - V6.0: vol_floor_resume_pct — configurable prod vol floor (PR fix/regime-gate-configurable-vol-floor) 🎛️
 //! March 13, 2026 - V5.9: resolve_secrets wired into from_file() 🔐
 //! March 13, 2026 - V5.8: max/min_grid_spacing_pct added (PR #107 Commit 1) 📐
 //! March 12, 2026 - V5.7: seed_orders_bypass added to GridStrategyConfig (PR #100) 🔧
@@ -531,6 +532,16 @@ pub struct TradingConfig {
     pub pause_in_very_low_vol: bool,
 
     // ─────────────────────────────────────────────────────────────────────────
+    // V6.0 (PR fix/regime-gate-configurable-vol-floor): Configurable Prod Vol Floor
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// Minimum vol% the production enforcer will raise min_volatility_to_trade to.
+    /// Replaces hardcoded 0.3 floor in apply_environment("production").
+    /// Default: 0.05 — matches live mainnet tuning Mar 14, 2026.
+    #[serde(default = "default_vol_floor_resume_pct")]
+    pub vol_floor_resume_pct: f64,
+
+    // ─────────────────────────────────────────────────────────────────────────
     // Order Lifecycle Management
     // ─────────────────────────────────────────────────────────────────────────
     #[serde(default = "default_true")]
@@ -721,9 +732,10 @@ impl TradingConfig {
                     warn!("⚠️ Force-enabling regime gate for production!");
                     self.enable_regime_gate = true;
                 }
-                if self.min_volatility_to_trade < 0.3 {
-                    warn!("⚠️ Raising min_volatility to 0.3% for production safety");
-                    self.min_volatility_to_trade = 0.3;
+                if self.min_volatility_to_trade < self.vol_floor_resume_pct {
+                    warn!("⚠️ Raising min_volatility to {:.2}% for production safety",
+                          self.vol_floor_resume_pct);
+                    self.min_volatility_to_trade = self.vol_floor_resume_pct;
                 }
                 if !self.enable_order_lifecycle {
                     warn!("⚠️ Force-enabling order lifecycle for production!");
@@ -777,6 +789,8 @@ impl Default for TradingConfig {
             // V5.8 PR #107 Commit 1
             max_grid_spacing_pct:            default_max_grid_spacing_pct(),
             min_grid_spacing_pct:            default_min_grid_spacing_pct(),
+            // V6.0 PR fix/regime-gate-configurable-vol-floor
+            vol_floor_resume_pct:            default_vol_floor_resume_pct(),
         }
     }
 }
@@ -1380,6 +1394,9 @@ fn default_max_grid_spacing_pct()     -> f64    { 0.0075 }
 /// PR #107 Commit 1: Min dynamic grid spacing fraction.
 /// Replaces hardcoded 0.001 in GridRebalancerConfig init (grid_bot.rs).
 fn default_min_grid_spacing_pct()     -> f64    { 0.001  }
+/// PR fix/regime-gate: configurable production vol floor (was hardcoded 0.3).
+/// Default: 0.05 — matches live mainnet tuning (Mar 14, 2026).
+fn default_vol_floor_resume_pct()     -> f64    { 0.05 }
 
 // ═══════════════════════════════════════════════════════════════════════════
 // MAIN CONFIG IMPLEMENTATION
@@ -1697,6 +1714,12 @@ impl ConfigBuilder {
         self.config.trading.min_grid_spacing_pct = min;
         self.config.trading.max_grid_spacing_pct = max;
         self
+    }
+
+        /// PR fix/regime-gate: Set configurable production vol floor.
+    /// Replaces hardcoded 0.3 in apply_environment("production").
+    pub fn vol_floor_resume_pct(mut self, floor: f64) -> Self {
+        self.config.trading.vol_floor_resume_pct = floor; self
     }
 
     pub fn build(mut self) -> Result<Config> {
@@ -2069,5 +2092,57 @@ min_sol_reserve = 1.0
             .expect("build");
         assert!((config.trading.min_grid_spacing_pct - 0.002).abs() < 1e-9);
         assert!((config.trading.max_grid_spacing_pct - 0.010).abs() < 1e-9);
+    }
+
+    // ── V6.0 vol_floor_resume_pct tests ────────────────────────────────────
+
+    #[test]
+    fn test_vol_floor_resume_pct_default() {
+        let cfg = TradingConfig::default();
+        assert!((cfg.vol_floor_resume_pct - 0.05).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_vol_floor_resume_pct_absent_toml_defaults() {
+        let toml_str = r#"
+grid_levels = 10
+grid_spacing_percent = 0.15
+min_order_size = 0.1
+max_position_size = 10.0
+min_usdc_reserve = 100.0
+min_sol_reserve = 1.0
+"#;
+        let cfg: TradingConfig = toml::from_str(toml_str).expect("deserialise");
+        assert!((cfg.vol_floor_resume_pct - 0.05).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_vol_floor_resume_pct_serde_roundtrip() {
+        let mut cfg = TradingConfig::default();
+        cfg.vol_floor_resume_pct = 0.10;
+        let toml_str = toml::to_string(&cfg).expect("serialise");
+        let restored: TradingConfig = toml::from_str(&toml_str).expect("deserialise");
+        assert!((restored.vol_floor_resume_pct - 0.10).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_production_env_respects_vol_floor_resume_pct() {
+        let mut cfg = TradingConfig::default();
+        cfg.vol_floor_resume_pct = 0.05;
+        cfg.min_volatility_to_trade = 0.01;
+        cfg.apply_environment("production");
+        assert!((cfg.min_volatility_to_trade - 0.05).abs() < 1e-9,
+            "production must raise to vol_floor_resume_pct, got {}",
+            cfg.min_volatility_to_trade);
+    }
+
+    #[test]
+    fn test_production_env_does_not_stomp_above_floor() {
+        let mut cfg = TradingConfig::default();
+        cfg.vol_floor_resume_pct = 0.05;
+        cfg.min_volatility_to_trade = 0.20;
+        cfg.apply_environment("production");
+        assert!((cfg.min_volatility_to_trade - 0.20).abs() < 1e-9,
+            "production must NOT override vol already above floor");
     }
 }
