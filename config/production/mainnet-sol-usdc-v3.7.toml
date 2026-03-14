@@ -78,9 +78,7 @@ max_slippage_bps           = 150
 confirmation_timeout_secs  = 60
 max_retries                = 4
 # jito_tip_lamports        = 10_000   # Uncomment when Jito bundle submit is live
-rpc_fallback_urls          = [
-    "https://mainnet.helius-rpc.com/?api-key=HELIUS_KEY_PLACEHOLDER",
-]
+rpc_fallback_urls = []
 
 
 # ─────────────────────────────────────────────────────────────────────────────
