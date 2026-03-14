@@ -148,7 +148,7 @@ impl GridBot {
             min_spacing:                    config.trading.min_grid_spacing_pct,
             enable_regime_gate:             config.trading.enable_regime_gate,
             min_volatility_to_trade:        config.trading.min_volatility_to_trade,
-            pause_in_very_low_vol:          config.trading.pause_in_very_old_vol,
+            pause_in_very_low_vol:          config.trading.pause_in_very_low_vol,
             enable_order_lifecycle:         config.trading.enable_order_lifecycle,
             order_max_age_minutes:          config.trading.order_max_age_minutes,
             order_refresh_interval_minutes: config.trading.order_refresh_interval_minutes,
