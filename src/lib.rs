@@ -27,7 +27,7 @@
 //!
 //! Version: 7.0.0
 //! License: MIT
-//! Date: March 14, 2026
+//! Date: March 15, 2026
 //! ═══════════════════════════════════════════════════════════════════════════
 
 #![allow(missing_docs)]
@@ -115,8 +115,8 @@ pub const BUILD_INFO: BuildInfo = BuildInfo {
     version:      VERSION,
     name:         NAME,
     codename:     CODENAME,
-    git_hash:     "v7.0-forensics-edition",
-    build_date:   "2026-03-14",
+    git_hash:     "v7.0-pre-launch-blockers",
+    build_date:   "2026-03-15",
     rust_version: "1.85",
 };
 
@@ -130,4 +130,4 @@ pub struct BuildInfo {
     pub rust_version: &'static str,
 }
 
-// ════════════════════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════════════════
