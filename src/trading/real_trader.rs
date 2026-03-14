@@ -1,5 +1,21 @@
 //! =============================================================================
-//! REAL TRADER ENGINE V3.7
+//! REAL TRADER ENGINE V3.8
+//!
+//! V3.8 CHANGES (fix/requote-0x1771-anchor-slippage — PR #124):
+//! ✅ P1 FIX: 0x1771 (Jupiter Anchor SlippageToleranceExceeded) added to
+//!    the is_requotable guard in execute_trade().
+//!    PR #116 added 0xb to the guard but missed 0x1771 — the Anchor program
+//!    variant of the same SlippageToleranceExceeded error (decimal 6001)
+//!    thrown by the Jupiter V6 swap program during pre-broadcast simulation.
+//!    When simulation returned `custom program error: 0x1771` the error
+//!    string didn't contain "0xb" or "SlippageTolerance", so is_requotable
+//!    evaluated to false and the loop broke immediately after attempt 1 with
+//!    no retries — identical user-visible behaviour to the pre-PR #116 bug.
+//!    Fix: err_str.contains("0x1771") added to is_requotable predicate.
+//! ✅ Regression test: test_0x1771_in_requote_guard() added.
+//!    Guards against future removal of the 0x1771 pattern.
+//! ✅ Boot log updated: "0xb/blockhash" → "0xb/0x1771/blockhash".
+//!    PR chain: PR #116 (requote loop) → PR #124 (0x1771 gap)
 //!
 //! V3.7 CHANGES (fix/jupiter-estimated-cu-fee-label — PR #123):
 //! ✅ P1 FIX: JUPITER_ESTIMATED_CU corrected: 300_000 → 500_000.
@@ -102,7 +118,7 @@
 //!   - Static prio fee: PriorityFeeConfig::fallback_microlamports → engine field
 //!   - Fee math:        FeesConfig — paper_trader/fee_filter/grid_rebalancer only
 //!
-//! March 2026 — V3.7 🚀
+//! March 2026 — V3.8 🚀
 //! =============================================================================
 
 use anyhow::{bail, Context, Result};
@@ -379,7 +395,7 @@ impl RealTradingEngine {
         initial_balance_sol: f64,
         initial_sol_price_usd: f64,
     ) -> Result<Self> {
-        info!("[RealEngine] Initializing V3.7");
+        info!("[RealEngine] Initializing V3.8");
 
         config.validate()?;
 
@@ -466,7 +482,7 @@ impl RealTradingEngine {
             initial_sol_price_usd,
         ));
 
-        info!("[RealEngine] Initialized V3.7");
+        info!("[RealEngine] Initialized V3.8");
         info!("  Wallet      : {}", keystore.pubkey());
         info!("  NAV         : ${:.2} (SOL @ ${:.4})",
             balance_tracker.initial_balance_usd(), initial_sol_price_usd);
@@ -477,7 +493,7 @@ impl RealTradingEngine {
         info!("  Slippage    : {} bps (max Jupiter swap tolerance)", slippage_bps);
         info!("  Fee source  : {}", fee_source_name);
         info!("  CU budget   : {} (Jupiter V6 swap estimate)", JUPITER_ESTIMATED_CU);
-        info!("  Requote     : up to {} attempts on 0xb/blockhash expiry", MAX_REQUOTE_ATTEMPTS);
+        info!("  Requote     : up to {} attempts on 0xb/0x1771/blockhash expiry", MAX_REQUOTE_ATTEMPTS);
 
         Ok(Self {
             keystore,
@@ -551,10 +567,15 @@ impl RealTradingEngine {
         self.total_executions.fetch_add(1, Ordering::SeqCst);
 
         // ── V3.5: Re-quote loop ───────────────────────────────────────────────
-        // On SlippageToleranceExceeded (0xb) or blockhash expiry, we drop the
-        // executor lock, call build_jupiter_swap() again to get a fresh quote +
-        // fresh blockhash, then rebuild, sign, and resubmit. RPC rotation for
-        // non-slippage errors is still handled inside RpcClientPool as before.
+        // On SlippageToleranceExceeded (0xb / 0x1771) or blockhash expiry, we
+        // drop the executor lock, call build_jupiter_swap() again to get a
+        // fresh quote + fresh blockhash, then rebuild, sign, and resubmit.
+        // 0xb  = legacy instruction-processor SlippageToleranceExceeded.
+        // 0x1771 = Jupiter Anchor v6 program SlippageToleranceExceeded (6001).
+        //          Fired during pre-broadcast simulation (-32002); error string
+        //          contains "0x1771" but NOT "0xb" — PR #116 missed this variant.
+        // RPC rotation for non-slippage errors is still handled inside
+        // RpcClientPool as before.
         let mut last_err = anyhow::anyhow!("[Order] No attempts made");
         let mut signature_opt: Option<solana_sdk::signature::Signature> = None;
 
@@ -589,7 +610,8 @@ impl RealTradingEngine {
                 Err(e) => {
                     let err_str = e.to_string();
                     let is_requotable =
-                        err_str.contains("0xb")                       // SlippageToleranceExceeded
+                        err_str.contains("0xb")                       // SlippageToleranceExceeded (legacy)
+                        || err_str.contains("0x1771")                 // SlippageToleranceExceeded (Jupiter Anchor v6, decimal 6001)
                         || err_str.contains("SlippageTolerance")       // human-readable variant
                         || err_str.contains("BlockhashNotFound")       // blockhash expired
                         || err_str.contains("blockhash");              // any blockhash error
@@ -851,7 +873,7 @@ impl RealTradingEngine {
 
         println!();
         println!("=======================================================");
-        println!("  REAL TRADING ENGINE V3.7 - STATUS");
+        println!("  REAL TRADING ENGINE V3.8 - STATUS");
         println!("=======================================================");
         println!();
         println!("Balances:");
@@ -887,7 +909,7 @@ impl RealTradingEngine {
         println!("Execution:");
         println!("  Slippage    : {} bps (max Jupiter tolerance)", self.slippage_bps);
         println!("  CU budget   : {} (Jupiter V6 swap estimate)", JUPITER_ESTIMATED_CU);
-        println!("  Requote     : up to {} attempts on 0xb/blockhash expiry", MAX_REQUOTE_ATTEMPTS);
+        println!("  Requote     : up to {} attempts on 0xb/0x1771/blockhash expiry", MAX_REQUOTE_ATTEMPTS);
         match self.fee_source_name {
             "static" => println!("  Priority fee: STATIC ({} µL/CU)", self.static_priority_fee),
             src      => println!("  Priority fee: DYNAMIC (source: {})", src),
@@ -1201,13 +1223,13 @@ mod tests {
 
         // 2. rpc_url wired from network config
         assert!(
-            src.contains("rpc_url:           global.network.rpc_url.clone()"),
+            src.contains("rpc_url:                   global.network.rpc_url.clone()"),
             "PR #122 REGRESSION: executor.rpc_url must be wired from config.network.rpc_url"
         );
 
         // 3. fallback URLs wired from execution config
         assert!(
-            src.contains("rpc_fallback_urls:  global.execution.rpc_fallback_urls.clone()"),
+            src.contains("rpc_fallback_urls:         global.execution.rpc_fallback_urls.clone()"),
             "PR #122 REGRESSION: executor.rpc_fallback_urls must be wired from \
              config.execution.rpc_fallback_urls"
         );
@@ -1216,6 +1238,27 @@ mod tests {
         assert!(
             src.contains("[RealTradingConfig] Executor RPC:"),
             "PR #122 REGRESSION: boot log '[RealTradingConfig] Executor RPC:' must be present"
+        );
+    }
+
+    /// ✅ PR #124: 0x1771 (Jupiter Anchor v6 SlippageToleranceExceeded) must be
+    /// in the is_requotable guard.
+    ///
+    /// PR #116 added 0xb to the guard but missed 0x1771 — the Anchor program
+    /// variant of the same error (decimal 6001) thrown by Jupiter V6's swap
+    /// program during pre-broadcast simulation (-32002 RPC error).
+    ///
+    /// When simulation returned `custom program error: 0x1771`, the error
+    /// string didn't match any pattern, is_requotable evaluated false, and
+    /// the loop aborted after attempt 1 — identical to pre-PR #116 behaviour.
+    #[test]
+    fn test_0x1771_in_requote_guard() {
+        let src = include_str!("real_trader.rs");
+        assert!(
+            src.contains("0x1771"),
+            "REGRESSION PR #124: 0x1771 (Jupiter Anchor SlippageToleranceExceeded, decimal 6001) \
+             must be in the is_requotable guard. PR #116 only added 0xb — the Anchor variant \
+             of the same error was silently aborting after 1 attempt with no retries."
         );
     }
 }
