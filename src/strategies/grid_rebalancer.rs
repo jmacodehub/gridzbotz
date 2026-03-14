@@ -1346,12 +1346,17 @@ mod tests {
 
     /// BuyFilled levels must NEVER be returned as stale — they represent
     /// open positions where cancelling = realised loss.
+    ///
+    /// Uses order_max_age_minutes=1 and order_refresh_interval_minutes=1
+    /// (minimum valid values per validate()). The invariant is proven by
+    /// the status guard in check_stale_orders(), which filters BuyFilled
+    /// levels before any age check is performed.
     #[tokio::test]
     async fn test_lifecycle_never_cancels_buy_filled_level() {
         let config = GridRebalancerConfig {
             enable_order_lifecycle: true,
-            order_max_age_minutes: 0,
-            order_refresh_interval_minutes: 0,
+            order_max_age_minutes: 1,
+            order_refresh_interval_minutes: 1,
             ..GridRebalancerConfig::default()
         };
         let gr      = GridRebalancer::new(config).expect("build");
