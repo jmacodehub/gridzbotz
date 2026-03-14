@@ -128,7 +128,9 @@ impl GridBot {
               config.trading.enable_order_lifecycle,
               config.trading.order_max_age_minutes,
               config.trading.order_refresh_interval_minutes);
-        info!("[BOT-V7.0] Reposition:       threshold={:.2}% cooldown={}s (PR #120)");
+        info!("[BOT-V7.0] Reposition:       threshold={:.2}% cooldown={}s (PR #120)",
+              config.trading.reposition_threshold,
+              config.trading.rebalance_cooldown_secs);
         info!("[BOT-V7.0] WMAFillPnL:       notify_fill post-enrichment (PR #121)");
 
         let telegram = TelegramBot::from_env();
@@ -146,7 +148,7 @@ impl GridBot {
             min_spacing:                    config.trading.min_grid_spacing_pct,
             enable_regime_gate:             config.trading.enable_regime_gate,
             min_volatility_to_trade:        config.trading.min_volatility_to_trade,
-            pause_in_very_low_vol:          config.trading.pause_in_very_low_vol,
+            pause_in_very_low_vol:          config.trading.pause_in_very_old_vol,
             enable_order_lifecycle:         config.trading.enable_order_lifecycle,
             order_max_age_minutes:          config.trading.order_max_age_minutes,
             order_refresh_interval_minutes: config.trading.order_refresh_interval_minutes,
@@ -906,8 +908,6 @@ mod tests {
     }
 
     /// PR #121: Validates fill.pnl is populated before notify_fill() is called.
-    /// Mirrors the enrichment loop ordering: pnl_delta computed, assigned to
-    /// fill.pnl, THEN notify_fill would fire — so voters always see Some(delta).
     #[test]
     fn test_notify_fill_receives_enriched_pnl() {
         let mut fill = FillEvent::new(
@@ -920,16 +920,12 @@ mod tests {
             1741899100,
         );
 
-        // Simulate pre-enrichment state — pnl must be None before loop.
         assert!(fill.pnl.is_none(),
             "fill.pnl must be None before enrichment");
 
-        // Simulate enrichment: pnl_delta computed and assigned.
         let pnl_delta = 0.2150_f64;
         fill.pnl = Some(pnl_delta);
 
-        // At this point notify_fill(fill) would fire in production.
-        // Assert voters receive a populated pnl.
         assert!(fill.pnl.is_some(),
             "fill.pnl must be Some before notify_fill is called");
         assert!(
