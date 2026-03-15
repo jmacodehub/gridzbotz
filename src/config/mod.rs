@@ -309,6 +309,8 @@ pub struct ExecutionConfig {
     pub confirmation_timeout_secs: u64,
     #[serde(default = "default_max_tx_retries")]
     pub max_retries: u8,
+    #[serde(default = "default_max_requote_attempts")]
+    pub max_requote_attempts: u8,
 }
 
 impl Default for ExecutionConfig {
@@ -322,6 +324,7 @@ impl Default for ExecutionConfig {
             rpc_fallback_urls: None,
             confirmation_timeout_secs: default_confirm_timeout_secs(),
             max_retries: default_max_tx_retries(),
+            max_requote_attempts: default_max_requote_attempts(),
         }
     }
 }
@@ -347,6 +350,9 @@ impl ExecutionConfig {
         }
         if self.max_retries == 0 {
             warn!("⚠️ execution.max_retries = 0 — failed txs will NOT be retried");
+        }
+                if self.max_requote_attempts == 0 {
+            bail!("execution.max_requote_attempts must be > 0");
         }
         Ok(())
     }
@@ -1363,6 +1369,7 @@ fn default_priority_fee_microlamports()-> u64   { 50_000 }
 fn default_slippage_bps()             -> u16    { 100 }
 fn default_confirm_timeout_secs()     -> u64    { 60 }
 fn default_max_tx_retries()           -> u8     { 3 }
+fn default_max_requote_attempts()      -> u8     { 3 }
 fn default_extreme_oversold()         -> f64    { 20.0 }
 fn default_extreme_overbought()       -> f64    { 80.0 }
 fn default_strong_threshold()         -> f64    { 5.0 }
@@ -1502,9 +1509,11 @@ impl Config {
                 } else {
                     "❌ disabled".to_string()
                 });
-            println!("   Confirm Timeout:  {}s | Retries: {}",
-                self.execution.confirmation_timeout_secs, self.execution.max_retries);
-        } else {
+            println!("   Confirm Timeout:  {}s | Retries: {} | Requote: {} attempts",
+                self.execution.confirmation_timeout_secs,
+                self.execution.max_retries,
+                self.execution.max_requote_attempts,
+            );        } else {
             println!("   Paper Balance:    ${:.0} USDC + {:.1} SOL",
                 self.paper_trading.initial_usdc, self.paper_trading.initial_sol);
         }
@@ -1720,6 +1729,13 @@ impl ConfigBuilder {
     /// Replaces hardcoded 0.3 in apply_environment("production").
     pub fn vol_floor_resume_pct(mut self, floor: f64) -> Self {
         self.config.trading.vol_floor_resume_pct = floor; self
+    }
+
+    /// Set maximum number of re-quote attempts for a single trade execution.
+    /// Mirrors ExecutionConfig::max_requote_attempts (default: 3).
+    pub fn max_requote_attempts(mut self, n: u8) -> Self {
+        self.config.execution.max_requote_attempts = n;
+        self
     }
 
     pub fn build(mut self) -> Result<Config> {
@@ -2145,4 +2161,57 @@ min_sol_reserve = 1.0
         assert!((cfg.min_volatility_to_trade - 0.20).abs() < 1e-9,
             "production must NOT override vol already above floor");
     }
+
+        // ── V6.1 max_requote_attempts tests ─────────────────────────────────────
+
+    #[test]
+    fn test_max_requote_attempts_default() {
+        let cfg = ExecutionConfig::default();
+        assert_eq!(cfg.max_requote_attempts, 3);
+    }
+
+    #[test]
+    fn test_max_requote_attempts_absent_toml_defaults() {
+        let toml_str = r#"
+max_trade_sol = 0.5
+max_trade_size_usdc = 250.0
+priority_fee_microlamports = 50000
+max_slippage_bps = 100
+confirmation_timeout_secs = 60
+max_retries = 3
+"#;
+        let cfg: ExecutionConfig = toml::from_str(toml_str).expect("deserialise minimal ExecutionConfig");
+        assert_eq!(cfg.max_requote_attempts, 3);
+    }
+
+    #[test]
+    fn test_max_requote_attempts_zero_rejected() {
+        let mut cfg = ExecutionConfig::default();
+        cfg.max_requote_attempts = 0;
+        let err = cfg.validate().unwrap_err();
+        assert!(
+            err.to_string().contains("max_requote_attempts"),
+            "error must mention the field; got: {}", err
+        );
+    }
+
+    #[test]
+    fn test_max_requote_attempts_serde_roundtrip() {
+        let mut cfg = ExecutionConfig::default();
+        cfg.max_requote_attempts = 5;
+        let toml_str = toml::to_string(&cfg).expect("serialise");
+        let restored: ExecutionConfig = toml::from_str(&toml_str).expect("deserialise");
+        assert_eq!(restored.max_requote_attempts, 5);
+    }
+
+    #[test]
+    fn test_builder_max_requote_attempts_setter() {
+        let config = ConfigBuilder::new()
+            .max_requote_attempts(4)
+            .build()
+            .expect("build");
+        assert_eq!(config.execution.max_requote_attempts, 4);
+    }
+
+
 }

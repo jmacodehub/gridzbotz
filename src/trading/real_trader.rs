@@ -170,7 +170,6 @@ const MIN_MAX_LAMPORTS: u64 = 5_000;
 /// before giving up. Each attempt calls build_jupiter_swap() from scratch:
 /// new quote, new route, new blockhash, new signed VersionedTransaction.
 /// RPC rotation for non-slippage errors is still handled inside RpcClientPool.
-const MAX_REQUOTE_ATTEMPTS: u8 = 3;
 
 // -----------------------------------------------------------------------------
 // CONFIGURATION
@@ -381,6 +380,7 @@ pub struct RealTradingEngine {
     static_priority_fee:    u64,
     profit_take_pct:        f64,
     slippage_bps:           u16,
+    max_requote_attempts: u8,
     /// V3.2: Synthetic FillEvents from confirmed Jupiter swaps.
     pending_fills:          Arc<RwLock<Vec<FillEvent>>>,
     /// V3.3: Last NAV seen by reconcile_balances().
@@ -413,6 +413,7 @@ impl RealTradingEngine {
 
         let profit_take_pct = global_config.risk.take_profit_pct;
         let slippage_bps    = global_config.execution.max_slippage_bps;
+        let max_requote_attempts = global_config.execution.max_requote_attempts;
 
         // ── Priority fee wiring (V3.4) ────────────────────────────────────────
         // Respects priority_fees.source: "rpc" | "helius"
@@ -493,7 +494,7 @@ impl RealTradingEngine {
         info!("  Slippage    : {} bps (max Jupiter swap tolerance)", slippage_bps);
         info!("  Fee source  : {}", fee_source_name);
         info!("  CU budget   : {} (Jupiter V6 swap estimate)", JUPITER_ESTIMATED_CU);
-        info!("  Requote     : up to {} attempts on 0xb/0x1771/blockhash expiry", MAX_REQUOTE_ATTEMPTS);
+        info!("  Requote     : up to {} attempts on 0xb/0x1771/blockhash expiry", max_requote_attempts);
 
         Ok(Self {
             keystore,
@@ -514,6 +515,7 @@ impl RealTradingEngine {
             static_priority_fee,
             profit_take_pct,
             slippage_bps,
+            max_requote_attempts,
             pending_fills:       Arc::new(RwLock::new(Vec::new())),
             last_reconciled_nav: Arc::new(RwLock::new(initial_nav)),
         })
@@ -579,7 +581,7 @@ impl RealTradingEngine {
         let mut last_err = anyhow::anyhow!("[Order] No attempts made");
         let mut signature_opt: Option<solana_sdk::signature::Signature> = None;
 
-        for attempt in 1..=MAX_REQUOTE_ATTEMPTS {
+        for attempt in 1..=self.max_requote_attempts {
             // Always re-fetch quote + blockhash on every attempt.
             // On attempt 1 this is the normal path. On attempt 2+ it is a
             // fresh quote after a slippage / blockhash failure.
@@ -587,7 +589,7 @@ impl RealTradingEngine {
                 Ok(pair) => pair,
                 Err(e) => {
                     error!("[Order] build_jupiter_swap failed (attempt {}/{}): {}",
-                        attempt, MAX_REQUOTE_ATTEMPTS, e);
+                        attempt, self.max_requote_attempts, e);
                     last_err = e;
                     break; // quote fetch itself failed — no point retrying
                 }
@@ -616,10 +618,10 @@ impl RealTradingEngine {
                         || err_str.contains("BlockhashNotFound")       // blockhash expired
                         || err_str.contains("blockhash");              // any blockhash error
 
-                    if is_requotable && attempt < MAX_REQUOTE_ATTEMPTS {
+                    if is_requotable && attempt < self.max_requote_attempts {
                         warn!(
                             "[Order] Requotable error on attempt {}/{} — re-fetching Jupiter quote. Error: {}",
-                            attempt, MAX_REQUOTE_ATTEMPTS, err_str
+                            attempt, self.max_requote_attempts, err_str
                         );
                         last_err = e;
                         // loop continues → build_jupiter_swap() called fresh
@@ -627,12 +629,12 @@ impl RealTradingEngine {
                         if !is_requotable {
                             error!(
                                 "[Order] Non-requotable error (attempt {}/{}): {}",
-                                attempt, MAX_REQUOTE_ATTEMPTS, err_str
+                                attempt, self.max_requote_attempts, err_str
                             );
                         } else {
                             error!(
                                 "[Order] Exhausted {} requote attempts. Last error: {}",
-                                MAX_REQUOTE_ATTEMPTS, err_str
+                                self.max_requote_attempts, err_str
                             );
                         }
                         last_err = e;
@@ -909,7 +911,7 @@ impl RealTradingEngine {
         println!("Execution:");
         println!("  Slippage    : {} bps (max Jupiter tolerance)", self.slippage_bps);
         println!("  CU budget   : {} (Jupiter V6 swap estimate)", JUPITER_ESTIMATED_CU);
-        println!("  Requote     : up to {} attempts on 0xb/0x1771/blockhash expiry", MAX_REQUOTE_ATTEMPTS);
+        println!("  Requote     : up to {} attempts on 0xb/0x1771/blockhash expiry", self.max_requote_attempts);
         match self.fee_source_name {
             "static" => println!("  Priority fee: STATIC ({} µL/CU)", self.static_priority_fee),
             src      => println!("  Priority fee: DYNAMIC (source: {})", src),
@@ -1172,8 +1174,8 @@ mod tests {
     fn test_requote_loop_present() {
         let src = include_str!("real_trader.rs");
         assert!(
-            src.contains("MAX_REQUOTE_ATTEMPTS"),
-            "REGRESSION: MAX_REQUOTE_ATTEMPTS must exist — re-quote loop was removed"
+            src.contains("max_requote_attempts"),
+            "REGRESSION: max_requote_attempts must exist — re-quote loop was removed"
         );
         assert!(
             src.contains("Re-quote loop") || src.contains("re-quote loop"),
@@ -1195,7 +1197,7 @@ mod tests {
     fn test_no_single_shot_execute_versioned() {
         let src = include_str!("real_trader.rs");
         assert!(
-            src.contains("for attempt in 1..=MAX_REQUOTE_ATTEMPTS"),
+            src.contains("for attempt in 1..=self.max_requote_attempts"),
             "REGRESSION: execute_versioned must be inside a requote for-loop"
         );
     }
