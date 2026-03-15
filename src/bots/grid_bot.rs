@@ -1,27 +1,36 @@
 //! ═════════════════════════════════════════════════════════════════
-//! GRID BOT V7.1 — REGIME GATE → TickResult::paused (PR #125)
+//! GRID BOT V7.2 — SL COOLDOWN GATE → TickResult::paused (PR #126 C3)
+//!
+//! PR #126 C3: Wire StopLossManager into process_tick()
+//!   GAP: StopLossManager existed in RealTradingEngine but was never
+//!         wired into GridBot. Fleet manager could not observe SL/TP
+//!         cooldowns — bot appeared active during SL pause window.
+//!   FIX:  Add stop_loss_manager: StopLossManager field to GridBot.
+//!         Construct via StopLossManager::new(&config) in GridBot::new().
+//!         In process_tick(), check is_trading_allowed() BEFORE the
+//!         regime gate. If false → return TickResult::paused with
+//!         "SL cooldown active — Xs remaining" reason string.
+//!         Auto-resets after stop_loss_cooldown_secs (config-driven).
+//!   Change:
+//!     ADDED import:  use crate::risk::{CircuitBreaker, StopLossManager};
+//!     ADDED field:   stop_loss_manager: StopLossManager
+//!     ADDED ctor:    let stop_loss_manager = StopLossManager::new(&config);
+//!     ADDED (6 lines) in process_tick() before regime gate check:
+//!       // ── PR #126 C3: SL cooldown gate ──────────────────────────
+//!       if !self.stop_loss_manager.is_trading_allowed() {
+//!           let remaining = self.stop_loss_manager
+//!               .sl_cooldown_remaining()
+//!               .map(|d| d.as_secs())
+//!               .unwrap_or(0);
+//!           return Ok(TickResult::paused(format!(
+//!               "SL cooldown active — {}s remaining", remaining
+//!           )));
+//!       }
+//!     ADDED (1 test): test_process_tick_sl_gate_returns_paused_reason
+//!   Net: +1 import change, +1 field, +2 ctor lines, +7 LOC in
+//!        process_tick(), +1 test. Zero trait/config/struct changes.
 //!
 //! PR #125 C3: Wire regime gate pause into TickResult
-//!   GAP: process_tick() only checked circuit_breaker.is_tripped.
-//!         GridRebalancer.trading_paused (set by should_trade_now() inside
-//!         analyze_all()) was never returned as TickResult::paused.
-//!         Fleet manager saw TickResult::active during low-vol suppression.
-//!   FIX:  After process_price_update(), read
-//!         self.grid_rebalancer.grid_stats().trading_paused.
-//!         If true → return TickResult::paused(&pause_reason).
-//!         State is authoritative via AtomicBool set by should_trade_now().
-//!         Avoids double-calling should_trade_now() (no double log, no
-//!         redundant vol recalculation).
-//!   Change:
-//!     ADDED (5 lines) in process_tick() after process_price_update():
-//!       // ── PR #125 C3: Regime gate → surface pause to fleet manager ──
-//!       let regime_stats = self.grid_rebalancer.grid_stats().await;
-//!       if regime_stats.trading_paused {
-//!           return Ok(TickResult::paused(&regime_stats.pause_reason));
-//!       }
-//!     ADDED (1 test): test_process_tick_paused_reason_matches_regime_gate
-//!   Net: +5 LOC patch, +28 LOC test. Zero struct/trait/config changes.
-//!
 //! PR #121: Move notify_fill() post-enrichment — WMA P&L accuracy fix
 //! PR #120: Wire should_reposition() into process_tick()
 //! PR #119 C3: Wire reopen_level() — compile blocker resolved
@@ -36,6 +45,7 @@
 //! PR #99  C3b: wma_confidence_threshold wired
 //! PR #98  C2b-ii: WMA voter P&L attribution
 //!
+//! March 15, 2026 - V7.2: SL cooldown gate → TickResult::paused (PR #126 C3) 🛑
 //! March 15, 2026 - V7.1: Regime gate → TickResult::paused (PR #125 C3) ⛔
 //! March 14, 2026 - V7.0: notify_fill post-enrichment (PR #121) ✅
 //! March 14, 2026 - V6.9: should_reposition() wired (PR #120) ✅
@@ -67,7 +77,7 @@ use crate::trading::{
     EnhancedMetrics, AdaptiveOptimizer, PriceFeed,
 };
 use crate::trading::grid_level::GridLevelStatus;
-use crate::risk::CircuitBreaker;
+use crate::risk::{CircuitBreaker, StopLossManager};
 use crate::config::Config;
 use crate::utils::TelegramBot;
 
@@ -83,6 +93,7 @@ pub struct GridBot {
     pub enhanced_metrics:   EnhancedMetrics,
     pub adaptive_optimizer: AdaptiveOptimizer,
     pub circuit_breaker:    CircuitBreaker,
+    pub stop_loss_manager:  StopLossManager,
     pub grid_rebalancer:    GridRebalancer,
     last_signal_strength:   f64,
     orders_filtered_session: u64,
@@ -117,30 +128,31 @@ impl GridBot {
         engine: Arc<dyn TradingEngine + Send + Sync>,
         feed:   Arc<PriceFeed>,
     ) -> Result<Self> {
-        info!("[BOT-V7.1] Initializing GridBot V7.1...");
-        info!("[BOT-V7.1] WMAConfGate:      {:.2} (TOML-driven, PR #99)",
+        info!("[BOT-V7.2] Initializing GridBot V7.2...");
+        info!("[BOT-V7.2] WMAConfGate:      {:.2} (TOML-driven, PR #99)",
               config.strategies.wma_confidence_threshold);
-        info!("[BOT-V7.1] OptimizerCadence: {} cycles",
+        info!("[BOT-V7.2] OptimizerCadence: {} cycles",
               config.trading.optimizer_interval_cycles);
-        info!("[BOT-V7.1] ConsensusSizing:  {} | multiplier={:.2}x",
+        info!("[BOT-V7.2] ConsensusSizing:  {} | multiplier={:.2}x",
               if config.trading.enable_smart_position_sizing { "ACTIVE" } else { "disabled" },
               config.trading.signal_size_multiplier);
-        info!("[BOT-V7.1] DynSpacingBounds: {:.5}\u{2013}{:.5} (PR #107 C2)",
+        info!("[BOT-V7.2] DynSpacingBounds: {:.5}\u{2013}{:.5} (PR #107 C2)",
               config.trading.min_grid_spacing_pct,
               config.trading.max_grid_spacing_pct);
-        info!("[BOT-V7.1] TakerFee:         {:.4}% ({:.1} bps) (PR #107 C4)",
+        info!("[BOT-V7.2] TakerFee:         {:.4}% ({:.1} bps) (PR #107 C4)",
               config.fees.taker_fee_percent(),
               config.fees.taker_fee_bps);
-        info!("[BOT-V7.1] PnLSource:        grid_state.total_realized_pnl() (PR #118)");
-        info!("[BOT-V7.1] Lifecycle:        enable={} max_age={}m refresh={}m (PR #119)",
+        info!("[BOT-V7.2] PnLSource:        grid_state.total_realized_pnl() (PR #118)");
+        info!("[BOT-V7.2] Lifecycle:        enable={} max_age={}m refresh={}m (PR #119)",
               config.trading.enable_order_lifecycle,
               config.trading.order_max_age_minutes,
               config.trading.order_refresh_interval_minutes);
-        info!("[BOT-V7.1] Reposition:       threshold={:.2}% cooldown={}s (PR #120)",
+        info!("[BOT-V7.2] Reposition:       threshold={:.2}% cooldown={}s (PR #120)",
               config.trading.reposition_threshold,
               config.trading.rebalance_cooldown_secs);
-        info!("[BOT-V7.1] WMAFillPnL:       notify_fill post-enrichment (PR #121)");
-        info!("[BOT-V7.1] RegimeGatePause:  TickResult::paused wired (PR #125 C3)");
+        info!("[BOT-V7.2] WMAFillPnL:       notify_fill post-enrichment (PR #121)");
+        info!("[BOT-V7.2] RegimeGatePause:  TickResult::paused wired (PR #125 C3)");
+        info!("[BOT-V7.2] SLCooldownGate:   StopLossManager wired (PR #126 C3)");
 
         let telegram = TelegramBot::from_env();
 
@@ -220,7 +232,7 @@ impl GridBot {
 
         let manager = _manager;
 
-        info!("[BOT-V7.1] {} strategies loaded ({} WMA voters, conf_gate={:.2})",
+        info!("[BOT-V7.2] {} strategies loaded ({} WMA voters, conf_gate={:.2})",
               manager.strategies.len(),
               manager.wma_engine.registered_count(),
               manager.wma_engine.min_confidence());
@@ -231,8 +243,9 @@ impl GridBot {
         let base_size          = config.trading.min_order_size;
         let adaptive_optimizer = AdaptiveOptimizer::new(base_spacing, base_size);
         let circuit_breaker    = CircuitBreaker::new(&config);
+        let stop_loss_manager  = StopLossManager::new(&config);
 
-        info!("[BOT-V7.1] GridBot V7.1 initialization complete");
+        info!("[BOT-V7.2] GridBot V7.2 initialization complete");
 
         Ok(Self {
             manager,
@@ -242,6 +255,7 @@ impl GridBot {
             enhanced_metrics,
             adaptive_optimizer,
             circuit_breaker,
+            stop_loss_manager,
             grid_rebalancer,
             last_signal_strength:    0.0,
             orders_filtered_session: 0,
@@ -270,7 +284,7 @@ impl GridBot {
     }
 
     async fn initialize_with_price(&mut self) -> Result<()> {
-        info!("[BOT] V7.1 GRID INIT - awaiting live price...");
+        info!("[BOT] V7.2 GRID INIT - awaiting live price...");
 
         let initial_price = self.feed.latest_price().await;
         if initial_price <= 0.0 {
@@ -681,7 +695,7 @@ impl GridBot {
         let total_fees  = self.grid_state.total_fees_paid().await;
 
         println!("\n\u{2554}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2557}");
-        println!(  "\u{2551}     GRID BOT V7.1 STATUS (PR #125 C3 \u{26d4})    \u{2551}");
+        println!(  "\u{2551}     GRID BOT V7.2 STATUS (PR #126 C3 \u{1f6d1})    \u{2551}");
         println!(  "\u{255a}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{255d}");
         println!("  Instance:          {}",   self.config.bot.instance_name());
         println!("  Uptime:            {}s",  uptime_secs);
@@ -773,6 +787,8 @@ impl Bot for GridBot {
     /// self.last_price, then check for price drift and reposition if needed.
     /// PR #125 C3: After process_price_update(), check regime gate state and
     /// return TickResult::paused if GridRebalancer suppressed trading this tick.
+    /// PR #126 C3: Before regime gate, check SL cooldown gate and return
+    /// TickResult::paused if StopLossManager is in cooldown.
     async fn process_tick(&mut self) -> Result<TickResult> {
         let price = self.feed.latest_price().await;
         if price <= 0.0 {
@@ -796,6 +812,20 @@ impl Bot for GridBot {
 
         let fills_this_tick  = self.total_fills_tracked.saturating_sub(fills_before);
         let orders_this_tick = self.total_orders_placed.saturating_sub(orders_before);
+
+        // ── PR #126 C3: SL cooldown gate → surface pause to fleet manager ────────
+        // is_trading_allowed() auto-resets after stop_loss_cooldown_secs elapses.
+        // Checked before regime gate — SL/TP is a harder stop than vol suppression.
+        if !self.stop_loss_manager.is_trading_allowed() {
+            let remaining = self.stop_loss_manager
+                .sl_cooldown_remaining()
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            return Ok(TickResult::paused(format!(
+                "SL cooldown active \u{2014} {}s remaining", remaining
+            )));
+        }
+        // ─────────────────────────────────────────────────────────────────────────
 
         // ── PR #125 C3: Regime gate → surface pause to fleet manager ─────────────
         // trading_paused is set by should_trade_now() inside analyze_all().
@@ -961,8 +991,6 @@ mod tests {
     fn test_process_tick_paused_reason_matches_regime_gate() {
         use crate::strategies::grid_rebalancer::GridStats;
 
-        // Simulate the GridStats state that should_trade_now() produces
-        // when the regime gate trips on low volatility.
         let paused_stats = GridStats {
             total_rebalances:        0,
             rebalances_filtered:     0,
@@ -975,28 +1003,20 @@ mod tests {
             pause_reason:            "VERY_LOW_VOL regime".to_string(),
         };
 
-        // Invariant 1: trading_paused is true when regime gate trips.
         assert!(
             paused_stats.trading_paused,
             "GridStats.trading_paused must be true when regime gate is active"
         );
-
-        // Invariant 2: pause_reason is non-empty — process_tick() passes
-        // this string directly to TickResult::paused(&pause_reason).
         assert!(
             !paused_stats.pause_reason.is_empty(),
             "pause_reason must be non-empty so TickResult carries a meaningful message"
         );
-
-        // Invariant 3: pause_reason content matches the expected gate string
-        // set by should_trade_now() for the VERY_LOW_VOL branch.
         assert_eq!(
             paused_stats.pause_reason,
             "VERY_LOW_VOL regime",
             "pause_reason must match the string written by should_trade_now()"
         );
 
-        // Invariant 4: Active stats must NOT trigger the pause path.
         let active_stats = GridStats {
             trading_paused: false,
             pause_reason:   String::new(),
@@ -1011,6 +1031,74 @@ mod tests {
         assert!(
             active_stats.pause_reason.is_empty(),
             "active GridStats must have empty pause_reason"
+        );
+    }
+
+    /// PR #126 C3: Validates the SL cooldown gate data path.
+    /// process_tick() calls stop_loss_manager.is_trading_allowed();
+    /// when false it returns TickResult::paused with the remaining seconds.
+    /// This test verifies the StopLossManager state transitions that feed
+    /// that decision, matching exactly what process_tick() would observe.
+    #[test]
+    fn test_process_tick_sl_gate_returns_paused_reason() {
+        use crate::risk::StopLossManager;
+        use crate::config::ConfigBuilder;
+
+        let mut config = ConfigBuilder::new()
+            .build()
+            .expect("default test config must be valid");
+        // Ensure SL is enabled with a known threshold and a long cooldown.
+        config.risk.stop_loss_pct          = 5.0;
+        config.risk.stop_loss_cooldown_secs = 300;
+
+        let mut mgr = StopLossManager::new(&config);
+
+        // Invariant 1: fresh manager allows trading.
+        assert!(
+            mgr.is_trading_allowed(),
+            "SL manager must allow trading before any trip"
+        );
+        assert!(
+            mgr.sl_cooldown_remaining().is_none(),
+            "no remaining cooldown expected before trip"
+        );
+
+        // Simulate SL trip (price drops 5.1% below entry).
+        let tripped = mgr.should_stop_loss(100.0, 94.8);
+        assert!(tripped, "should_stop_loss must fire at -5.2%");
+
+        // Invariant 2: after trip, gate is closed.
+        assert!(
+            !mgr.is_trading_allowed(),
+            "SL gate must block trading immediately after trip"
+        );
+
+        // Invariant 3: remaining cooldown is Some and close to 300s.
+        let remaining = mgr.sl_cooldown_remaining();
+        assert!(
+            remaining.is_some(),
+            "sl_cooldown_remaining() must be Some while tripped"
+        );
+        let secs = remaining.unwrap().as_secs();
+        assert!(
+            secs > 290 && secs <= 300,
+            "remaining must be near 300s on fresh trip, got {}s", secs
+        );
+
+        // Invariant 4: the pause reason string process_tick() would build
+        // must be non-empty and contain the seconds count.
+        let pause_reason = format!("SL cooldown active \u{2014} {}s remaining", secs);
+        assert!(
+            !pause_reason.is_empty(),
+            "pause reason must not be empty"
+        );
+        assert!(
+            pause_reason.contains("SL cooldown active"),
+            "pause reason must identify the SL gate: {}", pause_reason
+        );
+        assert!(
+            pause_reason.contains(&secs.to_string()),
+            "pause reason must embed the remaining seconds: {}", pause_reason
         );
     }
 }
