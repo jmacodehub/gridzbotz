@@ -380,6 +380,8 @@ mod tests {
                 max_consecutive_losses: 5,
                 // ✅ PR #89 V5.2: enable_trailing_stop added to RiskConfig.
                 enable_trailing_stop: false,
+                // ✅ PR #126 C1: stop_loss_cooldown_secs added to RiskConfig.
+                stop_loss_cooldown_secs: 300,
             },
             fees: FeesConfig::default(),
             priority_fees: PriorityFeeConfig::default(),
