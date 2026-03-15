@@ -309,6 +309,8 @@ pub struct ExecutionConfig {
     pub confirmation_timeout_secs: u64,
     #[serde(default = "default_max_tx_retries")]
     pub max_retries: u8,
+    #[serde(default = "default_max_requote_attempts")]
+    pub max_requote_attempts: u8,
 }
 
 impl Default for ExecutionConfig {
@@ -322,6 +324,7 @@ impl Default for ExecutionConfig {
             rpc_fallback_urls: None,
             confirmation_timeout_secs: default_confirm_timeout_secs(),
             max_retries: default_max_tx_retries(),
+            max_requote_attempts: default_max_requote_attempts(),
         }
     }
 }
@@ -347,6 +350,9 @@ impl ExecutionConfig {
         }
         if self.max_retries == 0 {
             warn!("⚠️ execution.max_retries = 0 — failed txs will NOT be retried");
+        }
+                if self.max_requote_attempts == 0 {
+            bail!("execution.max_requote_attempts must be > 0");
         }
         Ok(())
     }
@@ -1363,6 +1369,7 @@ fn default_priority_fee_microlamports()-> u64   { 50_000 }
 fn default_slippage_bps()             -> u16    { 100 }
 fn default_confirm_timeout_secs()     -> u64    { 60 }
 fn default_max_tx_retries()           -> u8     { 3 }
+fn default_max_requote_attempts()      -> u8     { 3 }
 fn default_extreme_oversold()         -> f64    { 20.0 }
 fn default_extreme_overbought()       -> f64    { 80.0 }
 fn default_strong_threshold()         -> f64    { 5.0 }
@@ -1502,9 +1509,11 @@ impl Config {
                 } else {
                     "❌ disabled".to_string()
                 });
-            println!("   Confirm Timeout:  {}s | Retries: {}",
-                self.execution.confirmation_timeout_secs, self.execution.max_retries);
-        } else {
+            println!("   Confirm Timeout:  {}s | Retries: {} | Requote: {} attempts",
+                self.execution.confirmation_timeout_secs,
+                self.execution.max_retries,
+                self.execution.max_requote_attempts,
+            );        } else {
             println!("   Paper Balance:    ${:.0} USDC + {:.1} SOL",
                 self.paper_trading.initial_usdc, self.paper_trading.initial_sol);
         }
