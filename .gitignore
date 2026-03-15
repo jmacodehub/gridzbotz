@@ -98,3 +98,4 @@ metrics/*
 !metrics/.gitkeep
 analysis/*
 !analysis/.gitkeep
+!logs/mainnet/.gitkeep
