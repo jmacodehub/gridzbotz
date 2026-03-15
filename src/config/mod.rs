@@ -1,111 +1,61 @@
 //! ═══════════════════════════════════════════════════════════════════════════
 //! 🎛️  UNIFIED CONFIGURATION SYSTEM V6.1 - GRIDZBOTZ
 //!
-//! V6.1 ADDITIONS (PR #126 C2 — fix/stoploss-winrate-process-tick):
-//! ✅ RiskConfig: stop_loss_cooldown_secs added (default: 300s)
-//!    - Consumed by StopLossManager::new() in C3 (grid_bot.rs wiring)
-//!    - Mirrors circuit_breaker_cooldown_secs pattern exactly
-//!    - Default: 300 — all 46 TOMLs parse unchanged (serde default)
-//!    - Validation: warn if 0 (mirrors CB pattern)
-//!    - Zero breaking changes
+//! Struct definitions live in focused submodules:
+//!   network.rs       → NetworkConfig
+//!   security.rs      → SecurityConfig
+//!   execution.rs     → ExecutionConfig, FeeFilterConfig
+//!   trading.rs       → TradingConfig, RegimeGateConfig
+//!   strategies.rs    → StrategiesConfig + all sub-configs + param structs
+//!   risk.rs          → RiskConfig
+//!   observability.rs → PythConfig, PerformanceConfig, LoggingConfig,
+//!                       MetricsConfig, PaperTradingConfig, DatabaseConfig,
+//!                       AlertsConfig
 //!
-//! V5.9 ADDITIONS (fix/wire-resolve-secrets-into-from-file):
-//! ✅ Config::from_file(): secrets::resolve_secrets() now called automatically
-//!    - Inserted between apply_environment_defaults() and validate()
-//!    - Env vars GRIDZBOTZ_RPC_URL / GRIDZBOTZ_WALLET_PATH /
-//!      GRIDZBOTZ_JUPITER_API_KEY / GRIDZBOTZ_JITO_TIP_LAMPORTS /
-//!      GRIDZBOTZ_FALLBACK_RPC_URL override TOML values at load time
-//!    - Paper mode: missing env vars tolerated (warn only)
-//!    - Live mode:  GRIDZBOTZ_JUPITER_API_KEY required; wallet + RPC enforced
-//!    - Zero breaking changes — all 46 TOMLs, all tests unchanged
-//!
-//! V5.8 ADDITIONS (PR #107 — fix/fee-reconciliation):
-//! ✅ TradingConfig: max_grid_spacing_pct + min_grid_spacing_pct added
-//!    - Replace hardcoded max_spacing=0.0075, min_spacing=0.001 in
-//!      GridRebalancerConfig init (grid_bot.rs) — Commit 2 wires them in
-//!    - Default: 0.0075 / 0.001 — all 46 TOMLs unchanged (serde default)
-//!    - Validation: min < max, both positive — gated on enable_dynamic_grid
-//!    - Zero breaking changes
-//!
-//! V5.7 ADDITIONS (PR #100 — fix/grid-seed-bypass):
-//! ✅ GridStrategyConfig: seed_orders_bypass added
-//!    - Mirrors GridRebalancerConfig.seed_orders_bypass (default: true)
-//!    - Without this, TOML key `strategies.grid.seed_orders_bypass = false`
-//!      was rejected by deny_unknown_fields → startup crash
-//!    - Default: true — all 46 existing TOMLs parse unchanged
-//!    - Validation: none needed (bool)
-//!    - Zero breaking changes
-//!
-//! V5.6 ADDITIONS (PR #99 — Commit 1):
-//! ✅ StrategiesConfig: wma_confidence_threshold added
-//!    - Config-driven WMA confidence gate (was hardcoded 0.65 in consensus_wma.rs)
-//!    - Default: 0.50 — permissive, matches strategies.grid.min_confidence
-//!    - Validation: must be in [0.0, 1.0]
-//!    - Zero breaking changes — all 46 TOMLs parse unchanged (serde default)
-//!
-//! V5.5 ADDITIONS (PR #94 — Commit 5a):
-//! ✅ TradingConfig: signal_size_multiplier added
-//!    - Controls how strongly consensus signal strength scales order size
-//!    - Default: 1.0 (flat — zero effect, safe opt-in)
-//!    - Active only when enable_smart_position_sizing = true
-//!    - Formula: effective_size = base_size * (1.0 + strength * (multiplier - 1.0))
-//!    - strength() from Signal enum: Hold=0.0, Buy/Sell=0.25–0.5, StrongBuy/Sell=0.5–1.0
-//!    - Validation: must be in [0.5, 3.0] when smart sizing is enabled
-//!    - Zero breaking changes — all 46 TOMLs parse unchanged (serde default)
-//!
-//! V5.4 ADDITIONS (PR #94 — Commit 3):
-//! ✅ FeeFilterConfig sub-section added under [trading.fee_filter]
-//!    - min_fee_threshold_bps (default 8)  — skip grid levels below this
-//!    - max_fee_threshold_bps (default 50) — skip grid levels above this
-//!    - fee_filter_window_secs (default 30) — rolling avg fee window
-//!    - enable_smart_fee_filter (default true)
-//!    - FeeFilterConfig::validate(): bail if min >= max, warn if window < 5s
-//!    - Zero breaking changes — all 46 TOMLs parse unchanged (serde default)
-//!
-//! V5.3 ADDITIONS (PR #94 — Commit 1):
-//! ✅ TradingConfig: optimizer_interval_cycles added (OPT-1)
-//!    - Replaces hardcoded `const OPTIMIZATION_INTERVAL_CYCLES = 50` in grid_bot.rs
-//!    - Default: 50 cycles — all 46 existing TOMLs parse unchanged
-//!    - Validation: bail if == 0
-//!    - Wired into grid_bot.rs Commit 2
-//!
-//! V5.2 ADDITIONS (PR #89 — fix/risk-continuous-sl-monitoring):
-//! ✅ RiskConfig: enable_trailing_stop added (default: false)
-//!
-//! V5.1 ADDITIONS (Stage 2 — Mar 1, 2026):
-//! ✅ RsiStrategyConfig: extreme_oversold + extreme_overbought
-//! ✅ MeanReversionStrategyConfig: 4 signal thresholds
-//! ✅ MomentumMACDStrategyConfig: full TOML config
-//! ✅ to_rsi_params() / to_mean_reversion_params() / to_momentum_macd_params()
-//!
-//! V5.0 ADDITIONS (Stage 1 — Feb 23, 2026):
-//! ✅ execution_mode, instance_id, ExecutionConfig, BotConfig helpers
-//!
-//! March 15, 2026 - V6.1: stop_loss_cooldown_secs added to RiskConfig (PR #126 C2) 🛑
-//! March 14, 2026 - V6.0: vol_floor_resume_pct — configurable prod vol floor (PR fix/regime-gate-configurable-vol-floor) 🎛️
-//! March 13, 2026 - V5.9: resolve_secrets wired into from_file() 🔐
-//! March 13, 2026 - V5.8: max/min_grid_spacing_pct added (PR #107 Commit 1) 📐
-//! March 12, 2026 - V5.7: seed_orders_bypass added to GridStrategyConfig (PR #100) 🔧
-//! March 11, 2026 - V5.6: wma_confidence_threshold added (PR #99 Commit 1) 🎯
-//! March 11, 2026 - V5.5: signal_size_multiplier added (PR #94 Commit 5a) 📐
-//! March 10, 2026 - V5.4: FeeFilterConfig added (PR #94 Commit 3) 🔥
-//! March 10, 2026 - V5.3: optimizer_interval_cycles added (PR #94 OPT-1) ⚙️
-//! March 10, 2026 - V5.2: enable_trailing_stop added to RiskConfig 🛑
+//! This file: Config struct, ConfigBuilder, default_*() helpers, tests.
 //! ═══════════════════════════════════════════════════════════════════════════
 
 use serde::{Deserialize, Serialize};
 use anyhow::{Result, Context, bail};
-use std::path::{Path};
+use std::path::Path;
 use std::fs;
 use log::{info, warn};
+
+// ── submodule declarations ──────────────────────────────────────────────────
 pub mod secrets;
 pub mod fees;
-pub use fees::FeesConfig;
 pub mod priority_fees;
+pub mod network;
+pub mod security;
+pub mod execution;
+pub mod trading;
+pub mod strategies;
+pub mod risk;
+pub mod observability;
+pub mod feed_ids;
+pub mod presets;
+
+// ── re-exports (keep existing import paths across the codebase unchanged) ───
+pub use fees::FeesConfig;
 pub use priority_fees::PriorityFeeConfig;
+pub use network::NetworkConfig;
+pub use security::SecurityConfig;
+pub use execution::{ExecutionConfig, FeeFilterConfig};
+pub use trading::{TradingConfig, RegimeGateConfig};
+pub use strategies::{
+    StrategiesConfig, GridStrategyConfig,
+    MomentumStrategyConfig, MeanReversionStrategyConfig,
+    RsiStrategyConfig, MomentumMACDStrategyConfig,
+    RsiParams, MeanReversionParams, MomentumMACDParams,
+};
+pub use risk::RiskConfig;
+pub use observability::{
+    PythConfig, PerformanceConfig, LoggingConfig, MetricsConfig,
+    PaperTradingConfig, DatabaseConfig, AlertsConfig,
+};
 
 // ═══════════════════════════════════════════════════════════════════════════
-// MAIN CONFIGURATION
+// MAIN CONFIGURATION STRUCT
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -141,7 +91,7 @@ pub struct Config {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// BOT CONFIGURATION
+// BOT CONFIGURATION (stays in mod.rs — tightly coupled to Config)
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -157,8 +107,8 @@ pub struct BotConfig {
 }
 
 impl BotConfig {
-    pub fn is_production(&self) -> bool { self.environment == "production" }
-    pub fn is_testing(&self) -> bool    { self.environment == "testing" }
+    pub fn is_production(&self) -> bool  { self.environment == "production" }
+    pub fn is_testing(&self) -> bool     { self.environment == "testing" }
     pub fn is_development(&self) -> bool { self.environment == "development" }
     pub fn is_live(&self) -> bool        { self.execution_mode == "live" }
     pub fn is_paper(&self) -> bool       { self.execution_mode != "live" }
@@ -186,1060 +136,61 @@ impl BotConfig {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// NETWORK CONFIGURATION
+// DEFAULT VALUE HELPERS  (pub(crate) so submodules can import via super::)
 // ═══════════════════════════════════════════════════════════════════════════
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct NetworkConfig {
-    pub cluster: String,
-    pub rpc_url: String,
-    pub commitment: String,
-    #[serde(default)]
-    pub ws_url: Option<String>,
-}
-
-impl NetworkConfig {
-    pub fn validate(&self) -> Result<()> {
-        let valid_clusters = ["devnet", "testnet", "mainnet-beta"];
-        if !valid_clusters.contains(&self.cluster.as_str()) {
-            bail!("Invalid cluster '{}'. Must be one of: {:?}",
-                  self.cluster, valid_clusters);
-        }
-        let valid_commitments = ["processed", "confirmed", "finalized"];
-        if !valid_commitments.contains(&self.commitment.as_str()) {
-            bail!("Invalid commitment '{}'. Must be one of: {:?}",
-                  self.commitment, valid_commitments);
-        }
-        if self.cluster == "mainnet-beta" {
-            warn!("⚠️ MAINNET CLUSTER DETECTED - Use with caution!");
-        }
-        Ok(())
-    }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// SECURITY CONFIGURATION
-// ═══════════════════════════════════════════════════════════════════════════
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct SecurityConfig {
-    #[serde(default = "default_wallet_path")]
-    pub wallet_path: String,
-    #[serde(default)]
-    pub require_password: bool,
-    #[serde(default)]
-    pub authorized_programs: Option<Vec<String>>,
-}
-
-impl Default for SecurityConfig {
-    fn default() -> Self {
-        Self {
-            wallet_path: default_wallet_path(),
-            require_password: false,
-            authorized_programs: None,
-        }
-    }
-}
-
-impl SecurityConfig {
-    pub fn validate(&self) -> Result<()> {
-        if self.wallet_path.is_empty() {
-            bail!("security.wallet_path cannot be empty");
-        }
-        Ok(())
-    }
-
-    pub fn validate_for_live_mode(&self) -> Result<()> {
-        use std::path::PathBuf;
-        let expanded_path = if self.wallet_path.starts_with('~') {
-            let home = std::env::var("HOME")
-                .or_else(|_| std::env::var("USERPROFILE"))
-                .context("Cannot determine home directory for ~ expansion")?;
-            PathBuf::from(self.wallet_path.replacen('~', &home, 1))
-        } else {
-            PathBuf::from(&self.wallet_path)
-        };
-        if !expanded_path.exists() {
-            bail!(
-                "Wallet file not found: {}\n\
-                 Ensure security.wallet_path in your config points to a valid keypair file.",
-                expanded_path.display()
-            );
-        }
-        if let Err(e) = fs::File::open(&expanded_path) {
-            bail!(
-                "Wallet file exists but cannot be read: {}\n\
-                 Error: {}\n\
-                 Check file permissions and ownership.",
-                expanded_path.display(), e
-            );
-        }
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            if let Ok(metadata) = fs::metadata(&expanded_path) {
-                let mode = metadata.permissions().mode();
-                if mode & 0o004 != 0 {
-                    warn!(
-                        "⚠️ SECURITY: Wallet file is world-readable: {}\n\
-                         Fix with: chmod 600 {}",
-                        expanded_path.display(), expanded_path.display()
-                    );
-                }
-            }
-        }
-        info!("✅ Wallet file validated: {}", expanded_path.display());
-        Ok(())
-    }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// EXECUTION CONFIGURATION
-// ═══════════════════════════════════════════════════════════════════════════
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct ExecutionConfig {
-    #[serde(default = "default_max_trade_sol")]
-    pub max_trade_sol: f64,
-    #[serde(default = "default_max_trade_size_usdc")]
-    pub max_trade_size_usdc: f64,
-    #[serde(default = "default_priority_fee_microlamports")]
-    pub priority_fee_microlamports: u64,
-    #[serde(default = "default_slippage_bps")]
-    pub max_slippage_bps: u16,
-    #[serde(default)]
-    pub jito_tip_lamports: Option<u64>,
-    #[serde(default)]
-    pub rpc_fallback_urls: Option<Vec<String>>,
-    #[serde(default = "default_confirm_timeout_secs")]
-    pub confirmation_timeout_secs: u64,
-    #[serde(default = "default_max_tx_retries")]
-    pub max_retries: u8,
-    #[serde(default = "default_max_requote_attempts")]
-    pub max_requote_attempts: u8,
-}
-
-impl Default for ExecutionConfig {
-    fn default() -> Self {
-        Self {
-            max_trade_sol: default_max_trade_sol(),
-            max_trade_size_usdc: default_max_trade_size_usdc(),
-            priority_fee_microlamports: default_priority_fee_microlamports(),
-            max_slippage_bps: default_slippage_bps(),
-            jito_tip_lamports: None,
-            rpc_fallback_urls: None,
-            confirmation_timeout_secs: default_confirm_timeout_secs(),
-            max_retries: default_max_tx_retries(),
-            max_requote_attempts: default_max_requote_attempts(),
-        }
-    }
-}
-
-impl ExecutionConfig {
-    pub fn validate(&self) -> Result<()> {
-        if self.max_trade_sol <= 0.0 {
-            bail!("execution.max_trade_sol must be positive");
-        }
-        if self.max_trade_sol > 100.0 {
-            warn!("⚠️ execution.max_trade_sol ({:.2}) is very large — double-check capital allocation",
-                  self.max_trade_sol);
-        }
-        if self.max_slippage_bps == 0 {
-            bail!("execution.max_slippage_bps cannot be 0 — Jupiter requires > 0 BPS");
-        }
-        if self.max_slippage_bps > 500 {
-            warn!("⚠️ execution.max_slippage_bps ({}) > 5% — very high slippage tolerance!",
-                  self.max_slippage_bps);
-        }
-        if self.confirmation_timeout_secs == 0 {
-            bail!("execution.confirmation_timeout_secs must be > 0");
-        }
-        if self.max_retries == 0 {
-            warn!("⚠️ execution.max_retries = 0 — failed txs will NOT be retried");
-        }
-        if self.max_requote_attempts == 0 {
-            bail!("execution.max_requote_attempts must be > 0");
-        }
-        Ok(())
-    }
-
-    pub fn slippage_pct(&self) -> f64 { self.max_slippage_bps as f64 / 100.0 }
-    pub fn jito_enabled(&self) -> bool { self.jito_tip_lamports.is_some() }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// 🆕 V5.4 (PR #94 Commit 3): FEE FILTER CONFIGURATION
-// ═══════════════════════════════════════════════════════════════════════════
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct FeeFilterConfig {
-    #[serde(default = "default_true")]
-    pub enable_smart_fee_filter: bool,
-    #[serde(default = "default_min_fee_threshold_bps")]
-    pub min_fee_threshold_bps: u32,
-    #[serde(default = "default_max_fee_threshold_bps")]
-    pub max_fee_threshold_bps: u32,
-    #[serde(default = "default_fee_filter_window_secs")]
-    pub fee_filter_window_secs: u64,
-}
-
-impl Default for FeeFilterConfig {
-    fn default() -> Self {
-        Self {
-            enable_smart_fee_filter: true,
-            min_fee_threshold_bps:   default_min_fee_threshold_bps(),
-            max_fee_threshold_bps:   default_max_fee_threshold_bps(),
-            fee_filter_window_secs:  default_fee_filter_window_secs(),
-        }
-    }
-}
-
-impl FeeFilterConfig {
-    pub fn validate(&self) -> Result<()> {
-        if self.enable_smart_fee_filter {
-            if self.min_fee_threshold_bps == 0 {
-                bail!("trading.fee_filter.min_fee_threshold_bps must be > 0");
-            }
-            if self.min_fee_threshold_bps >= self.max_fee_threshold_bps {
-                bail!(
-                    "trading.fee_filter.min_fee_threshold_bps ({}) must be < \
-                     max_fee_threshold_bps ({})",
-                    self.min_fee_threshold_bps, self.max_fee_threshold_bps
-                );
-            }
-            if self.max_fee_threshold_bps > 500 {
-                warn!(
-                    "⚠️ fee_filter.max_fee_threshold_bps ({}) > 500 BPS (5%) — \
-                     very permissive fee ceiling",
-                    self.max_fee_threshold_bps
-                );
-            }
-            if self.fee_filter_window_secs < 5 {
-                warn!(
-                    "⚠️ fee_filter.fee_filter_window_secs ({}) < 5s — \
-                     fee average may be too noisy",
-                    self.fee_filter_window_secs
-                );
-            }
-        }
-        Ok(())
-    }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// TRADING CONFIGURATION - V5.9 ENHANCED! 🔐
-// ═══════════════════════════════════════════════════════════════════════════
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct TradingConfig {
-    pub grid_levels: u32,
-    pub grid_spacing_percent: f64,
-    pub min_order_size: f64,
-    pub max_position_size: f64,
-    pub min_usdc_reserve: f64,
-    pub min_sol_reserve: f64,
-    #[serde(default)]
-    pub enable_dynamic_grid: bool,
-    #[serde(default = "default_reposition_threshold")]
-    pub reposition_threshold: f64,
-    #[serde(default = "default_volatility_window")]
-    pub volatility_window: u32,
-    #[serde(default = "default_true")]
-    pub enable_auto_rebalance: bool,
-    #[serde(default = "default_true")]
-    pub enable_smart_rebalance: bool,
-    #[serde(default = "default_rebalance_threshold")]
-    pub rebalance_threshold_pct: f64,
-    #[serde(default = "default_cooldown")]
-    pub rebalance_cooldown_secs: u64,
-    #[serde(default = "default_max_orders")]
-    pub max_orders_per_side: u32,
-    #[serde(default = "default_refresh_interval")]
-    pub order_refresh_interval_secs: u64,
-    #[serde(default)]
-    pub enable_market_orders: bool,
-    #[serde(default = "default_true")]
-    pub enable_fee_optimization: bool,
-    #[serde(default = "default_profit_threshold")]
-    pub min_profit_threshold_pct: f64,
-    #[serde(default = "default_slippage")]
-    pub max_slippage_pct: f64,
-    #[serde(default)]
-    pub enable_price_bounds: bool,
-    #[serde(default = "default_lower_bound")]
-    pub lower_price_bound: f64,
-    #[serde(default = "default_upper_bound")]
-    pub upper_price_bound: f64,
-    #[serde(default = "default_true")]
-    pub enable_regime_gate: bool,
-    #[serde(default = "default_min_volatility")]
-    pub min_volatility_to_trade: f64,
-    #[serde(default = "default_true")]
-    pub pause_in_very_low_vol: bool,
-    #[serde(default = "default_vol_floor_resume_pct")]
-    pub vol_floor_resume_pct: f64,
-    #[serde(default = "default_true")]
-    pub enable_order_lifecycle: bool,
-    #[serde(default = "default_order_max_age")]
-    pub order_max_age_minutes: u64,
-    #[serde(default = "default_lifecycle_check")]
-    pub order_refresh_interval_minutes: u64,
-    #[serde(default = "default_min_orders")]
-    pub min_orders_to_maintain: usize,
-    #[serde(default)]
-    pub enable_adaptive_spacing: bool,
-    #[serde(default)]
-    pub enable_smart_position_sizing: bool,
-    #[serde(default = "default_signal_size_multiplier")]
-    pub signal_size_multiplier: f64,
-    #[serde(default = "default_optimizer_interval_cycles")]
-    pub optimizer_interval_cycles: u64,
-    #[serde(default)]
-    pub fee_filter: FeeFilterConfig,
-    #[serde(default = "default_max_grid_spacing_pct")]
-    pub max_grid_spacing_pct: f64,
-    #[serde(default = "default_min_grid_spacing_pct")]
-    pub min_grid_spacing_pct: f64,
-}
-
-impl TradingConfig {
-    pub fn validate(&self) -> Result<()> {
-        if self.grid_levels < 2 {
-            bail!("grid_levels must be at least 2 (current: {})", self.grid_levels);
-        }
-        if self.grid_levels > 100 {
-            warn!("⚠️ Very high grid_levels ({}) - may cause performance issues", self.grid_levels);
-        }
-        if self.grid_spacing_percent <= 0.0 {
-            bail!("grid_spacing_percent must be positive (current: {})", self.grid_spacing_percent);
-        }
-        if self.grid_spacing_percent > 10.0 {
-            warn!("⚠️ Very wide grid spacing ({:.2}%) - trades may be infrequent", self.grid_spacing_percent);
-        }
-        if self.grid_spacing_percent < 0.05 {
-            warn!("⚠️ Very tight grid spacing ({:.2}%) - may not profit after fees", self.grid_spacing_percent);
-        }
-        if self.min_order_size <= 0.0 {
-            bail!("min_order_size must be positive");
-        }
-        if self.max_position_size <= self.min_order_size {
-            bail!("max_position_size must be > min_order_size");
-        }
-        if self.min_usdc_reserve < 0.0 {
-            bail!("min_usdc_reserve cannot be negative");
-        }
-        if self.min_sol_reserve < 0.0 {
-            bail!("min_sol_reserve cannot be negative");
-        }
-        if self.enable_regime_gate {
-            if self.min_volatility_to_trade < 0.0 {
-                bail!("min_volatility_to_trade cannot be negative");
-            }
-            if self.min_volatility_to_trade > 5.0 {
-                warn!("⚠️ Very high min_volatility_to_trade ({:.2}%) - bot may rarely trade!",
-                      self.min_volatility_to_trade);
-            }
-        }
-        if self.enable_order_lifecycle {
-            if self.order_max_age_minutes == 0 {
-                bail!("order_max_age_minutes must be > 0");
-            }
-            if self.order_refresh_interval_minutes == 0 {
-                bail!("order_refresh_interval_minutes must be > 0");
-            }
-            if self.order_refresh_interval_minutes > self.order_max_age_minutes {
-                warn!("⚠️ refresh_interval > max_age - orders will never trigger refresh");
-            }
-            if self.min_orders_to_maintain < 2 {
-                bail!("min_orders_to_maintain must be at least 2");
-            }
-        }
-        if self.enable_price_bounds {
-            if self.lower_price_bound >= self.upper_price_bound {
-                bail!("lower_price_bound must be < upper_price_bound");
-            }
-            if self.lower_price_bound <= 0.0 {
-                bail!("lower_price_bound must be positive");
-            }
-        }
-        if self.optimizer_interval_cycles == 0 {
-            bail!("trading.optimizer_interval_cycles must be > 0 (got 0)");
-        }
-        if self.enable_smart_position_sizing
-            && !(0.5_f64..=3.0_f64).contains(&self.signal_size_multiplier)
-        {
-            bail!(
-                "trading.signal_size_multiplier must be in [0.5, 3.0] when \
-                 enable_smart_position_sizing=true (got {:.3})",
-                self.signal_size_multiplier
-            );
-        }
-        self.fee_filter.validate().context("trading.fee_filter validation failed")?;
-        if self.enable_dynamic_grid {
-            if self.min_grid_spacing_pct <= 0.0 {
-                bail!("trading.min_grid_spacing_pct must be positive");
-            }
-            if self.min_grid_spacing_pct >= self.max_grid_spacing_pct {
-                bail!(
-                    "trading.min_grid_spacing_pct ({:.5}) must be < max_grid_spacing_pct ({:.5})",
-                    self.min_grid_spacing_pct, self.max_grid_spacing_pct
-                );
-            }
-        }
-        Ok(())
-    }
-
-    pub fn apply_environment(&mut self, environment: &str) {
-        match environment {
-            "testing" => {
-                info!("🧪 Testing environment: Relaxing safety constraints");
-                self.enable_regime_gate = false;
-                self.min_volatility_to_trade = 0.0;
-                self.pause_in_very_low_vol = false;
-                self.enable_price_bounds = false;
-            }
-            "development" => {
-                info!("🔧 Development environment: Moderate safety");
-                if self.min_volatility_to_trade > 0.5 {
-                    info!("   Lowering min_volatility from {:.2}% to 0.3%",
-                          self.min_volatility_to_trade);
-                    self.min_volatility_to_trade = 0.3;
-                }
-            }
-            "production" => {
-                info!("🔒 Production environment: Enforcing safety");
-                if !self.enable_regime_gate {
-                    warn!("⚠️ Force-enabling regime gate for production!");
-                    self.enable_regime_gate = true;
-                }
-                if self.min_volatility_to_trade < self.vol_floor_resume_pct {
-                    warn!("⚠️ Raising min_volatility to {:.2}% for production safety",
-                          self.vol_floor_resume_pct);
-                    self.min_volatility_to_trade = self.vol_floor_resume_pct;
-                }
-                if !self.enable_order_lifecycle {
-                    warn!("⚠️ Force-enabling order lifecycle for production!");
-                    self.enable_order_lifecycle = true;
-                }
-            }
-            _ => { warn!("⚠️ Unknown environment '{}' - using config as-is", environment); }
-        }
-    }
-}
-
-impl Default for TradingConfig {
-    fn default() -> Self {
-        Self {
-            grid_levels:            35,
-            grid_spacing_percent:   0.15,
-            min_order_size:         0.1,
-            max_position_size:      100.0,
-            min_usdc_reserve:       300.0,
-            min_sol_reserve:        2.0,
-            enable_dynamic_grid:             false,
-            reposition_threshold:            default_reposition_threshold(),
-            volatility_window:               default_volatility_window(),
-            enable_auto_rebalance:           true,
-            enable_smart_rebalance:          true,
-            rebalance_threshold_pct:         default_rebalance_threshold(),
-            rebalance_cooldown_secs:         default_cooldown(),
-            max_orders_per_side:             default_max_orders(),
-            order_refresh_interval_secs:     default_refresh_interval(),
-            enable_market_orders:            false,
-            enable_fee_optimization:         true,
-            min_profit_threshold_pct:        default_profit_threshold(),
-            max_slippage_pct:                default_slippage(),
-            enable_price_bounds:             false,
-            lower_price_bound:               default_lower_bound(),
-            upper_price_bound:               default_upper_bound(),
-            enable_regime_gate:              false,
-            min_volatility_to_trade:         0.0,
-            pause_in_very_low_vol:           false,
-            enable_order_lifecycle:          true,
-            order_max_age_minutes:           default_order_max_age(),
-            order_refresh_interval_minutes:  default_lifecycle_check(),
-            min_orders_to_maintain:          default_min_orders(),
-            enable_adaptive_spacing:         false,
-            enable_smart_position_sizing:    false,
-            signal_size_multiplier:          default_signal_size_multiplier(),
-            optimizer_interval_cycles:       default_optimizer_interval_cycles(),
-            fee_filter:                      FeeFilterConfig::default(),
-            max_grid_spacing_pct:            default_max_grid_spacing_pct(),
-            min_grid_spacing_pct:            default_min_grid_spacing_pct(),
-            vol_floor_resume_pct:            default_vol_floor_resume_pct(),
-        }
-    }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// REGIME GATE CONFIG (Analytics Module Bridge)
-// ═══════════════════════════════════════════════════════════════════════════
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct RegimeGateConfig {
-    pub enable_regime_gate: bool,
-    pub volatility_threshold_bps: f64,
-    pub trend_threshold: f64,
-    pub min_volatility_to_trade_bps: f64,
-    pub pause_in_very_low_vol: bool,
-}
-
-impl From<&TradingConfig> for RegimeGateConfig {
-    fn from(trading: &TradingConfig) -> Self {
-        let volatility_bps = trading.min_volatility_to_trade * 100.0;
-        info!("🔧 Converting TradingConfig → RegimeGateConfig:");
-        info!("   Min volatility: {:.2}% → {} BPS", trading.min_volatility_to_trade, volatility_bps);
-        info!("   Regime gate: {}", if trading.enable_regime_gate { "ENABLED" } else { "DISABLED" });
-        Self {
-            enable_regime_gate: trading.enable_regime_gate,
-            volatility_threshold_bps: volatility_bps,
-            trend_threshold: 3.0,
-            min_volatility_to_trade_bps: volatility_bps,
-            pause_in_very_low_vol: trading.pause_in_very_low_vol,
-        }
-    }
-}
-
-impl Default for RegimeGateConfig {
-    fn default() -> Self {
-        Self {
-            enable_regime_gate: true,
-            volatility_threshold_bps: 2.0,
-            trend_threshold: 3.0,
-            min_volatility_to_trade_bps: 3.0,
-            pause_in_very_low_vol: true,
-        }
-    }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// STRATEGIES CONFIGURATION
-// ═══════════════════════════════════════════════════════════════════════════
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct StrategiesConfig {
-    pub active: Vec<String>,
-    pub consensus_mode: String,
-    pub grid: GridStrategyConfig,
-    #[serde(default)]
-    pub momentum: MomentumStrategyConfig,
-    #[serde(default)]
-    pub mean_reversion: MeanReversionStrategyConfig,
-    #[serde(default)]
-    pub rsi: RsiStrategyConfig,
-    #[serde(default)]
-    pub momentum_macd: MomentumMACDStrategyConfig,
-    #[serde(default)]
-    pub enable_multi_timeframe: bool,
-    #[serde(default)]
-    pub require_timeframe_alignment: bool,
-    #[serde(default = "default_wma_confidence_threshold")]
-    pub wma_confidence_threshold: f64,
-}
-
-impl StrategiesConfig {
-    pub fn validate(&self) -> Result<()> {
-        let valid_modes = ["single", "weighted", "majority", "unanimous"];
-        if !valid_modes.contains(&self.consensus_mode.as_str()) {
-            bail!("Invalid consensus_mode '{}'. Must be one of: {:?}",
-                  self.consensus_mode, valid_modes);
-        }
-        if self.active.is_empty() {
-            bail!("At least one strategy must be active");
-        }
-        let mut total_weight = 0.0;
-        if self.grid.enabled         { total_weight += self.grid.weight; }
-        if self.momentum.enabled     { total_weight += self.momentum.weight; }
-        if self.mean_reversion.enabled { total_weight += self.mean_reversion.weight; }
-        if self.rsi.enabled          { total_weight += self.rsi.weight; }
-        if self.momentum_macd.enabled { total_weight += self.momentum_macd.weight; }
-        if total_weight == 0.0 {
-            bail!("No strategies are enabled");
-        }
-        if !(0.0_f64..=1.0_f64).contains(&self.wma_confidence_threshold) {
-            bail!(
-                "strategies.wma_confidence_threshold must be in [0.0, 1.0] (got {:.3})",
-                self.wma_confidence_threshold
-            );
-        }
-        Ok(())
-    }
-}
-
-impl Default for StrategiesConfig {
-    fn default() -> Self {
-        Self {
-            active: vec!["grid".to_string()],
-            consensus_mode: "single".to_string(),
-            grid: GridStrategyConfig {
-                enabled: true,
-                weight: 1.0,
-                min_confidence: 0.5,
-                seed_orders_bypass: default_grid_seed_bypass(),
-            },
-            momentum: MomentumStrategyConfig::default(),
-            mean_reversion: MeanReversionStrategyConfig::default(),
-            rsi: RsiStrategyConfig::default(),
-            momentum_macd: MomentumMACDStrategyConfig::default(),
-            enable_multi_timeframe: false,
-            require_timeframe_alignment: false,
-            wma_confidence_threshold: default_wma_confidence_threshold(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct GridStrategyConfig {
-    pub enabled: bool,
-    pub weight: f64,
-    #[serde(default = "default_confidence")]
-    pub min_confidence: f64,
-    #[serde(default = "default_grid_seed_bypass")]
-    pub seed_orders_bypass: bool,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct MomentumStrategyConfig {
-    pub enabled: bool,
-    pub weight: f64,
-    pub min_confidence: f64,
-    pub lookback_period: usize,
-    pub threshold: f64,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct MeanReversionStrategyConfig {
-    pub enabled: bool,
-    pub weight: f64,
-    pub min_confidence: f64,
-    pub sma_period: usize,
-    pub std_dev_multiplier: f64,
-    #[serde(default = "default_strong_threshold")]
-    pub strong_buy_threshold: f64,
-    #[serde(default = "default_normal_threshold")]
-    pub buy_threshold: f64,
-    #[serde(default = "default_strong_threshold")]
-    pub strong_sell_threshold: f64,
-    #[serde(default = "default_normal_threshold")]
-    pub sell_threshold: f64,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct RsiStrategyConfig {
-    pub enabled: bool,
-    pub weight: f64,
-    pub min_confidence: f64,
-    pub period: usize,
-    pub oversold_threshold: f64,
-    pub overbought_threshold: f64,
-    #[serde(default = "default_extreme_oversold")]
-    pub extreme_oversold: f64,
-    #[serde(default = "default_extreme_overbought")]
-    pub extreme_overbought: f64,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct MomentumMACDStrategyConfig {
-    pub enabled: bool,
-    pub weight: f64,
-    #[serde(default = "default_macd_min_confidence")]
-    pub min_confidence: f64,
-    #[serde(default = "default_macd_histogram_threshold")]
-    pub strong_histogram_threshold: f64,
-    #[serde(default = "default_macd_warmup_periods")]
-    pub min_warmup_periods: usize,
-}
-
-impl RsiStrategyConfig {
-    pub fn to_rsi_params(&self) -> RsiParams {
-        RsiParams {
-            rsi_period: self.period,
-            oversold_threshold: self.oversold_threshold,
-            overbought_threshold: self.overbought_threshold,
-            extreme_oversold: self.extreme_oversold,
-            extreme_overbought: self.extreme_overbought,
-        }
-    }
-}
-
-impl MeanReversionStrategyConfig {
-    pub fn to_mean_reversion_params(&self) -> MeanReversionParams {
-        MeanReversionParams {
-            mean_period: self.sma_period,
-            strong_buy_threshold: self.strong_buy_threshold,
-            buy_threshold: self.buy_threshold,
-            strong_sell_threshold: self.strong_sell_threshold,
-            sell_threshold: self.sell_threshold,
-            min_confidence: self.min_confidence,
-        }
-    }
-}
-
-impl MomentumMACDStrategyConfig {
-    pub fn to_momentum_macd_params(&self) -> MomentumMACDParams {
-        MomentumMACDParams {
-            min_confidence: self.min_confidence,
-            strong_histogram_threshold: self.strong_histogram_threshold,
-            min_warmup_periods: self.min_warmup_periods,
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct RsiParams {
-    pub rsi_period: usize,
-    pub oversold_threshold: f64,
-    pub overbought_threshold: f64,
-    pub extreme_oversold: f64,
-    pub extreme_overbought: f64,
-}
-
-#[derive(Debug, Clone)]
-pub struct MeanReversionParams {
-    pub mean_period: usize,
-    pub strong_buy_threshold: f64,
-    pub buy_threshold: f64,
-    pub strong_sell_threshold: f64,
-    pub sell_threshold: f64,
-    pub min_confidence: f64,
-}
-
-#[derive(Debug, Clone)]
-pub struct MomentumMACDParams {
-    pub min_confidence: f64,
-    pub strong_histogram_threshold: f64,
-    pub min_warmup_periods: usize,
-}
-
-impl Default for MomentumStrategyConfig {
-    fn default() -> Self {
-        Self { enabled: false, weight: 0.8, min_confidence: 0.6, lookback_period: 20, threshold: 0.02 }
-    }
-}
-
-impl Default for MeanReversionStrategyConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false, weight: 0.7, min_confidence: 0.6, sma_period: 20, std_dev_multiplier: 2.0,
-            strong_buy_threshold: default_strong_threshold(),
-            buy_threshold: default_normal_threshold(),
-            strong_sell_threshold: default_strong_threshold(),
-            sell_threshold: default_normal_threshold(),
-        }
-    }
-}
-
-impl Default for RsiStrategyConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false, weight: 0.9, min_confidence: 0.7, period: 14,
-            oversold_threshold: 30.0, overbought_threshold: 70.0,
-            extreme_oversold: default_extreme_oversold(),
-            extreme_overbought: default_extreme_overbought(),
-        }
-    }
-}
-
-impl Default for MomentumMACDStrategyConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false, weight: 0.8,
-            min_confidence: default_macd_min_confidence(),
-            strong_histogram_threshold: default_macd_histogram_threshold(),
-            min_warmup_periods: default_macd_warmup_periods(),
-        }
-    }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// RISK CONFIGURATION
-// ═══════════════════════════════════════════════════════════════════════════
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct RiskConfig {
-    pub max_position_size_pct: f64,
-    pub max_drawdown_pct: f64,
-    pub stop_loss_pct: f64,
-    pub take_profit_pct: f64,
-    #[serde(default = "default_true")]
-    pub enable_circuit_breaker: bool,
-    pub circuit_breaker_threshold_pct: f64,
-    pub circuit_breaker_cooldown_secs: u64,
-    #[serde(default = "default_max_consecutive_losses")]
-    pub max_consecutive_losses: u32,
-    #[serde(default = "default_trailing_stop")]
-    pub enable_trailing_stop: bool,
-    // ── V6.1 (PR #126 C2): StopLossManager cooldown ──────────────────────
-    /// Cooldown duration (seconds) after a stop-loss trip before trading resumes.
-    /// Consumed by StopLossManager::new() — wired in grid_bot.rs C3.
-    /// Mirrors circuit_breaker_cooldown_secs pattern exactly.
-    /// Default: 300s (5 min). Warn if 0 (may re-trip immediately).
-    #[serde(default = "default_stop_loss_cooldown_secs")]
-    pub stop_loss_cooldown_secs: u64,
-}
-
-impl RiskConfig {
-    pub fn validate(&self) -> Result<()> {
-        if self.max_position_size_pct <= 0.0 || self.max_position_size_pct > 100.0 {
-            bail!("max_position_size_pct must be between 0-100%");
-        }
-        if self.max_drawdown_pct <= 0.0 || self.max_drawdown_pct > 100.0 {
-            bail!("max_drawdown_pct must be between 0-100%");
-        }
-        if self.max_consecutive_losses == 0 {
-            bail!("max_consecutive_losses must be > 0");
-        }
-        if self.enable_circuit_breaker {
-            if self.circuit_breaker_threshold_pct <= 0.0 {
-                bail!("circuit_breaker_threshold_pct must be positive");
-            }
-            if self.circuit_breaker_cooldown_secs == 0 {
-                warn!("⚠️ circuit_breaker_cooldown_secs is 0 - may trigger repeatedly");
-            }
-        }
-        if self.stop_loss_cooldown_secs == 0 {
-            warn!("⚠️ risk.stop_loss_cooldown_secs is 0 — SL may re-trip immediately after reset");
-        }
-        Ok(())
-    }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// PYTH PRICE FEED CONFIGURATION
-// ═══════════════════════════════════════════════════════════════════════════
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct PythConfig {
-    pub http_endpoint: String,
-    pub feed_ids: Vec<String>,
-    #[serde(default = "default_update_interval")]
-    pub update_interval_ms: u64,
-    #[serde(default)]
-    pub enable_websocket: bool,
-    #[serde(default)]
-    pub websocket_endpoint: Option<String>,
-}
-
-impl Default for PythConfig {
-    fn default() -> Self {
-        Self {
-            http_endpoint: "https://hermes.pyth.network".to_string(),
-            feed_ids: vec![
-                "0xef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d".to_string()
-            ],
-            update_interval_ms: 500,
-            enable_websocket: false,
-            websocket_endpoint: None,
-        }
-    }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// PERFORMANCE CONFIGURATION
-// ═══════════════════════════════════════════════════════════════════════════
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct PerformanceConfig {
-    #[serde(default = "default_cycle_interval")]
-    pub cycle_interval_ms: u64,
-    #[serde(default = "default_startup_delay")]
-    pub startup_delay_ms: u64,
-    #[serde(default = "default_request_timeout")]
-    pub request_timeout_ms: u64,
-}
-
-impl Default for PerformanceConfig {
-    fn default() -> Self {
-        Self { cycle_interval_ms: 100, startup_delay_ms: 1000, request_timeout_ms: 5000 }
-    }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// LOGGING CONFIGURATION
-// ═══════════════════════════════════════════════════════════════════════════
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct LoggingConfig {
-    pub level: String,
-    pub file_path: String,
-    #[serde(default = "default_true")]
-    pub enable_file_logging: bool,
-}
-
-impl Default for LoggingConfig {
-    fn default() -> Self {
-        Self { level: "info".to_string(), file_path: "logs/gridbot.log".to_string(), enable_file_logging: true }
-    }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// METRICS CONFIGURATION
-// ═══════════════════════════════════════════════════════════════════════════
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct MetricsConfig {
-    #[serde(default = "default_true")]
-    pub enable_metrics: bool,
-    #[serde(default = "default_stats_interval")]
-    pub stats_interval: u64,
-}
-
-impl Default for MetricsConfig {
-    fn default() -> Self {
-        Self { enable_metrics: true, stats_interval: 50 }
-    }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// PAPER TRADING CONFIGURATION
-// ═══════════════════════════════════════════════════════════════════════════
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct PaperTradingConfig {
-    #[serde(default = "default_initial_usdc")]
-    pub initial_usdc: f64,
-    #[serde(default = "default_initial_sol")]
-    pub initial_sol: f64,
-    #[serde(default)]
-    pub test_duration_hours: Option<usize>,
-    #[serde(default)]
-    pub test_duration_minutes: Option<usize>,
-    #[serde(default)]
-    pub test_duration_seconds: Option<usize>,
-    #[serde(default)]
-    pub test_cycles: Option<usize>,
-}
-
-impl PaperTradingConfig {
-    pub fn duration_seconds(&self) -> usize {
-        if let Some(secs) = self.test_duration_seconds { return secs; }
-        if let Some(mins) = self.test_duration_minutes { return mins * 60; }
-        if let Some(hours) = self.test_duration_hours  { return hours * 3600; }
-        3600
-    }
-    pub fn calculate_cycles(&self, cycle_interval_ms: u64) -> usize {
-        if let Some(cycles) = self.test_cycles { return cycles; }
-        let duration_secs  = self.duration_seconds();
-        let cycles_per_sec = 1000 / cycle_interval_ms as usize;
-        duration_secs * cycles_per_sec
-    }
-    pub fn validate(&self) -> Result<()> {
-        if self.initial_usdc <= 0.0 { bail!("initial_usdc must be positive"); }
-        if self.initial_sol  <= 0.0 { bail!("initial_sol must be positive"); }
-        if self.test_duration_hours.is_none()
-            && self.test_duration_minutes.is_none()
-            && self.test_duration_seconds.is_none()
-            && self.test_cycles.is_none() {
-            warn!("⚠️ No test duration specified - using default 1 hour");
-        }
-        Ok(())
-    }
-}
-
-impl Default for PaperTradingConfig {
-    fn default() -> Self {
-        Self {
-            initial_usdc: 5000.0, initial_sol: 10.0,
-            test_duration_hours: Some(1),
-            test_duration_minutes: None, test_duration_seconds: None, test_cycles: None,
-        }
-    }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// DATABASE & ALERTS
-// ═══════════════════════════════════════════════════════════════════════════
-
-#[derive(Debug, Clone, Deserialize, Serialize, Default)]
-#[serde(deny_unknown_fields)]
-pub struct DatabaseConfig {
-    #[serde(default)] pub enabled: bool,
-    #[serde(default)] pub url: String,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize, Default)]
-#[serde(deny_unknown_fields)]
-pub struct AlertsConfig {
-    #[serde(default)] pub enabled: bool,
-    #[serde(default)] pub telegram_bot_token: Option<String>,
-    #[serde(default)] pub telegram_chat_id:   Option<String>,
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// DEFAULT VALUE HELPERS
-// ═══════════════════════════════════════════════════════════════════════════
-
-fn default_true()                     -> bool   { true }
-fn default_confidence()               -> f64    { 0.5 }
-fn default_reposition_threshold()     -> f64    { 0.5 }
-fn default_volatility_window()        -> u32    { 100 }
-fn default_rebalance_threshold()      -> f64    { 5.0 }
-fn default_cooldown()                 -> u64    { 60 }
-fn default_max_orders()               -> u32    { 10 }
-fn default_refresh_interval()         -> u64    { 300 }
-fn default_profit_threshold()         -> f64    { 0.1 }
-fn default_slippage()                 -> f64    { 1.0 }
-fn default_lower_bound()              -> f64    { 100.0 }
-fn default_upper_bound()              -> f64    { 200.0 }
-fn default_min_volatility()           -> f64    { 0.5 }
-fn default_order_max_age()            -> u64    { 10 }
-fn default_lifecycle_check()          -> u64    { 5 }
-fn default_min_orders()               -> usize  { 8 }
-fn default_update_interval()          -> u64    { 500 }
-fn default_cycle_interval()           -> u64    { 100 }
-fn default_startup_delay()            -> u64    { 1000 }
-fn default_stats_interval()           -> u64    { 50 }
-fn default_initial_usdc()             -> f64    { 5000.0 }
-fn default_initial_sol()              -> f64    { 10.0 }
-fn default_request_timeout()          -> u64    { 5000 }
-fn default_paper_mode()               -> String { "paper".to_string() }
-fn default_max_trade_sol()            -> f64    { 0.5 }
-fn default_priority_fee_microlamports()-> u64   { 50_000 }
-fn default_slippage_bps()             -> u16    { 100 }
-fn default_confirm_timeout_secs()     -> u64    { 60 }
-fn default_max_tx_retries()           -> u8     { 3 }
-fn default_max_requote_attempts()      -> u8     { 3 }
-fn default_extreme_oversold()         -> f64    { 20.0 }
-fn default_extreme_overbought()       -> f64    { 80.0 }
-fn default_strong_threshold()         -> f64    { 5.0 }
-fn default_normal_threshold()         -> f64    { 2.5 }
-fn default_macd_min_confidence()      -> f64    { 0.65 }
-fn default_macd_histogram_threshold() -> f64    { 0.5 }
-fn default_macd_warmup_periods()      -> usize  { 26 }
-fn default_wallet_path()              -> String { "~/.config/solana/id.json".to_string() }
-fn default_max_trade_size_usdc()      -> f64    { 250.0 }
-fn default_max_consecutive_losses()   -> u32    { 5 }
-fn default_trailing_stop()            -> bool   { false }
-fn default_optimizer_interval_cycles() -> u64   { 50 }
-fn default_min_fee_threshold_bps()    -> u32    { 8 }
-fn default_max_fee_threshold_bps()    -> u32    { 50 }
-fn default_fee_filter_window_secs()   -> u64    { 30 }
-fn default_signal_size_multiplier()   -> f64    { 1.0 }
-fn default_wma_confidence_threshold() -> f64    { 0.50 }
-fn default_grid_seed_bypass()         -> bool   { true }
-fn default_max_grid_spacing_pct()     -> f64    { 0.0075 }
-fn default_min_grid_spacing_pct()     -> f64    { 0.001  }
-fn default_vol_floor_resume_pct()     -> f64    { 0.05 }
-/// V6.1 PR #126 C2: SL cooldown after trip before trading resumes. Mirrors CB pattern.
-fn default_stop_loss_cooldown_secs()  -> u64    { 300 }
+pub(crate) fn default_true()                      -> bool   { true }
+pub(crate) fn default_confidence()                -> f64    { 0.5 }
+pub(crate) fn default_reposition_threshold()      -> f64    { 0.5 }
+pub(crate) fn default_volatility_window()         -> u32    { 100 }
+pub(crate) fn default_rebalance_threshold()       -> f64    { 5.0 }
+pub(crate) fn default_cooldown()                  -> u64    { 60 }
+pub(crate) fn default_max_orders()                -> u32    { 10 }
+pub(crate) fn default_refresh_interval()          -> u64    { 300 }
+pub(crate) fn default_profit_threshold()          -> f64    { 0.1 }
+pub(crate) fn default_slippage()                  -> f64    { 1.0 }
+pub(crate) fn default_lower_bound()               -> f64    { 100.0 }
+pub(crate) fn default_upper_bound()               -> f64    { 200.0 }
+pub(crate) fn default_order_max_age()             -> u64    { 10 }
+pub(crate) fn default_lifecycle_check()           -> u64    { 5 }
+pub(crate) fn default_min_orders()                -> usize  { 8 }
+pub(crate) fn default_update_interval()           -> u64    { 500 }
+pub(crate) fn default_cycle_interval()            -> u64    { 100 }
+pub(crate) fn default_startup_delay()             -> u64    { 1000 }
+pub(crate) fn default_stats_interval()            -> u64    { 50 }
+pub(crate) fn default_initial_usdc()              -> f64    { 5000.0 }
+pub(crate) fn default_initial_sol()               -> f64    { 10.0 }
+pub(crate) fn default_request_timeout()           -> u64    { 5000 }
+pub(crate) fn default_paper_mode()                -> String { "paper".to_string() }
+pub(crate) fn default_max_trade_sol()             -> f64    { 0.5 }
+pub(crate) fn default_priority_fee_microlamports() -> u64   { 50_000 }
+pub(crate) fn default_slippage_bps()              -> u16    { 100 }
+pub(crate) fn default_confirm_timeout_secs()      -> u64    { 60 }
+pub(crate) fn default_max_tx_retries()            -> u8     { 3 }
+pub(crate) fn default_max_requote_attempts()      -> u8     { 3 }
+pub(crate) fn default_extreme_oversold()          -> f64    { 20.0 }
+pub(crate) fn default_extreme_overbought()        -> f64    { 80.0 }
+pub(crate) fn default_strong_threshold()          -> f64    { 5.0 }
+pub(crate) fn default_normal_threshold()          -> f64    { 2.5 }
+pub(crate) fn default_macd_min_confidence()       -> f64    { 0.65 }
+pub(crate) fn default_macd_histogram_threshold()  -> f64    { 0.5 }
+pub(crate) fn default_macd_warmup_periods()       -> usize  { 26 }
+pub(crate) fn default_wallet_path()               -> String { "~/.config/solana/id.json".to_string() }
+pub(crate) fn default_max_trade_size_usdc()       -> f64    { 250.0 }
+pub(crate) fn default_max_consecutive_losses()    -> u32    { 5 }
+pub(crate) fn default_trailing_stop()             -> bool   { false }
+pub(crate) fn default_optimizer_interval_cycles() -> u64    { 50 }
+pub(crate) fn default_min_fee_threshold_bps()     -> u32    { 8 }
+pub(crate) fn default_max_fee_threshold_bps()     -> u32    { 50 }
+pub(crate) fn default_fee_filter_window_secs()    -> u64    { 30 }
+pub(crate) fn default_signal_size_multiplier()    -> f64    { 1.0 }
+pub(crate) fn default_wma_confidence_threshold()  -> f64    { 0.50 }
+pub(crate) fn default_grid_seed_bypass()          -> bool   { true }
+pub(crate) fn default_max_grid_spacing_pct()      -> f64    { 0.0075 }
+pub(crate) fn default_min_grid_spacing_pct()      -> f64    { 0.001 }
+pub(crate) fn default_vol_floor_resume_pct()      -> f64    { 0.05 }
+pub(crate) fn default_stop_loss_cooldown_secs()   -> u64    { 300 }
+pub(crate) fn default_min_volatility()            -> f64    { 0.5 }
 
 // ═══════════════════════════════════════════════════════════════════════════
 // MAIN CONFIG IMPLEMENTATION
@@ -1397,9 +348,11 @@ impl Config {
             if self.strategies.grid.seed_orders_bypass { "✅" } else { "❌" });
         if self.strategies.rsi.enabled {
             println!("   RSI:              period={} oversold={:.0} overbought={:.0} extreme={:.0}/{:.0}",
-                self.strategies.rsi.period, self.strategies.rsi.oversold_threshold,
+                self.strategies.rsi.period,
+                self.strategies.rsi.oversold_threshold,
                 self.strategies.rsi.overbought_threshold,
-                self.strategies.rsi.extreme_oversold, self.strategies.rsi.extreme_overbought);
+                self.strategies.rsi.extreme_oversold,
+                self.strategies.rsi.extreme_overbought);
         }
         if self.strategies.mean_reversion.enabled {
             println!("   MeanRev:          period={} strong={:.1}/{:.1} normal={:.1}/{:.1}",
@@ -1442,7 +395,7 @@ impl Config {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// BUILDER PATTERN
+// CONFIG BUILDER
 // ═══════════════════════════════════════════════════════════════════════════
 
 pub struct ConfigBuilder {
@@ -1466,31 +419,31 @@ impl ConfigBuilder {
                     commitment: "confirmed".to_string(),
                     ws_url: None,
                 },
-                security: SecurityConfig::default(),
-                trading: TradingConfig::default(),
-                strategies: StrategiesConfig::default(),
+                security:      SecurityConfig::default(),
+                trading:       TradingConfig::default(),
+                strategies:    StrategiesConfig::default(),
                 risk: RiskConfig {
-                    max_position_size_pct: 30.0,
-                    max_drawdown_pct: 10.0,
-                    stop_loss_pct: 5.0,
-                    take_profit_pct: 10.0,
-                    enable_circuit_breaker: true,
-                    circuit_breaker_threshold_pct: 8.0,
-                    circuit_breaker_cooldown_secs: 300,
-                    max_consecutive_losses: default_max_consecutive_losses(),
-                    enable_trailing_stop: false,
-                    stop_loss_cooldown_secs: default_stop_loss_cooldown_secs(),
+                    max_position_size_pct:         30.0,
+                    max_drawdown_pct:               10.0,
+                    stop_loss_pct:                  5.0,
+                    take_profit_pct:                10.0,
+                    enable_circuit_breaker:         true,
+                    circuit_breaker_threshold_pct:  8.0,
+                    circuit_breaker_cooldown_secs:  300,
+                    max_consecutive_losses:         default_max_consecutive_losses(),
+                    enable_trailing_stop:           false,
+                    stop_loss_cooldown_secs:        default_stop_loss_cooldown_secs(),
                 },
-                fees: FeesConfig::default(),
+                fees:          FeesConfig::default(),
                 priority_fees: PriorityFeeConfig::default(),
-                execution: ExecutionConfig::default(),
-                pyth: PythConfig::default(),
-                performance: PerformanceConfig::default(),
-                logging: LoggingConfig::default(),
-                metrics: MetricsConfig::default(),
+                execution:     ExecutionConfig::default(),
+                pyth:          PythConfig::default(),
+                performance:   PerformanceConfig::default(),
+                logging:       LoggingConfig::default(),
+                metrics:       MetricsConfig::default(),
                 paper_trading: PaperTradingConfig::default(),
-                database: DatabaseConfig::default(),
-                alerts: AlertsConfig::default(),
+                database:      DatabaseConfig::default(),
+                alerts:        AlertsConfig::default(),
             },
         }
     }
@@ -1525,9 +478,9 @@ impl ConfigBuilder {
         self.config.trading.optimizer_interval_cycles = cycles; self
     }
     pub fn fee_filter(mut self, min_bps: u32, max_bps: u32, window_secs: u64) -> Self {
-        self.config.trading.fee_filter.min_fee_threshold_bps   = min_bps;
-        self.config.trading.fee_filter.max_fee_threshold_bps   = max_bps;
-        self.config.trading.fee_filter.fee_filter_window_secs  = window_secs;
+        self.config.trading.fee_filter.min_fee_threshold_bps  = min_bps;
+        self.config.trading.fee_filter.max_fee_threshold_bps  = max_bps;
+        self.config.trading.fee_filter.fee_filter_window_secs = window_secs;
         self
     }
     pub fn signal_size_multiplier(mut self, multiplier: f64) -> Self {
@@ -1536,12 +489,10 @@ impl ConfigBuilder {
         self
     }
     pub fn wma_confidence_threshold(mut self, threshold: f64) -> Self {
-        self.config.strategies.wma_confidence_threshold = threshold;
-        self
+        self.config.strategies.wma_confidence_threshold = threshold; self
     }
     pub fn seed_orders_bypass(mut self, bypass: bool) -> Self {
-        self.config.strategies.grid.seed_orders_bypass = bypass;
-        self
+        self.config.strategies.grid.seed_orders_bypass = bypass; self
     }
     pub fn dynamic_grid_spacing(mut self, min: f64, max: f64) -> Self {
         self.config.trading.min_grid_spacing_pct = min;
@@ -1552,10 +503,8 @@ impl ConfigBuilder {
         self.config.trading.vol_floor_resume_pct = floor; self
     }
     pub fn max_requote_attempts(mut self, n: u8) -> Self {
-        self.config.execution.max_requote_attempts = n;
-        self
+        self.config.execution.max_requote_attempts = n; self
     }
-    /// V6.1 PR #126 C2: Set SL cooldown duration consumed by StopLossManager.
     pub fn stop_loss_cooldown_secs(mut self, secs: u64) -> Self {
         self.config.risk.stop_loss_cooldown_secs = secs; self
     }
@@ -1769,7 +718,7 @@ min_sol_reserve = 1.0
         );
     }
 
-    // ── PR #99 Commit 1: wma_confidence_threshold tests ────────────────────
+    // ── PR #99 wma_confidence_threshold tests ──────────────────────────────
 
     #[test]
     fn test_wma_confidence_threshold_default() {
@@ -1831,7 +780,7 @@ min_sol_reserve = 1.0
         );
     }
 
-    // ── PR #100: seed_orders_bypass tests ───────────────────────────────────
+    // ── PR #100 seed_orders_bypass tests ───────────────────────────────────
 
     #[test]
     fn test_seed_orders_bypass_default_is_true() {
@@ -1853,10 +802,7 @@ min_confidence = 0.5
     #[test]
     fn test_seed_orders_bypass_false_roundtrip() {
         let original = GridStrategyConfig {
-            enabled: true,
-            weight: 1.0,
-            min_confidence: 0.5,
-            seed_orders_bypass: false,
+            enabled: true, weight: 1.0, min_confidence: 0.5, seed_orders_bypass: false,
         };
         let toml_str = toml::to_string(&original).expect("serialise");
         let restored: GridStrategyConfig = toml::from_str(&toml_str).expect("deserialise");
@@ -1869,32 +815,14 @@ min_confidence = 0.5
             .seed_orders_bypass(false)
             .build()
             .expect("build");
-        assert!(!config.strategies.grid.seed_orders_bypass,
-            "builder must wire seed_orders_bypass=false");
+        assert!(!config.strategies.grid.seed_orders_bypass);
     }
 
-    // ── PR #107 Commit 1: max/min_grid_spacing_pct tests ───────────────────
+    // ── PR #107 max/min_grid_spacing_pct tests ─────────────────────────────
 
     #[test]
     fn test_grid_spacing_bounds_defaults() {
         let cfg = TradingConfig::default();
-        assert!((cfg.max_grid_spacing_pct - 0.0075).abs() < 1e-9,
-            "max default must be 0.0075, got {}", cfg.max_grid_spacing_pct);
-        assert!((cfg.min_grid_spacing_pct - 0.001).abs() < 1e-9,
-            "min default must be 0.001, got {}", cfg.min_grid_spacing_pct);
-    }
-
-    #[test]
-    fn test_grid_spacing_bounds_absent_toml_defaults() {
-        let toml_str = r#"
-grid_levels = 10
-grid_spacing_percent = 0.15
-min_order_size = 0.1
-max_position_size = 10.0
-min_usdc_reserve = 100.0
-min_sol_reserve = 1.0
-"#;
-        let cfg: TradingConfig = toml::from_str(toml_str).expect("deserialise");
         assert!((cfg.max_grid_spacing_pct - 0.0075).abs() < 1e-9);
         assert!((cfg.min_grid_spacing_pct - 0.001).abs() < 1e-9);
     }
@@ -1906,10 +834,7 @@ min_sol_reserve = 1.0
         cfg.min_grid_spacing_pct = 0.0075;
         cfg.max_grid_spacing_pct = 0.0075;
         let err = cfg.validate().unwrap_err();
-        assert!(
-            err.to_string().contains("min_grid_spacing_pct"),
-            "error must name the field; got: {}", err
-        );
+        assert!(err.to_string().contains("min_grid_spacing_pct"));
     }
 
     #[test]
@@ -1918,8 +843,7 @@ min_sol_reserve = 1.0
         cfg.enable_dynamic_grid = false;
         cfg.min_grid_spacing_pct = 0.01;
         cfg.max_grid_spacing_pct = 0.005;
-        assert!(cfg.validate().is_ok(),
-            "bounds must not be validated when enable_dynamic_grid=false");
+        assert!(cfg.validate().is_ok());
     }
 
     #[test]
@@ -1941,20 +865,6 @@ min_sol_reserve = 1.0
     }
 
     #[test]
-    fn test_vol_floor_resume_pct_absent_toml_defaults() {
-        let toml_str = r#"
-grid_levels = 10
-grid_spacing_percent = 0.15
-min_order_size = 0.1
-max_position_size = 10.0
-min_usdc_reserve = 100.0
-min_sol_reserve = 1.0
-"#;
-        let cfg: TradingConfig = toml::from_str(toml_str).expect("deserialise");
-        assert!((cfg.vol_floor_resume_pct - 0.05).abs() < 1e-9);
-    }
-
-    #[test]
     fn test_vol_floor_resume_pct_serde_roundtrip() {
         let mut cfg = TradingConfig::default();
         cfg.vol_floor_resume_pct = 0.10;
@@ -1969,9 +879,7 @@ min_sol_reserve = 1.0
         cfg.vol_floor_resume_pct = 0.05;
         cfg.min_volatility_to_trade = 0.01;
         cfg.apply_environment("production");
-        assert!((cfg.min_volatility_to_trade - 0.05).abs() < 1e-9,
-            "production must raise to vol_floor_resume_pct, got {}",
-            cfg.min_volatility_to_trade);
+        assert!((cfg.min_volatility_to_trade - 0.05).abs() < 1e-9);
     }
 
     #[test]
@@ -1980,11 +888,10 @@ min_sol_reserve = 1.0
         cfg.vol_floor_resume_pct = 0.05;
         cfg.min_volatility_to_trade = 0.20;
         cfg.apply_environment("production");
-        assert!((cfg.min_volatility_to_trade - 0.20).abs() < 1e-9,
-            "production must NOT override vol already above floor");
+        assert!((cfg.min_volatility_to_trade - 0.20).abs() < 1e-9);
     }
 
-    // ── V6.1 max_requote_attempts tests ─────────────────────────────────────
+    // ── V6.1 max_requote_attempts tests ────────────────────────────────────
 
     #[test]
     fn test_max_requote_attempts_default() {
@@ -1993,28 +900,11 @@ min_sol_reserve = 1.0
     }
 
     #[test]
-    fn test_max_requote_attempts_absent_toml_defaults() {
-        let toml_str = r#"
-max_trade_sol = 0.5
-max_trade_size_usdc = 250.0
-priority_fee_microlamports = 50000
-max_slippage_bps = 100
-confirmation_timeout_secs = 60
-max_retries = 3
-"#;
-        let cfg: ExecutionConfig = toml::from_str(toml_str).expect("deserialise minimal ExecutionConfig");
-        assert_eq!(cfg.max_requote_attempts, 3);
-    }
-
-    #[test]
     fn test_max_requote_attempts_zero_rejected() {
         let mut cfg = ExecutionConfig::default();
         cfg.max_requote_attempts = 0;
         let err = cfg.validate().unwrap_err();
-        assert!(
-            err.to_string().contains("max_requote_attempts"),
-            "error must mention the field; got: {}", err
-        );
+        assert!(err.to_string().contains("max_requote_attempts"));
     }
 
     #[test]
@@ -2040,8 +930,7 @@ max_retries = 3
     #[test]
     fn test_stop_loss_cooldown_secs_default() {
         let builder = ConfigBuilder::new().build().expect("build");
-        assert_eq!(builder.risk.stop_loss_cooldown_secs, 300,
-            "default must be 300s (5 min)");
+        assert_eq!(builder.risk.stop_loss_cooldown_secs, 300);
     }
 
     #[test]
@@ -2055,8 +944,7 @@ circuit_breaker_threshold_pct = 8.0
 circuit_breaker_cooldown_secs = 300
 "#;
         let cfg: RiskConfig = toml::from_str(toml_str).expect("deserialise RiskConfig");
-        assert_eq!(cfg.stop_loss_cooldown_secs, 300,
-            "absent field must default to 300");
+        assert_eq!(cfg.stop_loss_cooldown_secs, 300);
     }
 
     #[test]
@@ -2067,8 +955,7 @@ circuit_breaker_cooldown_secs = 300
             .expect("build");
         let toml_str = toml::to_string(&config.risk).expect("serialise");
         let restored: RiskConfig = toml::from_str(&toml_str).expect("deserialise");
-        assert_eq!(restored.stop_loss_cooldown_secs, 600,
-            "serde roundtrip must preserve 600");
+        assert_eq!(restored.stop_loss_cooldown_secs, 600);
     }
 
     #[test]
@@ -2077,7 +964,6 @@ circuit_breaker_cooldown_secs = 300
             .stop_loss_cooldown_secs(120)
             .build()
             .expect("build");
-        assert_eq!(config.risk.stop_loss_cooldown_secs, 120,
-            "builder setter must wire 120s");
+        assert_eq!(config.risk.stop_loss_cooldown_secs, 120);
     }
 }
