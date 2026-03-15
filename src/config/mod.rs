@@ -1731,6 +1731,13 @@ impl ConfigBuilder {
         self.config.trading.vol_floor_resume_pct = floor; self
     }
 
+    /// Set maximum number of re-quote attempts for a single trade execution.
+    /// Mirrors ExecutionConfig::max_requote_attempts (default: 3).
+    pub fn max_requote_attempts(mut self, n: u8) -> Self {
+        self.config.execution.max_requote_attempts = n;
+        self
+    }
+
     pub fn build(mut self) -> Result<Config> {
         self.config.apply_environment_defaults();
         self.config.validate()?;
@@ -2154,4 +2161,57 @@ min_sol_reserve = 1.0
         assert!((cfg.min_volatility_to_trade - 0.20).abs() < 1e-9,
             "production must NOT override vol already above floor");
     }
+
+        // ── V6.1 max_requote_attempts tests ─────────────────────────────────────
+
+    #[test]
+    fn test_max_requote_attempts_default() {
+        let cfg = ExecutionConfig::default();
+        assert_eq!(cfg.max_requote_attempts, 3);
+    }
+
+    #[test]
+    fn test_max_requote_attempts_absent_toml_defaults() {
+        let toml_str = r#"
+max_trade_sol = 0.5
+max_trade_size_usdc = 250.0
+priority_fee_microlamports = 50000
+max_slippage_bps = 100
+confirmation_timeout_secs = 60
+max_retries = 3
+"#;
+        let cfg: ExecutionConfig = toml::from_str(toml_str).expect("deserialise minimal ExecutionConfig");
+        assert_eq!(cfg.max_requote_attempts, 3);
+    }
+
+    #[test]
+    fn test_max_requote_attempts_zero_rejected() {
+        let mut cfg = ExecutionConfig::default();
+        cfg.max_requote_attempts = 0;
+        let err = cfg.validate().unwrap_err();
+        assert!(
+            err.to_string().contains("max_requote_attempts"),
+            "error must mention the field; got: {}", err
+        );
+    }
+
+    #[test]
+    fn test_max_requote_attempts_serde_roundtrip() {
+        let mut cfg = ExecutionConfig::default();
+        cfg.max_requote_attempts = 5;
+        let toml_str = toml::to_string(&cfg).expect("serialise");
+        let restored: ExecutionConfig = toml::from_str(&toml_str).expect("deserialise");
+        assert_eq!(restored.max_requote_attempts, 5);
+    }
+
+    #[test]
+    fn test_builder_max_requote_attempts_setter() {
+        let config = ConfigBuilder::new()
+            .max_requote_attempts(4)
+            .build()
+            .expect("build");
+        assert_eq!(config.execution.max_requote_attempts, 4);
+    }
+
+
 }
