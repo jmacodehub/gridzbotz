@@ -22,7 +22,7 @@
 //!               .sl_cooldown_remaining()
 //!               .map(|d| d.as_secs())
 //!               .unwrap_or(0);
-//!           return Ok(TickResult::paused(&format!(
+//!           return Ok(TickResult::paused(format!(
 //!               "SL cooldown active — {}s remaining", remaining
 //!           )));
 //!       }
@@ -821,8 +821,8 @@ impl Bot for GridBot {
                 .sl_cooldown_remaining()
                 .map(|d| d.as_secs())
                 .unwrap_or(0);
-            return Ok(TickResult::paused(&format!(
-                "SL cooldown active — {}s remaining", remaining
+            return Ok(TickResult::paused(format!(
+                "SL cooldown active \u{2014} {}s remaining", remaining
             )));
         }
         // ─────────────────────────────────────────────────────────────────────────
@@ -1087,7 +1087,7 @@ mod tests {
 
         // Invariant 4: the pause reason string process_tick() would build
         // must be non-empty and contain the seconds count.
-        let pause_reason = format!("SL cooldown active — {}s remaining", secs);
+        let pause_reason = format!("SL cooldown active \u{2014} {}s remaining", secs);
         assert!(
             !pause_reason.is_empty(),
             "pause reason must not be empty"
