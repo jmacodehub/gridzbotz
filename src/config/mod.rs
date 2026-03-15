@@ -1,5 +1,13 @@
 //! ═══════════════════════════════════════════════════════════════════════════
-//! 🎛️  UNIFIED CONFIGURATION SYSTEM V6.0 - GRIDZBOTZ
+//! 🎛️  UNIFIED CONFIGURATION SYSTEM V6.1 - GRIDZBOTZ
+//!
+//! V6.1 ADDITIONS (PR #126 C2 — fix/stoploss-winrate-process-tick):
+//! ✅ RiskConfig: stop_loss_cooldown_secs added (default: 300s)
+//!    - Consumed by StopLossManager::new() in C3 (grid_bot.rs wiring)
+//!    - Mirrors circuit_breaker_cooldown_secs pattern exactly
+//!    - Default: 300 — all 46 TOMLs parse unchanged (serde default)
+//!    - Validation: warn if 0 (mirrors CB pattern)
+//!    - Zero breaking changes
 //!
 //! V5.9 ADDITIONS (fix/wire-resolve-secrets-into-from-file):
 //! ✅ Config::from_file(): secrets::resolve_secrets() now called automatically
@@ -73,6 +81,7 @@
 //! V5.0 ADDITIONS (Stage 1 — Feb 23, 2026):
 //! ✅ execution_mode, instance_id, ExecutionConfig, BotConfig helpers
 //!
+//! March 15, 2026 - V6.1: stop_loss_cooldown_secs added to RiskConfig (PR #126 C2) 🛑
 //! March 14, 2026 - V6.0: vol_floor_resume_pct — configurable prod vol floor (PR fix/regime-gate-configurable-vol-floor) 🎛️
 //! March 13, 2026 - V5.9: resolve_secrets wired into from_file() 🔐
 //! March 13, 2026 - V5.8: max/min_grid_spacing_pct added (PR #107 Commit 1) 📐
@@ -351,7 +360,7 @@ impl ExecutionConfig {
         if self.max_retries == 0 {
             warn!("⚠️ execution.max_retries = 0 — failed txs will NOT be retried");
         }
-                if self.max_requote_attempts == 0 {
+        if self.max_requote_attempts == 0 {
             bail!("execution.max_requote_attempts must be > 0");
         }
         Ok(())
@@ -365,49 +374,15 @@ impl ExecutionConfig {
 // 🆕 V5.4 (PR #94 Commit 3): FEE FILTER CONFIGURATION
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Per-level fee filtering configuration for the SmartFeeFilter.
-///
-/// Controls which grid levels are placed based on their projected fee cost
-/// relative to the expected spread capture. Levels whose estimated fee
-/// (in basis points) falls outside [min, max] are silently skipped.
-///
-/// Owned by `TradingConfig` under the `[trading.fee_filter]` TOML sub-section.
-/// All fields have `serde(default)` — omitting the entire section is fine.
-///
-/// # Example (config/master.toml)
-/// ```toml
-/// [trading.fee_filter]
-/// enable_smart_fee_filter  = true
-/// min_fee_threshold_bps    = 8    # skip levels that are too cheap to be real
-/// max_fee_threshold_bps    = 50   # skip levels that eat the whole spread
-/// fee_filter_window_secs   = 30   # rolling fee average window
-/// ```
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct FeeFilterConfig {
-    /// Master on/off switch for the SmartFeeFilter.
-    /// When false, all grid levels are placed regardless of fee cost.
-    /// Default: true.
     #[serde(default = "default_true")]
     pub enable_smart_fee_filter: bool,
-
-    /// Minimum acceptable fee in basis points (BPS).
-    /// Levels with estimated fee < this are suspiciously cheap
-    /// (stale quote, bad route) and are skipped.
-    /// Default: 8 BPS (0.08%).
     #[serde(default = "default_min_fee_threshold_bps")]
     pub min_fee_threshold_bps: u32,
-
-    /// Maximum acceptable fee in basis points (BPS).
-    /// Levels with estimated fee > this consume the entire spread
-    /// and are skipped as unprofitable.
-    /// Default: 50 BPS (0.50%).
     #[serde(default = "default_max_fee_threshold_bps")]
     pub max_fee_threshold_bps: u32,
-
-    /// Rolling window for computing the moving-average fee baseline
-    /// (seconds). Shorter = more reactive; longer = more stable.
-    /// Default: 30 seconds.
     #[serde(default = "default_fee_filter_window_secs")]
     pub fee_filter_window_secs: u64,
 }
@@ -462,29 +437,18 @@ impl FeeFilterConfig {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct TradingConfig {
-    // ─────────────────────────────────────────────────────────────────────────
-    // Core Grid Settings (Required)
-    // ─────────────────────────────────────────────────────────────────────────
     pub grid_levels: u32,
     pub grid_spacing_percent: f64,
     pub min_order_size: f64,
     pub max_position_size: f64,
     pub min_usdc_reserve: f64,
     pub min_sol_reserve: f64,
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // Dynamic Grid Features
-    // ─────────────────────────────────────────────────────────────────────────
     #[serde(default)]
     pub enable_dynamic_grid: bool,
     #[serde(default = "default_reposition_threshold")]
     pub reposition_threshold: f64,
     #[serde(default = "default_volatility_window")]
     pub volatility_window: u32,
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // Auto-Rebalancing
-    // ─────────────────────────────────────────────────────────────────────────
     #[serde(default = "default_true")]
     pub enable_auto_rebalance: bool,
     #[serde(default = "default_true")]
@@ -493,63 +457,32 @@ pub struct TradingConfig {
     pub rebalance_threshold_pct: f64,
     #[serde(default = "default_cooldown")]
     pub rebalance_cooldown_secs: u64,
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // Order Management
-    // ─────────────────────────────────────────────────────────────────────────
     #[serde(default = "default_max_orders")]
     pub max_orders_per_side: u32,
     #[serde(default = "default_refresh_interval")]
     pub order_refresh_interval_secs: u64,
     #[serde(default)]
     pub enable_market_orders: bool,
-
-    /// Master switch: enable fee optimization via SmartFeeFilter.
-    /// Fine-grained params live in `fee_filter` sub-section.
     #[serde(default = "default_true")]
     pub enable_fee_optimization: bool,
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // Risk Limits
-    // ─────────────────────────────────────────────────────────────────────────
     #[serde(default = "default_profit_threshold")]
     pub min_profit_threshold_pct: f64,
     #[serde(default = "default_slippage")]
     pub max_slippage_pct: f64,
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // Price Bounds
-    // ─────────────────────────────────────────────────────────────────────────
     #[serde(default)]
     pub enable_price_bounds: bool,
     #[serde(default = "default_lower_bound")]
     pub lower_price_bound: f64,
     #[serde(default = "default_upper_bound")]
     pub upper_price_bound: f64,
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // Market Regime Gate
-    // ─────────────────────────────────────────────────────────────────────────
     #[serde(default = "default_true")]
     pub enable_regime_gate: bool,
     #[serde(default = "default_min_volatility")]
     pub min_volatility_to_trade: f64,
     #[serde(default = "default_true")]
     pub pause_in_very_low_vol: bool,
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // V6.0 (PR fix/regime-gate-configurable-vol-floor): Configurable Prod Vol Floor
-    // ─────────────────────────────────────────────────────────────────────────
-
-    /// Minimum vol% the production enforcer will raise min_volatility_to_trade to.
-    /// Replaces hardcoded 0.3 floor in apply_environment("production").
-    /// Default: 0.05 — matches live mainnet tuning Mar 14, 2026.
     #[serde(default = "default_vol_floor_resume_pct")]
     pub vol_floor_resume_pct: f64,
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // Order Lifecycle Management
-    // ─────────────────────────────────────────────────────────────────────────
     #[serde(default = "default_true")]
     pub enable_order_lifecycle: bool,
     #[serde(default = "default_order_max_age")]
@@ -558,69 +491,18 @@ pub struct TradingConfig {
     pub order_refresh_interval_minutes: u64,
     #[serde(default = "default_min_orders")]
     pub min_orders_to_maintain: usize,
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // Advanced Features
-    // ─────────────────────────────────────────────────────────────────────────
     #[serde(default)]
     pub enable_adaptive_spacing: bool,
-
-    /// Enable smart position sizing (consensus-signal-driven).
-    /// When true, order size scales with signal strength via signal_size_multiplier.
     #[serde(default)]
     pub enable_smart_position_sizing: bool,
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // V5.5 (PR #94 Commit 5a): Consensus Signal Position Sizing
-    // ─────────────────────────────────────────────────────────────────────────
-
-    /// Scales how strongly the consensus signal strength multiplies order size.
-    ///
-    /// Formula (in place_grid_orders):
-    ///   multiplier   = 1.0 + signal.strength() * (signal_size_multiplier - 1.0)
-    ///   effective_sz = (base_size * multiplier).clamp(min_order_size, max_position_size)
-    ///
-    /// Only active when enable_smart_position_sizing = true.
-    /// Validation: must be in [0.5, 3.0] when smart sizing is enabled.
-    /// Default: 1.0 — safe, zero behaviour change even if flag is set.
     #[serde(default = "default_signal_size_multiplier")]
     pub signal_size_multiplier: f64,
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // V5.3 (PR #94 Commit 1): Adaptive Optimizer Tuning
-    // ─────────────────────────────────────────────────────────────────────────
-
-    /// Cycles between AdaptiveOptimizer update ticks.
-    /// Replaces hardcoded `const OPTIMIZATION_INTERVAL_CYCLES = 50`.
-    /// Default: 50.
     #[serde(default = "default_optimizer_interval_cycles")]
     pub optimizer_interval_cycles: u64,
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // V5.4 (PR #94 Commit 3): Fee Filter Sub-Section
-    // ─────────────────────────────────────────────────────────────────────────
-
-    /// SmartFeeFilter parameters — controls per-level fee profitability check.
-    /// Mapped to `[trading.fee_filter]` in TOML.
-    /// Defaults to `FeeFilterConfig::default()` when the section is absent.
     #[serde(default)]
     pub fee_filter: FeeFilterConfig,
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // V5.8 (PR #107 Commit 1): Dynamic Grid Spacing Bounds
-    // ─────────────────────────────────────────────────────────────────────────
-
-    /// Maximum grid spacing (fraction) when dynamic spacing is active.
-    /// Replaces hardcoded `max_spacing: 0.0075` in GridRebalancerConfig init.
-    /// Stored as fraction (0.0075 = 0.75%). Active only when enable_dynamic_grid = true.
-    /// Default: 0.0075 — all 46 TOMLs parse unchanged.
     #[serde(default = "default_max_grid_spacing_pct")]
     pub max_grid_spacing_pct: f64,
-
-    /// Minimum grid spacing (fraction) when dynamic spacing is active.
-    /// Replaces hardcoded `min_spacing: 0.001` in GridRebalancerConfig init.
-    /// Stored as fraction (0.001 = 0.10%). Active only when enable_dynamic_grid = true.
-    /// Default: 0.001 — all 46 TOMLs parse unchanged.
     #[serde(default = "default_min_grid_spacing_pct")]
     pub min_grid_spacing_pct: f64,
 }
@@ -688,7 +570,6 @@ impl TradingConfig {
         if self.optimizer_interval_cycles == 0 {
             bail!("trading.optimizer_interval_cycles must be > 0 (got 0)");
         }
-        // V5.5: validate signal_size_multiplier range when smart sizing is on
         if self.enable_smart_position_sizing
             && !(0.5_f64..=3.0_f64).contains(&self.signal_size_multiplier)
         {
@@ -698,9 +579,7 @@ impl TradingConfig {
                 self.signal_size_multiplier
             );
         }
-        // V5.4: delegate fee_filter validation
         self.fee_filter.validate().context("trading.fee_filter validation failed")?;
-        // V5.8: dynamic spacing bounds — only validated when feature is active
         if self.enable_dynamic_grid {
             if self.min_grid_spacing_pct <= 0.0 {
                 bail!("trading.min_grid_spacing_pct must be positive");
@@ -787,15 +666,11 @@ impl Default for TradingConfig {
             min_orders_to_maintain:          default_min_orders(),
             enable_adaptive_spacing:         false,
             enable_smart_position_sizing:    false,
-            // V5.5 PR #94 Commit 5a
             signal_size_multiplier:          default_signal_size_multiplier(),
             optimizer_interval_cycles:       default_optimizer_interval_cycles(),
-            // V5.4 PR #94 Commit 3
             fee_filter:                      FeeFilterConfig::default(),
-            // V5.8 PR #107 Commit 1
             max_grid_spacing_pct:            default_max_grid_spacing_pct(),
             min_grid_spacing_pct:            default_min_grid_spacing_pct(),
-            // V6.0 PR fix/regime-gate-configurable-vol-floor
             vol_floor_resume_pct:            default_vol_floor_resume_pct(),
         }
     }
@@ -865,21 +740,6 @@ pub struct StrategiesConfig {
     pub enable_multi_timeframe: bool,
     #[serde(default)]
     pub require_timeframe_alignment: bool,
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // PR #99 Commit 1: WMA Confidence Gate (config-driven)
-    // ─────────────────────────────────────────────────────────────────────────
-
-    /// Minimum confidence a strategy's signal must carry to participate
-    /// in the WMA weighted vote.
-    ///
-    /// Tuning guide:
-    ///   0.50 -> permissive  (single-strategy mode, paper/dev)
-    ///   0.65 -> balanced    (multi-strategy production default)
-    ///   0.75 -> conservative (high-conviction signals only)
-    ///
-    /// Default: 0.50 — matches `strategies.grid.min_confidence`.
-    /// Validation: must be in [0.0, 1.0].
     #[serde(default = "default_wma_confidence_threshold")]
     pub wma_confidence_threshold: f64,
 }
@@ -903,7 +763,6 @@ impl StrategiesConfig {
         if total_weight == 0.0 {
             bail!("No strategies are enabled");
         }
-        // PR #99 Commit 1: validate WMA confidence gate range
         if !(0.0_f64..=1.0_f64).contains(&self.wma_confidence_threshold) {
             bail!(
                 "strategies.wma_confidence_threshold must be in [0.0, 1.0] (got {:.3})",
@@ -931,25 +790,11 @@ impl Default for StrategiesConfig {
             momentum_macd: MomentumMACDStrategyConfig::default(),
             enable_multi_timeframe: false,
             require_timeframe_alignment: false,
-            // PR #99 Commit 1: WMA confidence gate — permissive default
             wma_confidence_threshold: default_wma_confidence_threshold(),
         }
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────
-// Strategy sub-configs
-// ─────────────────────────────────────────────────────────────────────────
-
-/// Config for the grid strategy, including the seed-orders bypass flag.
-///
-/// `seed_orders_bypass` mirrors `GridRebalancerConfig::seed_orders_bypass`.
-/// When `true` (default), `GridRebalancer::rebalance()` skips the initial
-/// seed-order placement and jumps straight to live grid management.
-/// Set to `false` only if you want the full seed sequence on (re)start.
-///
-/// PR #100: added here so TOML keys are accepted instead of rejected by
-/// `deny_unknown_fields` and causing a startup crash.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct GridStrategyConfig {
@@ -957,8 +802,6 @@ pub struct GridStrategyConfig {
     pub weight: f64,
     #[serde(default = "default_confidence")]
     pub min_confidence: f64,
-    /// Skip initial seed-order placement on (re)start.
-    /// Default: true — matches GridRebalancerConfig default.
     #[serde(default = "default_grid_seed_bypass")]
     pub seed_orders_bypass: bool,
 }
@@ -1019,8 +862,6 @@ pub struct MomentumMACDStrategyConfig {
     pub min_warmup_periods: usize,
 }
 
-// ── Conversion helpers ────────────────────────────────────────────────────
-
 impl RsiStrategyConfig {
     pub fn to_rsi_params(&self) -> RsiParams {
         RsiParams {
@@ -1056,8 +897,6 @@ impl MomentumMACDStrategyConfig {
     }
 }
 
-// ── Param mirror structs ──────────────────────────────────────────────────
-
 #[derive(Debug, Clone)]
 pub struct RsiParams {
     pub rsi_period: usize,
@@ -1083,8 +922,6 @@ pub struct MomentumMACDParams {
     pub strong_histogram_threshold: f64,
     pub min_warmup_periods: usize,
 }
-
-// ── Default impls ─────────────────────────────────────────────────────────
 
 impl Default for MomentumStrategyConfig {
     fn default() -> Self {
@@ -1145,6 +982,13 @@ pub struct RiskConfig {
     pub max_consecutive_losses: u32,
     #[serde(default = "default_trailing_stop")]
     pub enable_trailing_stop: bool,
+    // ── V6.1 (PR #126 C2): StopLossManager cooldown ──────────────────────
+    /// Cooldown duration (seconds) after a stop-loss trip before trading resumes.
+    /// Consumed by StopLossManager::new() — wired in grid_bot.rs C3.
+    /// Mirrors circuit_breaker_cooldown_secs pattern exactly.
+    /// Default: 300s (5 min). Warn if 0 (may re-trip immediately).
+    #[serde(default = "default_stop_loss_cooldown_secs")]
+    pub stop_loss_cooldown_secs: u64,
 }
 
 impl RiskConfig {
@@ -1165,6 +1009,9 @@ impl RiskConfig {
             if self.circuit_breaker_cooldown_secs == 0 {
                 warn!("⚠️ circuit_breaker_cooldown_secs is 0 - may trigger repeatedly");
             }
+        }
+        if self.stop_loss_cooldown_secs == 0 {
+            warn!("⚠️ risk.stop_loss_cooldown_secs is 0 — SL may re-trip immediately after reset");
         }
         Ok(())
     }
@@ -1381,29 +1228,18 @@ fn default_wallet_path()              -> String { "~/.config/solana/id.json".to_
 fn default_max_trade_size_usdc()      -> f64    { 250.0 }
 fn default_max_consecutive_losses()   -> u32    { 5 }
 fn default_trailing_stop()            -> bool   { false }
-/// Replaces `const OPTIMIZATION_INTERVAL_CYCLES = 50` in grid_bot.rs.
 fn default_optimizer_interval_cycles() -> u64   { 50 }
-/// SmartFeeFilter: minimum fee that is considered real (not stale/bad route).
 fn default_min_fee_threshold_bps()    -> u32    { 8 }
-/// SmartFeeFilter: maximum fee before a level is considered unprofitable.
 fn default_max_fee_threshold_bps()    -> u32    { 50 }
-/// SmartFeeFilter: rolling window for moving-average fee baseline.
 fn default_fee_filter_window_secs()   -> u64    { 30 }
-/// Consensus signal size multiplier — 1.0 = flat (safe default, zero behaviour change).
 fn default_signal_size_multiplier()   -> f64    { 1.0 }
-/// PR #99 Commit 1: WMA confidence gate default — 0.50 (permissive).
 fn default_wma_confidence_threshold() -> f64    { 0.50 }
-/// PR #100: seed_orders_bypass default — true, matches GridRebalancerConfig default.
 fn default_grid_seed_bypass()         -> bool   { true }
-/// PR #107 Commit 1: Max dynamic grid spacing fraction.
-/// Replaces hardcoded 0.0075 in GridRebalancerConfig init (grid_bot.rs).
 fn default_max_grid_spacing_pct()     -> f64    { 0.0075 }
-/// PR #107 Commit 1: Min dynamic grid spacing fraction.
-/// Replaces hardcoded 0.001 in GridRebalancerConfig init (grid_bot.rs).
 fn default_min_grid_spacing_pct()     -> f64    { 0.001  }
-/// PR fix/regime-gate: configurable production vol floor (was hardcoded 0.3).
-/// Default: 0.05 — matches live mainnet tuning (Mar 14, 2026).
 fn default_vol_floor_resume_pct()     -> f64    { 0.05 }
+/// V6.1 PR #126 C2: SL cooldown after trip before trading resumes. Mirrors CB pattern.
+fn default_stop_loss_cooldown_secs()  -> u64    { 300 }
 
 // ═══════════════════════════════════════════════════════════════════════════
 // MAIN CONFIG IMPLEMENTATION
@@ -1414,13 +1250,6 @@ impl Config {
         Self::from_file("config/master.toml")
     }
 
-    /// Load, resolve secrets, and validate a config file.
-    ///
-    /// Pipeline (V5.9):
-    ///   1. Parse TOML → Config
-    ///   2. apply_environment_defaults() — env-specific field overrides
-    ///   3. secrets::resolve_secrets()  — GRIDZBOTZ_* env vars override TOML
-    ///   4. validate()                  — bail on invalid state
     pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
         let path = path.as_ref();
         info!("🔧 Loading configuration from: {}", path.display());
@@ -1430,7 +1259,6 @@ impl Config {
             .context("Failed to parse TOML configuration")?;
         info!("🌍 Applying environment overrides: {}", config.bot.environment);
         config.apply_environment_defaults();
-        // V5.9: inject secrets from GRIDZBOTZ_* env vars before validation
         secrets::resolve_secrets(&mut config)
             .context("Secret resolution failed")?;
         config.validate()
@@ -1489,7 +1317,7 @@ impl Config {
     pub fn display_summary(&self) {
         let border = "═".repeat(78);
         println!("\n{}", border);
-        println!("  🤖 GRIDZBOTZ V5.9 - CONFIGURATION");
+        println!("  🤖 GRIDZBOTZ V6.1 - CONFIGURATION");
         println!("{}\n", border);
 
         println!("📋 BOT: {} v{} [{}]", self.bot.name, self.bot.version, self.bot.environment);
@@ -1513,7 +1341,8 @@ impl Config {
                 self.execution.confirmation_timeout_secs,
                 self.execution.max_retries,
                 self.execution.max_requote_attempts,
-            );        } else {
+            );
+        } else {
             println!("   Paper Balance:    ${:.0} USDC + {:.1} SOL",
                 self.paper_trading.initial_usdc, self.paper_trading.initial_sol);
         }
@@ -1590,9 +1419,10 @@ impl Config {
         println!("\n🛡️  RISK MANAGEMENT:");
         println!("   Max Position:     {:.0}%", self.risk.max_position_size_pct);
         println!("   Max Drawdown:     {:.1}%", self.risk.max_drawdown_pct);
-        println!("   Stop Loss:        {:.1}% ({})",
+        println!("   Stop Loss:        {:.1}% ({}) | cooldown: {}s",
             self.risk.stop_loss_pct,
-            if self.risk.enable_trailing_stop { "trailing" } else { "fixed" });
+            if self.risk.enable_trailing_stop { "trailing" } else { "fixed" },
+            self.risk.stop_loss_cooldown_secs);
         println!("   Take Profit:      {:.1}%", self.risk.take_profit_pct);
         println!("   Circuit Breaker:  {} ({:.1}%)",
             if self.risk.enable_circuit_breaker { "✅" } else { "❌" },
@@ -1625,7 +1455,7 @@ impl ConfigBuilder {
             config: Config {
                 bot: BotConfig {
                     name: "GridzBot-Builder".to_string(),
-                    version: "5.9.0".to_string(),
+                    version: "6.1.0".to_string(),
                     environment: "testing".to_string(),
                     execution_mode: "paper".to_string(),
                     instance_id: None,
@@ -1649,6 +1479,7 @@ impl ConfigBuilder {
                     circuit_breaker_cooldown_secs: 300,
                     max_consecutive_losses: default_max_consecutive_losses(),
                     enable_trailing_stop: false,
+                    stop_loss_cooldown_secs: default_stop_loss_cooldown_secs(),
                 },
                 fees: FeesConfig::default(),
                 priority_fees: PriorityFeeConfig::default(),
@@ -1690,52 +1521,43 @@ impl ConfigBuilder {
         self.config.paper_trading.initial_sol  = sol;
         self
     }
-    /// Set the AdaptiveOptimizer update cadence in main-loop cycles. Default: 50.
     pub fn optimizer_interval_cycles(mut self, cycles: u64) -> Self {
         self.config.trading.optimizer_interval_cycles = cycles; self
     }
-    /// Override SmartFeeFilter thresholds. Must satisfy min < max.
     pub fn fee_filter(mut self, min_bps: u32, max_bps: u32, window_secs: u64) -> Self {
         self.config.trading.fee_filter.min_fee_threshold_bps   = min_bps;
         self.config.trading.fee_filter.max_fee_threshold_bps   = max_bps;
         self.config.trading.fee_filter.fee_filter_window_secs  = window_secs;
         self
     }
-    /// Enable consensus-signal-driven position sizing with given multiplier.
     pub fn signal_size_multiplier(mut self, multiplier: f64) -> Self {
         self.config.trading.enable_smart_position_sizing = true;
         self.config.trading.signal_size_multiplier = multiplier;
         self
     }
-    /// PR #99 Commit 1: Set WMA confidence gate for multi-strategy voting.
     pub fn wma_confidence_threshold(mut self, threshold: f64) -> Self {
         self.config.strategies.wma_confidence_threshold = threshold;
         self
     }
-    /// PR #100: Control seed-orders bypass for grid strategy rebalancer.
     pub fn seed_orders_bypass(mut self, bypass: bool) -> Self {
         self.config.strategies.grid.seed_orders_bypass = bypass;
         self
     }
-    /// PR #107 Commit 1: Set dynamic grid spacing bounds (fractions, e.g. 0.001=0.1%, 0.0075=0.75%).
-    /// Only active when enable_dynamic_grid = true.
     pub fn dynamic_grid_spacing(mut self, min: f64, max: f64) -> Self {
         self.config.trading.min_grid_spacing_pct = min;
         self.config.trading.max_grid_spacing_pct = max;
         self
     }
-
-        /// PR fix/regime-gate: Set configurable production vol floor.
-    /// Replaces hardcoded 0.3 in apply_environment("production").
     pub fn vol_floor_resume_pct(mut self, floor: f64) -> Self {
         self.config.trading.vol_floor_resume_pct = floor; self
     }
-
-    /// Set maximum number of re-quote attempts for a single trade execution.
-    /// Mirrors ExecutionConfig::max_requote_attempts (default: 3).
     pub fn max_requote_attempts(mut self, n: u8) -> Self {
         self.config.execution.max_requote_attempts = n;
         self
+    }
+    /// V6.1 PR #126 C2: Set SL cooldown duration consumed by StopLossManager.
+    pub fn stop_loss_cooldown_secs(mut self, secs: u64) -> Self {
+        self.config.risk.stop_loss_cooldown_secs = secs; self
     }
 
     pub fn build(mut self) -> Result<Config> {
@@ -1750,7 +1572,7 @@ impl Default for ConfigBuilder {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// TESTS — V5.9 resolve_secrets wiring + carried-forward suites
+// TESTS
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[cfg(test)]
@@ -2162,7 +1984,7 @@ min_sol_reserve = 1.0
             "production must NOT override vol already above floor");
     }
 
-        // ── V6.1 max_requote_attempts tests ─────────────────────────────────────
+    // ── V6.1 max_requote_attempts tests ─────────────────────────────────────
 
     #[test]
     fn test_max_requote_attempts_default() {
@@ -2213,5 +2035,49 @@ max_retries = 3
         assert_eq!(config.execution.max_requote_attempts, 4);
     }
 
+    // ── V6.1 PR #126 C2: stop_loss_cooldown_secs tests ─────────────────────
 
+    #[test]
+    fn test_stop_loss_cooldown_secs_default() {
+        let builder = ConfigBuilder::new().build().expect("build");
+        assert_eq!(builder.risk.stop_loss_cooldown_secs, 300,
+            "default must be 300s (5 min)");
+    }
+
+    #[test]
+    fn test_stop_loss_cooldown_secs_absent_toml_defaults() {
+        let toml_str = r#"
+max_position_size_pct = 30.0
+max_drawdown_pct = 10.0
+stop_loss_pct = 5.0
+take_profit_pct = 10.0
+circuit_breaker_threshold_pct = 8.0
+circuit_breaker_cooldown_secs = 300
+"#;
+        let cfg: RiskConfig = toml::from_str(toml_str).expect("deserialise RiskConfig");
+        assert_eq!(cfg.stop_loss_cooldown_secs, 300,
+            "absent field must default to 300");
+    }
+
+    #[test]
+    fn test_stop_loss_cooldown_secs_serde_roundtrip() {
+        let config = ConfigBuilder::new()
+            .stop_loss_cooldown_secs(600)
+            .build()
+            .expect("build");
+        let toml_str = toml::to_string(&config.risk).expect("serialise");
+        let restored: RiskConfig = toml::from_str(&toml_str).expect("deserialise");
+        assert_eq!(restored.stop_loss_cooldown_secs, 600,
+            "serde roundtrip must preserve 600");
+    }
+
+    #[test]
+    fn test_builder_stop_loss_cooldown_secs_setter() {
+        let config = ConfigBuilder::new()
+            .stop_loss_cooldown_secs(120)
+            .build()
+            .expect("build");
+        assert_eq!(config.risk.stop_loss_cooldown_secs, 120,
+            "builder setter must wire 120s");
+    }
 }
