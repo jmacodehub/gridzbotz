@@ -1,0 +1,330 @@
+# ═══════════════════════════════════════════════════════════════════════
+#  🚀 GRIDZBOTZ MAINNET V4.0 — SOL/USDC AGGRESSIVE PILOT
+#
+#  ✅ V4.0 (March 16, 2026 — PR #137: Aggressive Live Pilot Promotion)
+#
+#  WHAT CHANGED FROM V3.9:
+#    Grid
+#      grid_levels:          15   → 20    (more fill opportunities)
+#      grid_spacing_percent: 0.15 → 0.12  (tighter grid, more fills in range)
+#      max_orders_per_side:   5   → 8     (matches 20 levels / 2 = 10, capped at 8)
+#      reposition_threshold: 0.30 → 0.25  (anchor repositions faster)
+#      rebalance_cooldown_secs: 60 → 45   (faster grid repositioning)
+#      min_profit_threshold_pct: 0.25 → 0.20 (let more trades through)
+#
+#    Execution
+#      max_trade_size_usdc:    $50 → $75       (larger clips, better fee efficiency)
+#      jito_tip_lamports = 10_000              (ACTIVE — sandwich protection)
+#
+#    Risk
+#      circuit_breaker_threshold_pct: 4.0 → 5.0   (real SOL vol headroom)
+#      circuit_breaker_cooldown_secs: 300 → 600    (longer pause post-trip)
+#      stop_loss_pct:                 3.0 → 3.5    (breathing room)
+#      stop_loss_cooldown_secs:       300 → 600    (mirrors CB cooldown)
+#
+#    WinRateGuard (ACTIVATED for first time on mainnet)
+#      enable_win_rate_guard:     false → true
+#      min_win_rate_pct:          40.0  → 45.0  (tighter for live money)
+#      win_rate_guard_resume_pct: 45.0  → 50.0  (proper hysteresis)
+#      min_trades_before_guard:   10    → 20    (larger warmup window)
+#
+#  UNCHANGED FROM V3.9:
+#    priority_fees.percentile = 75 (P75 — confirmed for mainnet)
+#    min_volatility_to_trade  = 0.05
+#    enable_regime_gate       = true
+#    max_slippage_bps         = 100
+#    Pyth feed, fees, strategies — all identical
+#
+#  LIVE PILOT CHECKLIST:
+#    [ ] PR #134 merged — Telegram WinRateGuard alerts firing
+#    [ ] PR #135 merged — win_rate_pct in BotStats / heartbeat
+#    [ ] Wallet funded: min 0.1 SOL + $500 USDC
+#    [ ] Telegram bot token + chat_id env vars set
+#    [ ] cargo test GREEN on main
+#    [ ] Devnet smoke-test pass (--paper 5 min)
+#    [ ] GRIDZBOTZ_RPC_URL env var set (Chainstack)
+#    [ ] GRIDZBOTZ_RPC_FALLBACK env var set (Helius)
+#
+#  ⚠️  SECRETS — RPC keys and Telegram tokens are NEVER committed.
+#    Option A — Environment variables (recommended):
+#      export GRIDZBOTZ_RPC_URL="https://solana-mainnet.core.chainstack.com/<KEY>"
+#      export GRIDZBOTZ_RPC_FALLBACK="https://mainnet.helius-rpc.com/?api-key=<KEY>"
+#      export GRIDZBOTZ_TELEGRAM_TOKEN=YOUR_TOKEN
+#      export GRIDZBOTZ_TELEGRAM_CHAT_ID=YOUR_CHAT_ID
+#
+#    Option B — Local secrets file (gitignored):
+#      Copy mainnet-sol-usdc-v3.8.secrets.toml.template
+#      → mainnet-sol-usdc-v4.0.secrets.toml
+#      Fill in real keys. *.secrets.toml is in .gitignore.
+#
+#  Run: cargo run --release -- --config config/production/mainnet-sol-usdc-v4.0.toml
+#  Paper smoke: cargo run --release -- --config config/production/mainnet-sol-usdc-v4.0.toml --paper --duration-minutes 30
+# ═══════════════════════════════════════════════════════════════════════
+
+
+[bot]
+name           = "GridzBot-Mainnet-V4.0"
+version        = "6.3.0"   # V6.3 runtime — V4.0 config profile
+environment    = "production"
+execution_mode = "live"
+instance_id    = "mainnet-sol-usdc-v4.0"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# NETWORK — Chainstack primary, Helius fallback
+# Fill real keys via env vars (see header). NEVER hardcode keys here.
+# ─────────────────────────────────────────────────────────────────────────────
+[network]
+cluster    = "mainnet-beta"
+rpc_url    = "https://solana-mainnet.core.chainstack.com/CHAINSTACK_KEY_PLACEHOLDER"
+commitment = "confirmed"
+# ws_url = "wss://solana-mainnet.core.chainstack.com/CHAINSTACK_KEY_PLACEHOLDER"
+
+
+[security]
+wallet_path      = "~/.config/solana/id.json"
+require_password = false
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# EXECUTION — V4.0: larger clips ($75), Jito active, P75 dynamic fees
+# ─────────────────────────────────────────────────────────────────────────────
+[execution]
+max_trade_sol              = 0.5
+max_trade_size_usdc        = 75.0          # ↑ from $50 — better fee efficiency
+priority_fee_microlamports = 10_000        # static fallback (dynamic overrides)
+max_slippage_bps           = 100
+confirmation_timeout_secs  = 60
+max_retries                = 4
+max_requote_attempts       = 3
+jito_tip_lamports          = 10_000        # ✅ ACTIVE — sandwich protection
+rpc_fallback_urls          = []            # Set via GRIDZBOTZ_RPC_FALLBACK env var
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PRIORITY FEES — P75 percentile, confirmed for mainnet
+# ─────────────────────────────────────────────────────────────────────────────
+[priority_fees]
+enable_dynamic         = true
+strategy               = "percentile"
+percentile             = 75           # P75 — recommended for mainnet landing rate
+multiplier             = 1.2
+min_microlamports      = 2_000
+max_microlamports      = 500_000
+fallback_microlamports = 100_000
+cache_ttl_secs         = 10
+sample_blocks          = 150
+
+
+[paper_trading]
+initial_usdc        = 500.0           # Mirrors recommended live wallet minimum
+initial_sol         = 1.0
+test_duration_hours = 1
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TRADING — V4.0: 20 levels × 0.12% spacing, faster rebalance, tighter anchor
+# ─────────────────────────────────────────────────────────────────────────────
+[trading]
+grid_levels          = 20             # ↑ from 15 — more fill opportunities
+grid_spacing_percent = 0.12           # ↓ from 0.15 — tighter grid, more fills
+min_order_size       = 0.05
+max_position_size    = 50.0
+min_usdc_reserve     = 20.0
+min_sol_reserve      = 0.1
+
+enable_dynamic_grid     = true
+volatility_window       = 100
+enable_adaptive_spacing = true
+reposition_threshold    = 0.25        # ↓ from 0.30 — faster anchor repositions
+max_grid_spacing_pct    = 0.0075
+min_grid_spacing_pct    = 0.001
+
+enable_auto_rebalance   = true
+enable_smart_rebalance  = true
+rebalance_threshold_pct = 5.0
+rebalance_cooldown_secs = 45          # ↓ from 60 — more aggressive repositioning
+
+max_orders_per_side         = 8       # ↑ from 5 — matches 20 levels / 2, capped 8
+order_refresh_interval_secs = 120
+enable_market_orders        = false
+enable_fee_optimization     = true
+
+enable_order_lifecycle         = true
+order_max_age_minutes          = 5
+order_refresh_interval_minutes = 2
+min_orders_to_maintain         = 6    # ↑ from 4 — keep denser order book
+
+min_profit_threshold_pct = 0.20       # ↓ from 0.25 — let more trades through
+max_slippage_pct         = 1.5
+
+enable_price_bounds = false
+lower_price_bound   = 50.0
+upper_price_bound   = 500.0
+
+# ─── Market regime gate (unchanged from V3.9) ─────────────────────────────────
+enable_regime_gate      = true
+min_volatility_to_trade = 0.05
+vol_floor_resume_pct    = 0.05
+pause_in_very_low_vol   = false
+
+enable_smart_position_sizing = true
+signal_size_multiplier       = 1.0
+
+optimizer_interval_cycles = 50
+
+[trading.fee_filter]
+enable_smart_fee_filter = true
+min_fee_threshold_bps   = 8
+max_fee_threshold_bps   = 50
+fee_filter_window_secs  = 30
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# STRATEGIES (unchanged from V3.9)
+# ─────────────────────────────────────────────────────────────────────────────
+[strategies]
+active                      = ["grid"]
+consensus_mode              = "single"
+wma_confidence_threshold    = 0.65
+enable_multi_timeframe      = false
+require_timeframe_alignment = false
+
+[strategies.grid]
+enabled            = true
+weight             = 1.0
+min_confidence     = 0.5
+seed_orders_bypass = true
+
+[strategies.momentum]
+enabled         = false
+weight          = 0.8
+min_confidence  = 0.6
+lookback_period = 20
+threshold       = 0.02
+
+[strategies.mean_reversion]
+enabled               = false
+weight                = 0.7
+min_confidence        = 0.6
+sma_period            = 20
+std_dev_multiplier    = 2.0
+strong_buy_threshold  = 5.0
+buy_threshold         = 2.5
+strong_sell_threshold = 5.0
+sell_threshold        = 2.5
+
+[strategies.rsi]
+enabled              = false
+weight               = 0.9
+min_confidence       = 0.7
+period               = 14
+oversold_threshold   = 30.0
+overbought_threshold = 70.0
+extreme_oversold     = 20.0
+extreme_overbought   = 80.0
+
+[strategies.momentum_macd]
+enabled                    = false
+weight                     = 0.8
+min_confidence             = 0.65
+strong_histogram_threshold = 0.5
+min_warmup_periods         = 26
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# RISK — V4.0: wider CB threshold, longer cooldowns, WinRateGuard ACTIVATED
+# ─────────────────────────────────────────────────────────────────────────────
+[risk]
+max_position_size_pct         = 30.0
+max_drawdown_pct              = 5.0
+stop_loss_pct                 = 3.5    # ↑ from 3.0 — breathing room for SOL vol
+take_profit_pct               = 8.0
+enable_circuit_breaker        = true
+circuit_breaker_threshold_pct = 5.0    # ↑ from 4.0 — real SOL vol headroom
+circuit_breaker_cooldown_secs = 600    # ↑ from 300 — longer post-trip pause
+max_consecutive_losses        = 5
+enable_trailing_stop          = false
+
+# Stop-loss cooldown — seconds trading suppressed after SL trips.
+# Mirrors CB cooldown for consistent risk behaviour.
+stop_loss_cooldown_secs = 600          # ↑ from 300 — mirrors CB cooldown
+
+# ─── Win Rate Guard — ACTIVATED for V4.0 live pilot ──────────────────────────
+#
+# First live activation of WinRateGuard (PR #132).
+# Tuned conservatively: 20-trade warmup, 45% floor, 50% resume.
+#
+# Escalation ladder: SL cooldown → Win Rate Guard → Regime gate → CB
+#
+# ⚠️  Requires PR #134 (Telegram alerts) to see guard state transitions.
+# ⚠️  Requires PR #135 (BotStats fields) for heartbeat visibility.
+#
+# If win-rate falls below 45% after 20+ trades:
+#   → TickResult::paused("win rate X% below 45% minimum")
+#   → Telegram: send_win_rate_guard_suppressed(rate, 45.0)
+# Trading resumes only when win-rate climbs back above 50%:
+#   → Telegram: send_win_rate_guard_resumed(rate, 50.0)
+#
+enable_win_rate_guard     = true       # ✅ ACTIVATED — first live run
+min_win_rate_pct          = 45.0       # ↑ from 40.0 — tighter for live money
+win_rate_guard_resume_pct = 50.0       # ↑ from 45.0 — proper hysteresis band
+min_trades_before_guard   = 20         # ↑ from 10  — larger warmup window
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# FEES (unchanged from V3.9)
+# ─────────────────────────────────────────────────────────────────────────────
+[fees]
+maker_fee_bps             = 2.0
+taker_fee_bps             = 4.0
+slippage_bps              = 5.0
+min_profit_multiplier     = 2.0
+enable_smart_filter       = false
+market_impact_coefficient = 0.01
+
+
+[pyth]
+http_endpoint      = "https://hermes.pyth.network"
+feed_ids           = ["0xef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d"]
+update_interval_ms = 500
+
+
+[performance]
+cycle_interval_ms  = 100
+startup_delay_ms   = 2000
+request_timeout_ms = 5000
+
+
+[logging]
+level               = "info"
+file_path           = "logs/mainnet/mainnet-sol-usdc-v4.0.log"
+enable_file_logging = true
+
+
+[metrics]
+enable_metrics = true
+stats_interval = 3000
+
+
+[database]
+enabled = false
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#  🔔 ALERTS — Telegram Mobile Notifications
+#
+#  V4.0 adds WinRateGuard notifications (pending PR #134):
+#    📉 Win Rate Guard suppressed: X% below Y% minimum
+#    📈 Win Rate Guard resumed: X% above Y% threshold
+#
+#  Existing notifications (PR #101):
+#    🚀 Bot started | 💰 Every SELL fill | 🚨 Circuit breaker tripped
+#    ✅ Circuit breaker reset | 📊 Heartbeat | 🏁 Shutdown summary
+#
+#  Setup:
+#    export GRIDZBOTZ_TELEGRAM_TOKEN=YOUR_TOKEN
+#    export GRIDZBOTZ_TELEGRAM_CHAT_ID=YOUR_CHAT_ID
+# ═══════════════════════════════════════════════════════════════════════
+[alerts]
+enabled = true

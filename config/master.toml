@@ -1,5 +1,11 @@
 # ═══════════════════════════════════════════════════════════════════════════
-#  🏆 MASTER V6.3 — GRIDZBOTZ — CANONICAL CONFIG TEMPLATE
+#  🏆 MASTER V6.4 — GRIDZBOTZ — CANONICAL CONFIG TEMPLATE
+#
+#  V6.4 (March 16, 2026 — PR #137: Aggressive Pilot + v4.0 promotion):
+#  ✅ Run-example reference updated: mainnet-sol-usdc-v3.8.toml → v4.0.toml
+#  ✅ Trading profiles table updated with V4.0 aggressive pilot entry
+#  ✅ Header CONFIG STRUCTURE updated: production/ shows v4.0 as current
+#  ~ No changes to config values — master.toml values are baseline template
 #
 #  V6.3 (March 16, 2026 — PR #131 C4: WinRateGuard TOML sync):
 #  ✅ [risk] stop_loss_cooldown_secs = 300 (now canonical — was serde(default) only)
@@ -50,7 +56,8 @@
 #  config/
 #  ├── master.toml                       ← you are here (canonical template)
 #  ├── production/
-#  │   └── mainnet-sol-usdc-v3.8.toml   ← live mainnet pilot (current)
+#  │   ├── mainnet-sol-usdc-v4.0.toml   ← live mainnet pilot (current) 🆕
+#  │   └── mainnet-sol-usdc-v3.8.toml   ← previous live pilot (archive)
 #  ├── optimized/
 #  │   └── tuned-mar2-2026.toml          ← latest paper-validated params
 #  ├── rd/                               ← experimental R&D profiles
@@ -65,19 +72,20 @@
 #
 #    Paper test (smoke):        cargo run --release -- --config config/testing/smoke_test.toml --paper --duration-minutes 5
 #    Paper test (30 min):       cargo run --release -- --config config/master.toml --paper --duration-minutes 30
-#    Live (mainnet):            cargo run --release -- --config config/production/mainnet-sol-usdc-v3.8.toml
+#    Live (mainnet):            cargo run --release -- --config config/production/mainnet-sol-usdc-v4.0.toml
 #    R&D scalper:               cargo run --release -- --config config/rd/scalper-profile.toml --paper
 #    R&D multi-strategy:        cargo run --release -- --config config/rd/multi-strategy-profile.toml --paper
 #
 #  Multi-bot example:
-#    cargo run --release -- --config config/production/mainnet-sol-usdc-v3.8.toml --bot-id sol_1 &
+#    cargo run --release -- --config config/production/mainnet-sol-usdc-v4.0.toml --bot-id sol_1 &
 #    cargo run --release -- --config config/rd/scalper-profile.toml --paper --bot-id scalper_rd_1 &
 #
 #  ── TRADING PROFILES QUICK REFERENCE ───────────────────────────────────
 #
 #  Profile            Levels  Spacing  Lifecycle  Use-case
 #  ─────────────────  ──────  ───────  ─────────  ────────────────────────────
-#  Mainnet (live)       15    0.15%    5/2min     Production pilot (V3.8)
+#  Mainnet V4.0 🆕      20    0.12%    5/2min     Aggressive pilot (current)
+#  Mainnet V3.9 (prev)  15    0.15%    5/2min     Previous production pilot
 #  Tuned Mar2 (paper)   20    0.12%    5/2min     Paper validation
 #  Scalper (R&D)        50    0.08%    5/3min     High-freq, low-vol sideways
 #  Multi-Strat (R&D)    22    0.25%    10/5min    Trending/momentum markets
@@ -113,7 +121,7 @@
 # ═══════════════════════════════════════════════════════════════════════════
 [bot]
 name    = "GridzBot-Master"
-version = "6.3.0"    # V6.3 — WinRateGuard TOML sync (PR #131 C4)
+version = "6.4.0"    # V6.4 — v4.0 aggressive pilot promotion (PR #137)
 environment = "testing"              # testing | development | production
 
 # 🔑 EXECUTION MODE — The single most important knob:
@@ -132,7 +140,7 @@ environment = "testing"              # testing | development | production
 #      - Requires [security] section with valid wallet_path
 #
 # CLI override: --mode live or --paper (takes precedence over this setting)
-# For first live test: cargo run -- --config config/production/mainnet-sol-usdc-v3.8.toml
+# For first live test: cargo run -- --config config/production/mainnet-sol-usdc-v4.0.toml
 #
 execution_mode = "paper"             # Default: paper (safe)
 
@@ -191,7 +199,7 @@ max_trade_sol = 0.5
 # 🆕 V5.4.1: Max USDC value per single trade — moved HERE from [security]
 # where it was silently ignored. Whichever limit (max_trade_sol OR
 # max_trade_size_usdc) hits first wins.
-# Production reference: mainnet-sol-usdc-v3.8 uses $50 for conservative start.
+# Production reference: mainnet-sol-usdc-v4.0 uses $75 for aggressive pilot.
 max_trade_size_usdc = 250.0
 
 # Priority fee in microlamports added to every transaction.
@@ -200,12 +208,13 @@ priority_fee_microlamports = 50000
 
 # Max acceptable slippage in BPS (basis points). 100 BPS = 1.0%.
 # SOL/USDC is highly liquid — 50–150 BPS is typical and safe.
-# Scalper profile uses 50 BPS (tighter). Production uses 100 BPS (V3.8).
+# Scalper profile uses 50 BPS (tighter). Production uses 100 BPS (V4.0).
 max_slippage_bps = 100
 
 # Jito MEV protection tip (lamports) — protects against sandwich attacks.
 # Uncomment to enable (~0.00001 SOL per trade, worth it on mainnet >$500).
 # jito_tip_lamports = 10000
+# NOTE: mainnet-sol-usdc-v4.0.toml has jito_tip_lamports = 10_000 ACTIVE.
 
 # RPC fallback URLs — tried in order if the primary RPC fails.
 # rpc_fallback_urls = ["https://api.mainnet-beta.solana.com"]
@@ -298,7 +307,7 @@ volatility_window    = 100           # Rolling window (cycles) for vol calc
 
 # Anchor-drift reposition threshold.
 # Lower = more repositions (responsive), Higher = fewer (stable, cheaper).
-# Production: 0.30 | Master baseline: 0.50
+# Production V4.0: 0.25 | V3.9: 0.30 | Master baseline: 0.50
 reposition_threshold = 0.5
 
 # 🆕 V5.8 (PR #107 Commit 1): Dynamic grid spacing bounds
@@ -323,7 +332,7 @@ min_grid_spacing_pct = 0.001         # 0.10% min spacing (fraction) when dynamic
 enable_auto_rebalance    = true
 enable_smart_rebalance   = true
 rebalance_threshold_pct  = 5.0
-# Cooldown guide: 30s (scalper) | 60s (standard) | 120s (conservative)
+# Cooldown guide: 30s (scalper) | 45s (aggressive/V4.0) | 60s (standard) | 120s (conservative)
 rebalance_cooldown_secs  = 60
 
 # ─── Order Management ────────────────────────────────────────────────────
@@ -441,7 +450,7 @@ min_warmup_periods         = 26
 [risk]
 # Risk profile guide:
 #   Scalper:     max_position=20%, drawdown=5%, stop=2%, tp=1%,  cb=3%, cooldown=180s
-#   Production:  max_position=30%, drawdown=5%, stop=3%, tp=8%,  cb=4%, cooldown=300s
+#   Production:  max_position=30%, drawdown=5%, stop=3.5%, tp=8%, cb=5%, cooldown=600s  ← V4.0
 #   Conservative:max_position=25%, drawdown=5%, stop=3%, tp=8%,  cb=5%, cooldown=300s
 max_position_size_pct         = 30.0
 max_drawdown_pct              = 10.0
@@ -478,13 +487,14 @@ enable_trailing_stop = false
 #   180s (3 min)  → scalper — short cooldown, re-enters quickly
 #   300s (5 min)  → standard default — balances safety and opportunity
 #   600s (10 min) → conservative — long pause after a loss event
+#   600s          → V4.0 aggressive pilot — mirrors CB cooldown
 #
 # ⚠️ Setting 0 means no cooldown — SL may re-trip immediately after reset.
 #    A startup warning is emitted if stop_loss_cooldown_secs = 0.
 #
-stop_loss_cooldown_secs = 300        # Default: 300s (5 min). Warn if 0.
+stop_loss_cooldown_secs = 300        # Default: 300s (5 min). V4.0 uses 600s.
 
-# 🆕 PR #131 C4: Win Rate Guard — suppress trading when win-rate degrades.
+# 🆕 PR #131 C4 / PR #132: Win Rate Guard — suppress trading when win-rate degrades.
 #
 # When enable_win_rate_guard = true, process_tick() evaluates rolling win-rate
 # after every tick. If win-rate falls below min_win_rate_pct AND at least
@@ -503,6 +513,7 @@ stop_loss_cooldown_secs = 300        # Default: 300s (5 min). Warn if 0.
 #   Conservative: min=50%, resume=55%, warmup=20  (tighter — suits live mainnet)
 #   Standard:     min=40%, resume=45%, warmup=10  (master default — balanced)
 #   Permissive:   min=30%, resume=35%, warmup=5   (suits paper / R&D runs)
+#   V4.0 pilot:   min=45%, resume=50%, warmup=20  (activated on mainnet)
 #
 # Default: enable_win_rate_guard = false — zero behaviour change for all
 # existing instances. Opt-in by setting true in your production TOML.
