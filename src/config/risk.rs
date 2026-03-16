@@ -9,10 +9,10 @@ use super::{
 };
 
 // ── WinRateGuard defaults ─────────────────────────────────────────────────────────────────────────
-fn default_enable_win_rate_guard() -> bool  { false }
-fn default_min_win_rate_pct()       -> f64   { 40.0  }
-fn default_win_rate_guard_resume_pct() -> f64 { 45.0 }
-fn default_min_trades_before_guard() -> u64  { 10    }
+fn default_enable_win_rate_guard()    -> bool { false }
+fn default_min_win_rate_pct()         -> f64  { 40.0  }
+fn default_win_rate_guard_resume_pct() -> f64 { 45.0  }
+fn default_min_trades_before_guard()  -> u64  { 10    }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -77,15 +77,16 @@ impl RiskConfig {
         if self.stop_loss_cooldown_secs == 0 {
             warn!("⚠️ risk.stop_loss_cooldown_secs is 0 — SL may re-trip immediately after reset");
         }
-        if self.enable_win_rate_guard {
-            if self.win_rate_guard_resume_pct < self.min_win_rate_pct {
-                bail!(
-                    "win_rate_guard_resume_pct ({:.1}%) must be >= min_win_rate_pct ({:.1}%) \
-                     to enforce hysteresis band",
-                    self.win_rate_guard_resume_pct,
-                    self.min_win_rate_pct
-                );
-            }
+        // ✅ clippy::collapsible_if: merged outer + inner guard into single &&
+        if self.enable_win_rate_guard
+            && self.win_rate_guard_resume_pct < self.min_win_rate_pct
+        {
+            bail!(
+                "win_rate_guard_resume_pct ({:.1}%) must be >= min_win_rate_pct ({:.1}%) \
+                 to enforce hysteresis band",
+                self.win_rate_guard_resume_pct,
+                self.min_win_rate_pct
+            );
         }
         Ok(())
     }
