@@ -1,85 +1,49 @@
 # ═══════════════════════════════════════════════════════════════════════════
-#  🏆 MASTER V6.2 — GRIDZBOTZ — CANONICAL CONFIG TEMPLATE
+#  🏆 MASTER V6.3 — GRIDZBOTZ — CANONICAL CONFIG TEMPLATE
+#
+#  V6.3 (March 16, 2026 — PR #131 C4: WinRateGuard TOML sync):
+#  ✅ [risk] stop_loss_cooldown_secs = 300 (now canonical — was serde(default) only)
+#     Cooldown seconds after a stop-loss trip before trading resumes.
+#     Previously absent from master.toml — now the canonical reference.
+#  ✅ [risk] enable_win_rate_guard = false (safe opt-in default)
+#     Suppress trading when rolling win-rate falls below min_win_rate_pct.
+#     Default false — zero behaviour change for all existing instances.
+#  ✅ [risk] min_win_rate_pct = 40.0
+#     Guard fires when win-rate drops below this percentage.
+#  ✅ [risk] win_rate_guard_resume_pct = 45.0
+#     Hysteresis band — trading resumes only when win-rate climbs back above this.
+#     Must be >= min_win_rate_pct (validated at startup — bail if not).
+#  ✅ [risk] min_trades_before_guard = 10
+#     Warmup window — guard ignores win-rate until this many trades complete.
+#     Prevents false suppression on cold-start (e.g. 0/1 = 0%).
 #
 #  V6.2 (March 15, 2026 — sync master.toml to mod.rs V6.2):
-#  ✅ [execution] max_requote_attempts = 3 (V6.1 / default_max_requote_attempts)
-#     How many times RealTrader re-quotes a Jupiter swap on slippage failure
-#     before abandoning the order. Validation: must be > 0.
-#     Previously absent from master.toml — now the canonical reference.
-#  ✅ [trading] vol_floor_resume_pct = 0.05 (V6.0 / PR fix/regime-gate-configurable-vol-floor)
-#     apply_environment("production") raises min_volatility_to_trade to this
-#     value if it is currently below it. Default 0.05 matches live mainnet.
-#     Previously absent from master.toml — now exposed and documented.
-#  ✅ [trading] max_grid_spacing_pct = 0.0075 (V5.8 / PR #107 Commit 1)
-#  ✅ [trading] min_grid_spacing_pct = 0.001  (V5.8 / PR #107 Commit 1)
-#     Dynamic grid spacing bounds (fractions). Replace hardcoded values
-#     inside GridRebalancerConfig init. Only validated when
-#     enable_dynamic_grid = true. Previously absent from master.toml.
-#  ✅ [strategies] wma_confidence_threshold = 0.65 (V5.6 / PR #99 Commit 1)
-#     Minimum per-strategy confidence to participate in the WMA weighted
-#     vote. mod.rs default is 0.50 (permissive); master.toml sets 0.65
-#     (production-balanced). Previously absent from master.toml.
+#  ✅ [execution] max_requote_attempts = 3  (was absent)
+#  ✅ [trading]   vol_floor_resume_pct = 0.05  (was absent)
+#  ~ [strategies] wma_confidence_threshold: 0.5 → 0.65  (BUG FIX)
 #
 #  V6.1 (PR #124 — Configurable Vol Floor):
 #  ✅ GridRebalancerConfig: vol_floor_resume_pct: f64 (default 0.05)
-#     Replaces hardcoded 0.3 in apply_environment() for both "development"
-#     cap and "production" safety raise. Default 0.05 matches live mainnet.
-#     #[serde(default)] — all existing TOMLs parse unchanged.
-#     TOML impact: NONE — vol_floor_resume_pct is internal to GridRebalancer.
-#     To lower the regime gate floor, reduce min_volatility_to_trade below.
 #
 #  V5.6.1 (PR #106 — Fix Initial Grid Seeding / Orders=0 problem):
 #  ✅ [strategies.grid] seed_orders_bypass added (default: true)
-#     Bypasses SmartFeeFilter for the initial grid seeding batch only.
-#     Fixes Orders=0 on devnet/low-vol where VERY_LOW_VOL regime_factor (1.5×)
-#     blocked every seed order. After mark_seeding_complete() is called by
-#     GridBot, the filter is enforced normally — capital safety preserved.
-#     Set false only for hot-restart where seeding already occurred externally.
 #
 #  V5.6.0 (PR #94 — Commits 1-6):
 #  ✅ [trading] optimizer_interval_cycles added (OPT-1, Commits 1+2)
-#     Replaces hardcoded OPTIMIZATION_INTERVAL_CYCLES=50 in grid_bot.rs.
-#     Default: 50 cycles. Tune lower for faster feedback, higher for stability.
 #  ✅ [trading] signal_size_multiplier added (Commits 5a+5b)
-#     Controls how strongly consensus signal strength scales order size.
-#     Default: 1.0 (flat — zero sizing effect even if enable_smart_position_sizing=true)
-#     Formula: effective_size = base_size * (1.0 + strength * (multiplier - 1.0))
 #  ✅ [trading.fee_filter] sub-section added (Commits 3+4)
-#     Per-level fee profitability gate — skips orders whose projected fee
-#     falls outside [min_fee_threshold_bps, max_fee_threshold_bps].
 #  ✅ GridBotStats: 5 new observability fields (Commit 6)
-#     last_signal_strength, orders_filtered_session,
-#     fee_filter_total_checked/passed/blocked surfaced in display_summary()
 #
 #  V5.5.1 (fix/risk-continuous-sl-monitoring — PR #89):
 #  ✅ [risk] enable_trailing_stop added (default: false = fixed stop)
-#     Wires RiskConfig.enable_trailing_stop from TOML — was always parsed
-#     by the Rust struct but had no canonical default in master.toml.
-#     Set true to activate trailing-stop mode in StopLossManager.
 #
 #  V5.5.0 (feat/dynamic-priority-fees — PR #79):
 #  ✅ [priority_fees] section added — dynamic CU-based fee estimation
 #  ✅ max_consecutive_losses added to [risk]
 #
-#  V5.4.2 (improve/config-rd-future-patterns) — Future Pattern Annotations:
-#  ✅ 3x 🔮 Future annotations added to [trading] section:
-#     • volatility_multiplier + volatility_lookback (ATR dynamic spacing)
-#     • refresh_price_deviation (price-delta order refresh trigger)
-#     • per-regime fee tolerances (trending/ranging/volatile/choppy)
-#  Source: multi-v5-ai.toml (archived Feb 2026 Battle Royale research)
-#
-#  V5.4.1 (improve/config-cleanup-rd-section) — Config Cleanup:
-#  ✅ max_trade_size_usdc moved to [execution] (was silently ignored in [security])
-#  ✅ max_volatility_to_trade added (regime gate ceiling — was missing)
-#  ✅ Run examples updated to reflect new config structure
-#  ✅ R&D section added (config/rd/) for experimental profiles
-#  ✅ stats_interval tuning guide added (100 = scalper, 600 = overnight)
-#
-#  V5.3 (PR #39 - Mar 2, 2026) — Security Config Foundation:
-#  ✅ [security] section added to master.toml (canonical defaults)
-#  ✅ keystore_path now configurable (no hardcoded paths)
-#  ✅ Transaction safety limits: per-trade, daily count, daily volume
-#  ✅ Multi-bot ready: each instance can use different keypair
+#  V5.4.2 (improve/config-rd-future-patterns) — Future Pattern Annotations
+#  V5.4.1 (improve/config-cleanup-rd-section) — Config Cleanup
+#  V5.3   (PR #39 - Mar 2, 2026) — Security Config Foundation
 #
 #  ── CONFIG STRUCTURE ───────────────────────────────────────────────────
 #
@@ -149,7 +113,7 @@
 # ═══════════════════════════════════════════════════════════════════════════
 [bot]
 name    = "GridzBot-Master"
-version = "6.2.0"    # V6.2 — sync master.toml to mod.rs (5 missing fields wired)
+version = "6.3.0"    # V6.3 — WinRateGuard TOML sync (PR #131 C4)
 environment = "testing"              # testing | development | production
 
 # 🔑 EXECUTION MODE — The single most important knob:
@@ -378,11 +342,6 @@ order_max_age_minutes          = 10
 order_refresh_interval_minutes = 5
 min_orders_to_maintain         = 8
 # 🔮 Future: refresh_price_deviation = 0.5
-#    Trigger an order refresh when price drifts 0.5% from last-placed anchor,
-#    in addition to the existing time-based (order_max_age_minutes) trigger.
-#    More responsive than time-only — catches fast moves before orders go stale.
-#    Requires: new f64 field in TradingConfig + check in order_lifecycle module.
-#    Reference: multi-v5-ai.toml [order_lifecycle] section (archived Feb 2026)
 
 # ─── Risk Limits ───────────────────────────────────────────────────────
 min_profit_threshold_pct = 0.1       # Skip orders below 0.1% net profit
@@ -394,199 +353,31 @@ lower_price_bound   = 100.0
 upper_price_bound   = 300.0
 
 # ─── 🔥 Regime Gate ────────────────────────────────────────────────────
-# Guards against trading in ultra-flat or extreme-volatility markets.
-#
-# ⚠️  UNIT SYSTEM: volatility() returns TRUE PERCENTAGE.
-#   Real SOL markets: ~0.001% – 0.015% per 100-cycle window.
-#   Paper/testing floor: 0.0 (always trade — disable gate)
-#   Production floor:    0.05% (V6.2 default — filters only true dead-flat markets)
-#   Production ceiling:  8.0%  (pause in extreme events — from multi-v5-ai research)
-#
-# V6.2 VOL FLOOR NOTE (see also vol_floor_resume_pct below):
-#   apply_environment("production") raises min_volatility_to_trade to
-#   vol_floor_resume_pct ONLY if min_volatility_to_trade is below it.
-#   Set both fields explicitly in production TOMLs for full control.
-#
-# Scalper exception: min_volatility_to_trade=0.01, pause_in_very_low_vol=false
-# (scalpers WANT quiet markets — only pause for HIGH volatility via ceiling)
-#
 enable_regime_gate       = false     # 🔥 DISABLED for master/testing — enable in production
 min_volatility_to_trade  = 0.0       # 0.0 = no minimum (any vol trades)
-# 🆕 V5.4.1: HIGH threshold — pause if volatility exceeds this %
-# Extracted from multi-v5-ai research (was missing from master)
-# ⚠️ PR #76: Ghost field — not yet in TradingConfig. Wire in PR #77.
-# max_volatility_to_trade  = 8.0       # 8% ceiling — extreme market protection
 pause_in_very_low_vol    = false     # Set true in production
 
 # 🆕 V6.0 (PR fix/regime-gate-configurable-vol-floor): Production vol floor
-#
-# Minimum volatility% that apply_environment("production") will enforce on
-# min_volatility_to_trade. Replaces the former hardcoded 0.3 floor.
-# Only has effect in production environment — testing/development ignore it.
-#
-# Relationship to min_volatility_to_trade:
-#   If min_volatility_to_trade < vol_floor_resume_pct at production startup,
-#   it is raised to vol_floor_resume_pct with a ⚠️ warning in the logs.
-#   If min_volatility_to_trade ≥ vol_floor_resume_pct, it is left untouched.
-#
-# Tuning guide:
-#   0.05 (default) — filters only true dead-flat markets; trades most of the time
-#   0.10           — more selective; skips sluggish ranging sessions
-#   0.03           — very permissive; accepts near-flat markets
-#
-# To lower the effective floor: set vol_floor_resume_pct = 0.03 (example)
-# and min_volatility_to_trade = 0.03 together in your production TOML.
-#
-# Default: 0.05 — matches live mainnet tuning (Mar 14, 2026).
-# Validation: none (any non-negative value accepted).
-#
 vol_floor_resume_pct = 0.05          # Production vol floor — default 0.05
 
-# 🔮 Future: Per-regime fee tolerances (from multi-v5-ai [fee_filtering], archived Feb 2026)
-#    Classify market into 4 regimes and apply different max-fee caps per regime.
-#    This beats a single global fee cap — you pay up in trends, stay tight in chop.
-#
-#    trending_max_fee  = 0.20  # pay up to 0.20% in trending markets (worth it)
-#    ranging_max_fee   = 0.12  # pay up to 0.12% in sideways/ranging markets
-#    volatile_max_fee  = 0.25  # pay up to 0.25% if allow_volatile=true
-#    choppy_max_fee    = 0.10  # pay max 0.10% in choppy/low-vol (tight filter)
-#
-#    Requires: RegimeClassifier enum (Trending|Ranging|Volatile|Choppy)
-#              + FeeFilterConfig struct in config/src
-#              + fee check gating each order in execution pipeline
-#    See: config/rd/multi-strategy-profile.toml ## 🔮 Future Upgrade Patterns
-
-# ─── Advanced / Future Features ──────────────────────────────────────────
-enable_adaptive_spacing      = false # Stage 4: ATR-driven dynamic spacing
-# 🔮 Future: volatility_multiplier = 1.5
-#    When enable_adaptive_spacing=true, widen grid spacing by this factor
-#    during high-volatility regimes (prevents immediate re-crossing fills).
-#    volatility_lookback = 24   # lookback window in hours for multiplier calc
-#    Requires: new fields in TradingConfig, ATR multiplier logic in spacing module
-#    Reference: multi-v5-ai.toml [grid] section (archived Feb 2026)
-
 # ─── 🆕 V5.6.0 (PR #94 Commits 5a+5b): Consensus Signal Position Sizing ──
-#
-# enable_smart_position_sizing: master on/off switch.
-#   false (default) → order size is always base min_order_size (safe, zero change)
-#   true            → order size scales with consensus signal conviction
-#
-# signal_size_multiplier: controls the peak sizing multiplier at full conviction.
-#   Formula (in place_grid_orders):
-#     multiplier   = 1.0 + signal_strength × (signal_size_multiplier - 1.0)
-#     effective_sz = (base_size × multiplier).clamp(min_order_size, max_position_size)
-#
-#   signal_strength values per signal type:
-#     Hold                       → 0.0  (no change regardless of multiplier)
-#     Buy / Sell                 → 0.25–0.5
-#     StrongBuy / StrongSell     → 0.5–1.0
-#
-#   Peak sizing table (at StrongBuy/Sell with confidence=1.0, strength=1.0):
-#   ┌──────────────────────────┬──────────────────────────────────────────┐
-#   │ signal_size_multiplier   │ Peak effective size (× base)             │
-#   ├──────────────────────────┼──────────────────────────────────────────┤
-#   │ 1.0 (default)            │ 1.0× — flat, consensus has zero effect   │
-#   │ 1.5                      │ 1.5× at peak conviction                  │
-#   │ 2.0                      │ 2.0× at peak conviction (aggressive)     │
-#   │ 3.0 (max)                │ 3.0× at peak conviction (very aggressive)│
-#   └──────────────────────────┴──────────────────────────────────────────┘
-#
-#   Validation (config/mod.rs): signal_size_multiplier must be in [0.5, 3.0]
-#   when enable_smart_position_sizing = true. Out-of-range → startup bail.
-#
-#   Recommended first step: set multiplier=1.5, run 30min paper test,
-#   check GridBotStats.last_signal_strength + fee_filter_total_passed.
-#
 enable_smart_position_sizing = false # Default: off — safe opt-in
 signal_size_multiplier       = 1.0  # Range [0.5, 3.0] | 1.0 = flat (no effect)
 
 # ─── 🆕 V5.6.0 (PR #94 OPT-1 / Commits 1+2): Adaptive Optimizer Cadence ─
-#
-# How many price-update cycles elapse between AdaptiveOptimizer ticks.
-# The optimizer re-evaluates grid spacing + order size based on recent
-# performance (win-rate, fill-rate, volatility trend).
-#
-# Tuning guide:
-#   10–20  cycles → very reactive (good for volatile markets; higher CPU)
-#   50     cycles → balanced baseline (default)
-#   100    cycles → conservative (stable markets, fewer adjustments)
-#   200+   cycles → near-static (only for highly stable overnight grids)
-#
-# At 100ms cycle_interval_ms:
-#   50 cycles  ≈ every  5 seconds
-#   100 cycles ≈ every 10 seconds
-#   200 cycles ≈ every 20 seconds
-#
-# Replaces the old hardcoded `const OPTIMIZATION_INTERVAL_CYCLES = 50`.
-# All 46 existing TOMLs without this key default to 50 (zero behaviour change).
-#
 optimizer_interval_cycles = 50      # Default: 50 | Must be > 0
 
 # ═══════════════════════════════════════════════════════════════════════════
 #  🔥 FEE FILTER — Per-Level Fee Profitability Gate  (PR #94 Commits 3+4)
-#
-#  Controls which grid levels are placed based on their projected fee cost.
-#  Each candidate order is evaluated before placement:
-#    P&L estimate  = expected_spread - (maker_fee + taker_fee + slippage + impact)
-#  Levels whose estimated fee (BPS) falls outside [min, max] are skipped.
-#
-#  Why this matters:
-#    Too cheap (< min_fee_threshold_bps) → stale quote or bad Jupiter route
-#    Too expensive (> max_fee_threshold_bps) → fee eats entire spread → skip
-#
-#  Tuning guide:
-#   Profile         min_bps   max_bps   window_secs   Notes
-#   ─────────────   ───────   ───────   ───────────   ──────────────────────────
-#   Conservative       8        50          30         Master default (balanced)
-#   Scalper           12        35          15         Tighter — only high quality
-#   Mainnet live       5        60          30         Wider — live spreads vary
-#   Research/R&D       1       100          60         Permissive — explore all
-#
-#  Zero breaking change: omitting this entire section → all defaults apply.
-#  enable_smart_fee_filter = false → all levels placed regardless of fee cost.
 # ═══════════════════════════════════════════════════════════════════════════
 [trading.fee_filter]
-
-# Master on/off switch for the SmartFeeFilter.
-# When false, ALL grid levels are placed regardless of projected fee cost.
-# The [fees] enable_smart_filter flag is the global gate; this is the
-# per-parameter fine-tuning layer on top of it.
 enable_smart_fee_filter = true
-
-# Minimum acceptable fee in basis points (BPS = 0.01%).
-# Levels with estimated fee BELOW this are suspiciously cheap:
-#   → likely a stale Jupiter quote or a route with no real liquidity.
-# Default: 8 BPS (0.08%).
-min_fee_threshold_bps = 8
-
-# Maximum acceptable fee in basis points (BPS = 0.01%).
-# Levels with estimated fee ABOVE this consume the entire spread:
-#   → the trade is unprofitable after fees and is skipped.
-# Default: 50 BPS (0.50%).
-# ⚠️ Values > 500 BPS (5%) generate a startup warning in FeeFilterConfig::validate()
-max_fee_threshold_bps = 50
-
-# Rolling window (seconds) for computing the moving-average fee baseline.
-# Shorter window = more reactive to recent fee spikes.
-# Longer window = smoother, less sensitive to transient anomalies.
-# Default: 30s | Min recommended: 5s (below this → startup warning)
-# ⚠️ Values < 5s generate a startup warning in FeeFilterConfig::validate()
-fee_filter_window_secs = 30
+min_fee_threshold_bps   = 8
+max_fee_threshold_bps   = 50
+fee_filter_window_secs  = 30
 
 # ═══════════════════════════════════════════════════════════════════════════
 #  🎯 STRATEGIES
-#  consensus_mode options: "single" | "weighted" | "majority" | "unanimous"
-#  active: list the strategies that should be instantiated (others are ignored)
-#
-#  To activate full multi-strategy (see config/rd/multi-strategy-profile.toml):
-#    active = ["grid", "momentum", "rsi", "momentum_macd"]
-#    consensus_mode = "weighted"
-#
-#  Indicator canonical defaults (from multi-v5-ai research, Feb 2026):
-#    ATR:  period=14, multiplier=2.0
-#    RSI:  period=14, oversold=30, overbought=70
-#    BB:   period=20, std_dev=2.0
-#    MACD: fast=12, slow=26, signal=9  (min_warmup_periods must be ≥26)
 # ═══════════════════════════════════════════════════════════════════════════
 [strategies]
 active         = ["grid"]            # Add "momentum", "rsi", "momentum_macd" for multi
@@ -596,23 +387,6 @@ enable_multi_timeframe       = false
 require_timeframe_alignment  = false
 
 # 🆕 V5.6 (PR #99 Commit 1): WMA Confidence Gate
-#
-# Minimum confidence score a strategy signal must carry to participate in
-# the WMA (Weighted Moving Average) weighted vote. Signals with confidence
-# below this threshold are excluded from the consensus calculation entirely.
-#
-# This is different from each strategy's own min_confidence (which gates
-# whether the strategy emits a signal at all). wma_confidence_threshold
-# gates which emitted signals are allowed into the consensus vote.
-#
-# Tuning guide:
-#   0.50 → permissive  (single-strategy / paper / dev — accept all signals)
-#   0.65 → balanced    (multi-strategy production default — master.toml value)
-#   0.75 → conservative (high-conviction signals only — trending markets)
-#
-# Validation (config/mod.rs): must be in [0.0, 1.0] — startup bail if out of range.
-# mod.rs default: 0.50 (permissive). Master.toml sets 0.65 (production-balanced).
-#
 wma_confidence_threshold = 0.65      # WMA vote gate | range [0.0, 1.0]
 
 # ─── Strategy 1: Grid (Primary — always on) ────────────────────────────
@@ -620,26 +394,6 @@ wma_confidence_threshold = 0.65      # WMA vote gate | range [0.0, 1.0]
 enabled        = true
 weight         = 1.0
 min_confidence = 0.5
-
-# ── 🆕 V5.6.1 (PR #106): Seed Bypass — fixes Orders=0 on devnet / low-vol ──
-#
-# When true (default), the SmartFeeFilter is bypassed for the initial grid
-# seeding batch. GridBot calls mark_seeding_complete() after place_grid_orders()
-# returns, at which point the filter is enforced for ALL subsequent orders.
-#
-# Why this is needed:
-#   SmartFeeFilterConfig::from_fees_config() hardcodes grace_period_trades=0.
-#   In low-vol environments (devnet, ranging mainnet), the VERY_LOW_VOL
-#   regime_factor (1.5×) multiplies the minimum-profit bar high enough to
-#   block every seed order → 17 checked, 17 blocked, Orders=0 forever.
-#
-# Capital safety: bypass is time-bounded to seeding only. All live fills
-# go through the full fee filter (Bug B also fixed: record_execution() now
-# wired in on_fill() so trades_executed advances correctly).
-#
-# Set false only for hot-restart where the grid was seeded externally.
-#
-# Default: true
 seed_orders_bypass = true
 
 # ─── Strategy 2: Momentum ───────────────────────────────────────────────
@@ -656,27 +410,24 @@ enabled            = false
 weight             = 0.7
 min_confidence     = 0.6
 sma_period         = 20
-std_dev_multiplier = 2.0             # BB width — 2.0 = standard (from multi-v5-ai)
+std_dev_multiplier = 2.0
 strong_buy_threshold  = 5.0
 buy_threshold         = 2.5
 strong_sell_threshold = 5.0
 sell_threshold        = 2.5
 
 # ─── Strategy 4: RSI ────────────────────────────────────────────────────
-# Canonical defaults from multi-v5-ai research (never deviate without testing)
 [strategies.rsi]
 enabled              = false
 weight               = 0.9
 min_confidence       = 0.7
-period               = 14            # Canonical RSI period
+period               = 14
 oversold_threshold   = 30.0
 overbought_threshold = 70.0
 extreme_oversold     = 20.0
 extreme_overbought   = 80.0
 
 # ─── Strategy 5: Momentum MACD ──────────────────────────────────────────
-# Canonical MACD defaults: fast=12, slow=26, signal=9
-# min_warmup_periods MUST be ≥26 (slow EMA period) — never reduce below 26
 [strategies.momentum_macd]
 enabled                    = false
 weight                     = 0.8
@@ -700,7 +451,6 @@ enable_circuit_breaker        = true
 circuit_breaker_threshold_pct = 8.0
 circuit_breaker_cooldown_secs = 300
 # 🆕 PR #79: Max consecutive losing trades before circuit breaker trips.
-# Complements drawdown-based tripping — catches slow-bleed scenarios.
 max_consecutive_losses = 5
 
 # ✅ PR #89: Trailing stop mode — controls StopLossManager behaviour.
@@ -710,7 +460,7 @@ max_consecutive_losses = 5
 # | false (default)      | Fixed stop — fires when price drops stop_loss_pct% |
 # |                      | below entry_price. Reference never moves.          |
 # | true                 | Trailing stop — reference ratchets up with the     |
-# |                      | highest price seen since position open.            |
+# |                      | highest price seen since position open.            |\
 # |                      | Locks in gains; fires when price reverses          |
 # |                      | stop_loss_pct% from the peak.                      |
 #
@@ -718,19 +468,55 @@ max_consecutive_losses = 5
 # Default false = fixed stop (safe for ranging/sideways SOL/USDC grids).
 enable_trailing_stop = false
 
+# 🆕 PR #126 C3: Stop-loss cooldown — seconds trading is suppressed after SL trips.
+#
+# StopLossManager enters cooldown immediately after should_stop_loss() fires.
+# process_tick() checks is_trading_allowed() — returns TickResult::paused while
+# cooldown is active. Auto-resets after this many seconds with no manual action.
+#
+# Tuning guide:
+#   180s (3 min)  → scalper — short cooldown, re-enters quickly
+#   300s (5 min)  → standard default — balances safety and opportunity
+#   600s (10 min) → conservative — long pause after a loss event
+#
+# ⚠️ Setting 0 means no cooldown — SL may re-trip immediately after reset.
+#    A startup warning is emitted if stop_loss_cooldown_secs = 0.
+#
+stop_loss_cooldown_secs = 300        # Default: 300s (5 min). Warn if 0.
+
+# 🆕 PR #131 C4: Win Rate Guard — suppress trading when win-rate degrades.
+#
+# When enable_win_rate_guard = true, process_tick() evaluates rolling win-rate
+# after every tick. If win-rate falls below min_win_rate_pct AND at least
+# min_trades_before_guard trades have completed, trading is suppressed and
+# TickResult::paused is returned to the fleet manager.
+#
+# Trading only resumes when win-rate climbs back above win_rate_guard_resume_pct
+# (hysteresis band — prevents boundary oscillation).
+#
+# Escalation ladder position: after SL cooldown gate, before regime gate.
+#   SL cooldown  → TickResult::paused("SL cooldown active — Xs remaining")   🛑
+#   Win Rate     → TickResult::paused("win rate X% below Y% minimum")        📉  ← here
+#   Regime gate  → TickResult::paused(vol reason)                             ⛔
+#
+# Tuning guide:
+#   Conservative: min=50%, resume=55%, warmup=20  (tighter — suits live mainnet)
+#   Standard:     min=40%, resume=45%, warmup=10  (master default — balanced)
+#   Permissive:   min=30%, resume=35%, warmup=5   (suits paper / R&D runs)
+#
+# Default: enable_win_rate_guard = false — zero behaviour change for all
+# existing instances. Opt-in by setting true in your production TOML.
+#
+# Validation (risk.rs): win_rate_guard_resume_pct must be >= min_win_rate_pct
+# (enforced at startup — bail if not, to prevent impossible hysteresis band).
+#
+enable_win_rate_guard     = false    # Safe opt-in default — set true in production
+min_win_rate_pct          = 40.0    # Suppress when win-rate drops below 40%
+win_rate_guard_resume_pct = 45.0    # Resume when win-rate climbs back above 45%
+min_trades_before_guard   = 10      # Warmup: ignore guard until 10 trades complete
+
 # ═══════════════════════════════════════════════════════════════════════════
 #  💰 FEE CONFIGURATION — Single Source of Truth (V1.0)
-#
-#  All values in basis points (1 bps = 0.01%).
-#  These replace hardcoded fees scattered across 4 files:
-#    engine.rs (2.0/4.0 bps), paper_trader.rs (0.0002/0.0004 fraction),
-#    fee_filter.rs (0.02/0.04 percent), grid_rebalancer.rs (regime spreads)
-#
-#  Round-trip cost with defaults: 2 + 4 + 2×5 = 16 bps (0.16%)
-#  Min profitable spread: 16 bps × 2.0 multiplier = 0.32%
-#
-#  To tune per-pair: copy this section into your pair-specific TOML.
-#  Omitting [fees] entirely → all defaults apply (zero breaking change).
 # ═══════════════════════════════════════════════════════════════════════════
 [fees]
 maker_fee_bps = 2.0                  # 0.02% — standard Solana DEX maker fee
@@ -749,17 +535,12 @@ feed_ids         = ["0xef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c
 # Poll interval guide: 500ms (standard 2Hz) | 100ms (scalper 10Hz)
 update_interval_ms = 500
 
-# 🔮 Future hook — WebSocket streaming (Stage 4)
-# enable_websocket   = false
-# websocket_endpoint = "wss://hermes.pyth.network/ws"
-
 # ═══════════════════════════════════════════════════════════════════════════
 #  ⚙️  PERFORMANCE
 # ═══════════════════════════════════════════════════════════════════════════
 [performance]
 cycle_interval_ms  = 100
 startup_delay_ms   = 1000
-# Timeout guide: 3000ms (scalper — fail fast) | 5000ms (standard)
 request_timeout_ms = 5000
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -767,8 +548,6 @@ request_timeout_ms = 5000
 # ═══════════════════════════════════════════════════════════════════════════
 [logging]
 level              = "info"
-# 🆕 V5.4.1: Use instance_id in log path pattern for multi-bot clarity
-# e.g., logs/master-paper-1.log, logs/rd/scalper-rd-1.log
 file_path          = "logs/master-paper-1.log"
 enable_file_logging = true
 
@@ -777,10 +556,6 @@ enable_file_logging = true
 # ═══════════════════════════════════════════════════════════════════════════
 [metrics]
 enable_metrics = true
-# stats_interval guide:
-#   100 cycles = ~10 seconds  (scalper — fast feedback)
-#   300 cycles = ~30 seconds  (multi-strategy)
-#   600 cycles = ~60 seconds  (standard overnight)
 stats_interval = 600
 
 # ═══════════════════════════════════════════════════════════════════════════

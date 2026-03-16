@@ -1,35 +1,32 @@
 //! ═════════════════════════════════════════════════════════════════
-//! GRID BOT V7.2 — SL COOLDOWN GATE → TickResult::paused (PR #126 C3)
+//! GRID BOT V7.3 — WIN RATE GUARD → TickResult::paused (PR #131 C4)
 //!
-//! PR #126 C3: Wire StopLossManager into process_tick()
-//!   GAP: StopLossManager existed in RealTradingEngine but was never
-//!         wired into GridBot. Fleet manager could not observe SL/TP
-//!         cooldowns — bot appeared active during SL pause window.
-//!   FIX:  Add stop_loss_manager: StopLossManager field to GridBot.
-//!         Construct via StopLossManager::new(&config) in GridBot::new().
-//!         In process_tick(), check is_trading_allowed() BEFORE the
-//!         regime gate. If false → return TickResult::paused with
-//!         "SL cooldown active — Xs remaining" reason string.
-//!         Auto-resets after stop_loss_cooldown_secs (config-driven).
+//! PR #131 C4: Wire WinRateGuard into process_tick()
+//!   GAP: WinRateGuard struct was built (C4 Step 1) but never consumed
+//!         by GridBot. Fleet manager had no visibility into win-rate
+//!         suppression — bot appeared active during guard events.
+//!   FIX:  Add win_rate_guard: WinRateGuard field to GridBot struct.
+//!         Construct via WinRateGuard::new(&config) in GridBot::new().
+//!         In process_tick(), after SL gate and before regime gate,
+//!         call evaluate(perf.win_rate, self.successful_trades).
+//!         Return TickResult::paused(reason) when suppressed.
 //!   Change:
-//!     ADDED import:  use crate::risk::{CircuitBreaker, StopLossManager};
-//!     ADDED field:   stop_loss_manager: StopLossManager
-//!     ADDED ctor:    let stop_loss_manager = StopLossManager::new(&config);
-//!     ADDED (6 lines) in process_tick() before regime gate check:
-//!       // ── PR #126 C3: SL cooldown gate ──────────────────────────
-//!       if !self.stop_loss_manager.is_trading_allowed() {
-//!           let remaining = self.stop_loss_manager
-//!               .sl_cooldown_remaining()
-//!               .map(|d| d.as_secs())
-//!               .unwrap_or(0);
-//!           return Ok(TickResult::paused(format!(
-//!               "SL cooldown active — {}s remaining", remaining
-//!           )));
+//!     ADDED import:  WinRateGuard to use crate::risk::{...}
+//!     ADDED field:   win_rate_guard: WinRateGuard
+//!     ADDED ctor:    let win_rate_guard = WinRateGuard::new(&config);
+//!     ADDED (7 lines) in process_tick() between SL gate and regime gate:
+//!       // ── PR #131 C4: Win Rate Guard ────────────────────────────
+//!       let perf = self.engine.get_performance_stats().await;
+//!       if !self.win_rate_guard.evaluate(perf.win_rate, self.successful_trades) {
+//!           return Ok(TickResult::paused(
+//!               self.win_rate_guard.reason().to_string()
+//!           ));
 //!       }
-//!     ADDED (1 test): test_process_tick_sl_gate_returns_paused_reason
-//!   Net: +1 import change, +1 field, +2 ctor lines, +7 LOC in
-//!        process_tick(), +1 test. Zero trait/config/struct changes.
+//!     ADDED (1 test): test_process_tick_win_rate_guard_returns_paused_reason
+//!   Net: +1 import, +1 field, +2 ctor lines, +7 LOC in process_tick(),
+//!        +1 boot log, +1 test. Zero trait/config/other-file changes.
 //!
+//! PR #126 C3: Wire StopLossManager into process_tick() — SL cooldown gate
 //! PR #125 C3: Wire regime gate pause into TickResult
 //! PR #121: Move notify_fill() post-enrichment — WMA P&L accuracy fix
 //! PR #120: Wire should_reposition() into process_tick()
@@ -45,6 +42,7 @@
 //! PR #99  C3b: wma_confidence_threshold wired
 //! PR #98  C2b-ii: WMA voter P&L attribution
 //!
+//! March 16, 2026 - V7.3: Win Rate Guard → TickResult::paused (PR #131 C4) 📉
 //! March 15, 2026 - V7.2: SL cooldown gate → TickResult::paused (PR #126 C3) 🛑
 //! March 15, 2026 - V7.1: Regime gate → TickResult::paused (PR #125 C3) ⛔
 //! March 14, 2026 - V7.0: notify_fill post-enrichment (PR #121) ✅
@@ -77,13 +75,13 @@ use crate::trading::{
     EnhancedMetrics, AdaptiveOptimizer, PriceFeed,
 };
 use crate::trading::grid_level::GridLevelStatus;
-use crate::risk::{CircuitBreaker, StopLossManager};
+use crate::risk::{CircuitBreaker, StopLossManager, WinRateGuard};
 use crate::config::Config;
 use crate::utils::TelegramBot;
 
-// ═══════════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════════
 // STRUCT
-// ═══════════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════════
 
 pub struct GridBot {
     pub manager:            StrategyManager,
@@ -94,6 +92,7 @@ pub struct GridBot {
     pub adaptive_optimizer: AdaptiveOptimizer,
     pub circuit_breaker:    CircuitBreaker,
     pub stop_loss_manager:  StopLossManager,
+    pub win_rate_guard:     WinRateGuard,
     pub grid_rebalancer:    GridRebalancer,
     last_signal_strength:   f64,
     orders_filtered_session: u64,
@@ -118,9 +117,9 @@ pub struct GridBot {
     last_cb_tripped:        bool,
 }
 
-// ═══════════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════════
 // CONSTRUCTOR
-// ═══════════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════════
 
 impl GridBot {
     pub fn new(
@@ -128,31 +127,36 @@ impl GridBot {
         engine: Arc<dyn TradingEngine + Send + Sync>,
         feed:   Arc<PriceFeed>,
     ) -> Result<Self> {
-        info!("[BOT-V7.2] Initializing GridBot V7.2...");
-        info!("[BOT-V7.2] WMAConfGate:      {:.2} (TOML-driven, PR #99)",
+        info!("[BOT-V7.3] Initializing GridBot V7.3...");
+        info!("[BOT-V7.3] WMAConfGate:      {:.2} (TOML-driven, PR #99)",
               config.strategies.wma_confidence_threshold);
-        info!("[BOT-V7.2] OptimizerCadence: {} cycles",
+        info!("[BOT-V7.3] OptimizerCadence: {} cycles",
               config.trading.optimizer_interval_cycles);
-        info!("[BOT-V7.2] ConsensusSizing:  {} | multiplier={:.2}x",
+        info!("[BOT-V7.3] ConsensusSizing:  {} | multiplier={:.2}x",
               if config.trading.enable_smart_position_sizing { "ACTIVE" } else { "disabled" },
               config.trading.signal_size_multiplier);
-        info!("[BOT-V7.2] DynSpacingBounds: {:.5}\u{2013}{:.5} (PR #107 C2)",
+        info!("[BOT-V7.3] DynSpacingBounds: {:.5}\u{2013}{:.5} (PR #107 C2)",
               config.trading.min_grid_spacing_pct,
               config.trading.max_grid_spacing_pct);
-        info!("[BOT-V7.2] TakerFee:         {:.4}% ({:.1} bps) (PR #107 C4)",
+        info!("[BOT-V7.3] TakerFee:         {:.4}% ({:.1} bps) (PR #107 C4)",
               config.fees.taker_fee_percent(),
               config.fees.taker_fee_bps);
-        info!("[BOT-V7.2] PnLSource:        grid_state.total_realized_pnl() (PR #118)");
-        info!("[BOT-V7.2] Lifecycle:        enable={} max_age={}m refresh={}m (PR #119)",
+        info!("[BOT-V7.3] PnLSource:        grid_state.total_realized_pnl() (PR #118)");
+        info!("[BOT-V7.3] Lifecycle:        enable={} max_age={}m refresh={}m (PR #119)",
               config.trading.enable_order_lifecycle,
               config.trading.order_max_age_minutes,
               config.trading.order_refresh_interval_minutes);
-        info!("[BOT-V7.2] Reposition:       threshold={:.2}% cooldown={}s (PR #120)",
+        info!("[BOT-V7.3] Reposition:       threshold={:.2}% cooldown={}s (PR #120)",
               config.trading.reposition_threshold,
               config.trading.rebalance_cooldown_secs);
-        info!("[BOT-V7.2] WMAFillPnL:       notify_fill post-enrichment (PR #121)");
-        info!("[BOT-V7.2] RegimeGatePause:  TickResult::paused wired (PR #125 C3)");
-        info!("[BOT-V7.2] SLCooldownGate:   StopLossManager wired (PR #126 C3)");
+        info!("[BOT-V7.3] WMAFillPnL:       notify_fill post-enrichment (PR #121)");
+        info!("[BOT-V7.3] RegimeGatePause:  TickResult::paused wired (PR #125 C3)");
+        info!("[BOT-V7.3] SLCooldownGate:   StopLossManager wired (PR #126 C3)");
+        info!("[BOT-V7.3] WinRateGuard:     enabled={} min={:.1}% resume={:.1}% warmup={} (PR #131 C4)",
+              config.risk.enable_win_rate_guard,
+              config.risk.min_win_rate_pct,
+              config.risk.win_rate_guard_resume_pct,
+              config.risk.min_trades_before_guard);
 
         let telegram = TelegramBot::from_env();
 
@@ -232,7 +236,7 @@ impl GridBot {
 
         let manager = _manager;
 
-        info!("[BOT-V7.2] {} strategies loaded ({} WMA voters, conf_gate={:.2})",
+        info!("[BOT-V7.3] {} strategies loaded ({} WMA voters, conf_gate={:.2})",
               manager.strategies.len(),
               manager.wma_engine.registered_count(),
               manager.wma_engine.min_confidence());
@@ -244,8 +248,9 @@ impl GridBot {
         let adaptive_optimizer = AdaptiveOptimizer::new(base_spacing, base_size);
         let circuit_breaker    = CircuitBreaker::new(&config);
         let stop_loss_manager  = StopLossManager::new(&config);
+        let win_rate_guard     = WinRateGuard::new(&config);
 
-        info!("[BOT-V7.2] GridBot V7.2 initialization complete");
+        info!("[BOT-V7.3] GridBot V7.3 initialization complete");
 
         Ok(Self {
             manager,
@@ -256,6 +261,7 @@ impl GridBot {
             adaptive_optimizer,
             circuit_breaker,
             stop_loss_manager,
+            win_rate_guard,
             grid_rebalancer,
             last_signal_strength:    0.0,
             orders_filtered_session: 0,
@@ -284,7 +290,7 @@ impl GridBot {
     }
 
     async fn initialize_with_price(&mut self) -> Result<()> {
-        info!("[BOT] V7.2 GRID INIT - awaiting live price...");
+        info!("[BOT] V7.3 GRID INIT - awaiting live price...");
 
         let initial_price = self.feed.latest_price().await;
         if initial_price <= 0.0 {
@@ -546,11 +552,11 @@ impl GridBot {
 
                 fill.pnl = Some(pnl_delta);
 
-                // ── PR #121: notify_fill post-enrichment ───────────────────────────────
+                // ── PR #121: notify_fill post-enrichment ─────────────────────────────────────
                 // fill.pnl is now Some(pnl_delta) — WMA voters receive accurate P&L.
                 // Previously fired pre-loop before enrichment (fill.pnl = None).
                 self.manager.notify_fill(fill);
-                // ───────────────────────────────────────────────────────────────────
+                // ───────────────────────────────────────────────────────────────────────
 
                 self.total_fills_tracked += 1;
 
@@ -584,10 +590,10 @@ impl GridBot {
             }
         }
 
-        // ── PR #118: source last_known_pnl from total_realized_pnl() ─────────────────
+        // ── PR #118: source last_known_pnl from total_realized_pnl() ─────────────────────
         self.last_known_pnl = self.grid_state.total_realized_pnl().await;
 
-        // ── PR #119 C2/C3: Order Lifecycle Engine ──────────────────────────────
+        // ── PR #119 C2/C3: Order Lifecycle Engine ────────────────────────────────────
         let stale_ids = self.grid_rebalancer
             .check_stale_orders(&self.grid_state, price)
             .await;
@@ -695,7 +701,7 @@ impl GridBot {
         let total_fees  = self.grid_state.total_fees_paid().await;
 
         println!("\n\u{2554}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2557}");
-        println!(  "\u{2551}     GRID BOT V7.2 STATUS (PR #126 C3 \u{1f6d1})    \u{2551}");
+        println!(  "\u{2551}     GRID BOT V7.3 STATUS (PR #131 C4 \u{1f4c9})    \u{2551}");
         println!(  "\u{255a}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{255d}");
         println!("  Instance:          {}",   self.config.bot.instance_name());
         println!("  Uptime:            {}s",  uptime_secs);
@@ -730,9 +736,9 @@ impl GridBot {
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════════
 // GridBotStats
-// ═══════════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════════
 
 #[derive(Debug, Clone)]
 pub struct GridBotStats {
@@ -762,9 +768,9 @@ pub struct GridBotStats {
     pub orders_filtered_session: u64,
 }
 
-// ═══════════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════════
 // impl Bot for GridBot
-// ═══════════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════════
 
 #[async_trait]
 impl Bot for GridBot {
@@ -789,6 +795,8 @@ impl Bot for GridBot {
     /// return TickResult::paused if GridRebalancer suppressed trading this tick.
     /// PR #126 C3: Before regime gate, check SL cooldown gate and return
     /// TickResult::paused if StopLossManager is in cooldown.
+    /// PR #131 C4: After SL gate and before regime gate, evaluate WinRateGuard.
+    /// Return TickResult::paused if win-rate has fallen below min threshold.
     async fn process_tick(&mut self) -> Result<TickResult> {
         let price = self.feed.latest_price().await;
         if price <= 0.0 {
@@ -799,23 +807,23 @@ impl Bot for GridBot {
         let fills_before  = self.total_fills_tracked;
         let orders_before = self.total_orders_placed;
 
-        // ── PR #120: reposition guard ───────────────────────────────────────────────
+        // ── PR #120: reposition guard ─────────────────────────────────────────────
         if let Some(last) = self.last_price {
             if self.should_reposition(price, last).await {
                 self.reposition_grid(price, last).await
                     .context("Grid reposition failed")?;
             }
         }
-        // ───────────────────────────────────────────────────────────────────────
+        // ─────────────────────────────────────────────────────────────────────────
 
         self.process_price_update(price, ts).await?;
 
         let fills_this_tick  = self.total_fills_tracked.saturating_sub(fills_before);
         let orders_this_tick = self.total_orders_placed.saturating_sub(orders_before);
 
-        // ── PR #126 C3: SL cooldown gate → surface pause to fleet manager ────────
+        // ── PR #126 C3: SL cooldown gate → surface pause to fleet manager ──────────
         // is_trading_allowed() auto-resets after stop_loss_cooldown_secs elapses.
-        // Checked before regime gate — SL/TP is a harder stop than vol suppression.
+        // Checked before Win Rate Guard — SL/TP is a harder stop.
         if !self.stop_loss_manager.is_trading_allowed() {
             let remaining = self.stop_loss_manager
                 .sl_cooldown_remaining()
@@ -824,6 +832,18 @@ impl Bot for GridBot {
             return Ok(TickResult::paused(format!(
                 "SL cooldown active \u{2014} {}s remaining", remaining
             )));
+        }
+        // ─────────────────────────────────────────────────────────────────────────
+
+        // ── PR #131 C4: Win Rate Guard → surface pause to fleet manager ───────────
+        // evaluate() updates internal state and returns false when suppressed.
+        // Uses perf.win_rate (0.0–1.0 fraction) + self.successful_trades count.
+        // Positioned after SL gate (harder stop) and before regime gate.
+        let perf = self.engine.get_performance_stats().await;
+        if !self.win_rate_guard.evaluate(perf.win_rate, self.successful_trades) {
+            return Ok(TickResult::paused(
+                self.win_rate_guard.reason().to_string()
+            ));
         }
         // ─────────────────────────────────────────────────────────────────────────
 
@@ -882,9 +902,9 @@ impl Bot for GridBot {
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════════
 // TESTS
-// ═══════════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════════
 
 #[cfg(test)]
 mod tests {
@@ -985,8 +1005,7 @@ mod tests {
     }
 
     /// PR #125 C3: Validates the regime gate pause reason string
-    /// flows through GridStats correctly — unit-tests the data path
-    /// that process_tick() reads before returning TickResult::paused.
+    /// flows through GridStats correctly.
     #[test]
     fn test_process_tick_paused_reason_matches_regime_gate() {
         use crate::strategies::grid_rebalancer::GridStats;
@@ -1003,19 +1022,9 @@ mod tests {
             pause_reason:            "VERY_LOW_VOL regime".to_string(),
         };
 
-        assert!(
-            paused_stats.trading_paused,
-            "GridStats.trading_paused must be true when regime gate is active"
-        );
-        assert!(
-            !paused_stats.pause_reason.is_empty(),
-            "pause_reason must be non-empty so TickResult carries a meaningful message"
-        );
-        assert_eq!(
-            paused_stats.pause_reason,
-            "VERY_LOW_VOL regime",
-            "pause_reason must match the string written by should_trade_now()"
-        );
+        assert!(paused_stats.trading_paused);
+        assert!(!paused_stats.pause_reason.is_empty());
+        assert_eq!(paused_stats.pause_reason, "VERY_LOW_VOL regime");
 
         let active_stats = GridStats {
             trading_paused: false,
@@ -1024,21 +1033,11 @@ mod tests {
             market_regime:  "MEDIUM_VOL".to_string(),
             ..paused_stats.clone()
         };
-        assert!(
-            !active_stats.trading_paused,
-            "active GridStats must not trigger TickResult::paused"
-        );
-        assert!(
-            active_stats.pause_reason.is_empty(),
-            "active GridStats must have empty pause_reason"
-        );
+        assert!(!active_stats.trading_paused);
+        assert!(active_stats.pause_reason.is_empty());
     }
 
     /// PR #126 C3: Validates the SL cooldown gate data path.
-    /// process_tick() calls stop_loss_manager.is_trading_allowed();
-    /// when false it returns TickResult::paused with the remaining seconds.
-    /// This test verifies the StopLossManager state transitions that feed
-    /// that decision, matching exactly what process_tick() would observe.
     #[test]
     fn test_process_tick_sl_gate_returns_paused_reason() {
         use crate::risk::StopLossManager;
@@ -1047,58 +1046,101 @@ mod tests {
         let mut config = ConfigBuilder::new()
             .build()
             .expect("default test config must be valid");
-        // Ensure SL is enabled with a known threshold and a long cooldown.
         config.risk.stop_loss_pct          = 5.0;
         config.risk.stop_loss_cooldown_secs = 300;
 
         let mut mgr = StopLossManager::new(&config);
 
-        // Invariant 1: fresh manager allows trading.
-        assert!(
-            mgr.is_trading_allowed(),
-            "SL manager must allow trading before any trip"
-        );
-        assert!(
-            mgr.sl_cooldown_remaining().is_none(),
-            "no remaining cooldown expected before trip"
-        );
+        assert!(mgr.is_trading_allowed());
+        assert!(mgr.sl_cooldown_remaining().is_none());
 
-        // Simulate SL trip (price drops 5.1% below entry).
         let tripped = mgr.should_stop_loss(100.0, 94.8);
         assert!(tripped, "should_stop_loss must fire at -5.2%");
 
-        // Invariant 2: after trip, gate is closed.
-        assert!(
-            !mgr.is_trading_allowed(),
-            "SL gate must block trading immediately after trip"
-        );
+        assert!(!mgr.is_trading_allowed());
 
-        // Invariant 3: remaining cooldown is Some and close to 300s.
         let remaining = mgr.sl_cooldown_remaining();
-        assert!(
-            remaining.is_some(),
-            "sl_cooldown_remaining() must be Some while tripped"
-        );
+        assert!(remaining.is_some());
         let secs = remaining.unwrap().as_secs();
+        assert!(secs > 290 && secs <= 300,
+            "remaining must be near 300s on fresh trip, got {}s", secs);
+
+        let pause_reason = format!("SL cooldown active \u{2014} {}s remaining", secs);
+        assert!(!pause_reason.is_empty());
+        assert!(pause_reason.contains("SL cooldown active"));
+        assert!(pause_reason.contains(&secs.to_string()));
+    }
+
+    /// PR #131 C4: Validates the Win Rate Guard gate data path.
+    /// process_tick() calls win_rate_guard.evaluate(perf.win_rate, successful_trades);
+    /// when false it returns TickResult::paused with the suppression reason.
+    /// This test verifies the WinRateGuard state transitions that feed that decision.
+    #[test]
+    fn test_process_tick_win_rate_guard_returns_paused_reason() {
+        use crate::risk::WinRateGuard;
+        use crate::config::ConfigBuilder;
+
+        let mut config = ConfigBuilder::new()
+            .build()
+            .expect("default test config must be valid");
+        config.risk.enable_win_rate_guard     = true;
+        config.risk.min_win_rate_pct          = 40.0;
+        config.risk.win_rate_guard_resume_pct = 45.0;
+        config.risk.min_trades_before_guard   = 10;
+
+        let mut guard = WinRateGuard::new(&config);
+
+        // Invariant 1: fresh guard allows trading.
         assert!(
-            secs > 290 && secs <= 300,
-            "remaining must be near 300s on fresh trip, got {}s", secs
+            guard.is_trading_allowed(),
+            "Win Rate Guard must allow trading before any evaluation"
+        );
+        assert!(
+            guard.reason().is_empty(),
+            "reason must be empty before suppression"
         );
 
-        // Invariant 4: the pause reason string process_tick() would build
-        // must be non-empty and contain the seconds count.
-        let pause_reason = format!("SL cooldown active \u{2014} {}s remaining", secs);
+        // Invariant 2: warmup window — even 0% win rate with 9 trades must allow.
+        assert!(
+            guard.evaluate(0.0, 9),
+            "warmup window (9 < 10 trades) must always allow trading"
+        );
+        assert!(!guard.is_suppressed());
+
+        // Invariant 3: guard fires at min_trades boundary with bad win rate.
+        assert!(
+            !guard.evaluate(0.35, 20),
+            "35% win rate below 40% min must suppress at 20 trades"
+        );
+        assert!(guard.is_suppressed());
+
+        // Invariant 4: reason string is non-empty and embedded in the pause message.
+        let pause_reason = guard.reason().to_string();
         assert!(
             !pause_reason.is_empty(),
-            "pause reason must not be empty"
+            "reason must be non-empty when suppressed"
         );
         assert!(
-            pause_reason.contains("SL cooldown active"),
-            "pause reason must identify the SL gate: {}", pause_reason
+            pause_reason.contains("win rate"),
+            "pause reason must mention win rate: {}", pause_reason
         );
+
+        // Invariant 5: hysteresis — 41% is above suppress but below resume (45%).
         assert!(
-            pause_reason.contains(&secs.to_string()),
-            "pause reason must embed the remaining seconds: {}", pause_reason
+            !guard.evaluate(0.41, 25),
+            "41% above suppress but below resume (45%) must stay suppressed"
+        );
+        assert!(guard.is_suppressed(), "hysteresis must hold below resume_pct");
+
+        // Invariant 6: resumes cleanly at resume_pct.
+        assert!(
+            guard.evaluate(0.45, 30),
+            "exactly 45% must trigger resume"
+        );
+        assert!(!guard.is_suppressed());
+        assert!(
+            guard.reason().is_empty(),
+            "reason must clear after resume"
         );
     }
 }

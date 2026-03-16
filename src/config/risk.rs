@@ -8,6 +8,12 @@ use super::{
     default_trailing_stop, default_stop_loss_cooldown_secs,
 };
 
+// ── WinRateGuard defaults ─────────────────────────────────────────────────────────────────────────
+fn default_enable_win_rate_guard()    -> bool { false }
+fn default_min_win_rate_pct()         -> f64  { 40.0  }
+fn default_win_rate_guard_resume_pct() -> f64 { 45.0  }
+fn default_min_trades_before_guard()  -> u64  { 10    }
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RiskConfig {
@@ -28,6 +34,25 @@ pub struct RiskConfig {
     /// Default: 300s (5 min). Warn if 0 (may re-trip immediately).
     #[serde(default = "default_stop_loss_cooldown_secs")]
     pub stop_loss_cooldown_secs: u64,
+
+    // ── Win Rate Guard (PR #131 C4) ────────────────────────────────────────────────────
+    /// Opt-in feature flag. Default false — safe for all existing instances.
+    #[serde(default = "default_enable_win_rate_guard")]
+    pub enable_win_rate_guard: bool,
+    /// Suppress trading when rolling win-rate falls below this percentage.
+    /// Default 40.0%. Only evaluated when enable_win_rate_guard = true.
+    #[serde(default = "default_min_win_rate_pct")]
+    pub min_win_rate_pct: f64,
+    /// Resume trading only when win-rate rises above this percentage.
+    /// Must be >= min_win_rate_pct. Hysteresis prevents boundary oscillation.
+    /// Default 45.0%.
+    #[serde(default = "default_win_rate_guard_resume_pct")]
+    pub win_rate_guard_resume_pct: f64,
+    /// Number of completed trades required before the guard activates.
+    /// Prevents false suppression on cold-start (e.g. 0/1 = 0%).
+    /// Default 10.
+    #[serde(default = "default_min_trades_before_guard")]
+    pub min_trades_before_guard: u64,
 }
 
 impl RiskConfig {
@@ -51,6 +76,17 @@ impl RiskConfig {
         }
         if self.stop_loss_cooldown_secs == 0 {
             warn!("⚠️ risk.stop_loss_cooldown_secs is 0 — SL may re-trip immediately after reset");
+        }
+        // ✅ clippy::collapsible_if: merged outer + inner guard into single &&
+        if self.enable_win_rate_guard
+            && self.win_rate_guard_resume_pct < self.min_win_rate_pct
+        {
+            bail!(
+                "win_rate_guard_resume_pct ({:.1}%) must be >= min_win_rate_pct ({:.1}%) \
+                 to enforce hysteresis band",
+                self.win_rate_guard_resume_pct,
+                self.min_win_rate_pct
+            );
         }
         Ok(())
     }
