@@ -8,7 +8,7 @@ use super::{
     default_trailing_stop, default_stop_loss_cooldown_secs,
 };
 
-// ── WinRateGuard defaults ────────────────────────────────────────────────────
+// ── WinRateGuard defaults ─────────────────────────────────────────────────────────────────────────
 fn default_enable_win_rate_guard() -> bool  { false }
 fn default_min_win_rate_pct()       -> f64   { 40.0  }
 fn default_win_rate_guard_resume_pct() -> f64 { 45.0 }
@@ -35,7 +35,7 @@ pub struct RiskConfig {
     #[serde(default = "default_stop_loss_cooldown_secs")]
     pub stop_loss_cooldown_secs: u64,
 
-    // ── Win Rate Guard (C4) ──────────────────────────────────────────────────
+    // ── Win Rate Guard (PR #131 C4) ────────────────────────────────────────────────────
     /// Opt-in feature flag. Default false — safe for all existing instances.
     #[serde(default = "default_enable_win_rate_guard")]
     pub enable_win_rate_guard: bool,
