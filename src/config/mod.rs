@@ -433,6 +433,11 @@ impl ConfigBuilder {
                     max_consecutive_losses:         default_max_consecutive_losses(),
                     enable_trailing_stop:           false,
                     stop_loss_cooldown_secs:        default_stop_loss_cooldown_secs(),
+                    // ✅ PR #131 C4: WinRateGuard fields
+                    enable_win_rate_guard:          false,
+                    min_win_rate_pct:               40.0,
+                    win_rate_guard_resume_pct:      45.0,
+                    min_trades_before_guard:        10,
                 },
                 fees:          FeesConfig::default(),
                 priority_fees: PriorityFeeConfig::default(),

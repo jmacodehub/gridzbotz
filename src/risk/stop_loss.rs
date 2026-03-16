@@ -56,30 +56,18 @@ impl std::fmt::Display for SlTripReason {
 }
 
 pub struct StopLossManager {
-    /// True when stop_loss_pct > 0.0 — guards are no-ops otherwise.
     enabled: bool,
-    /// % drop from reference price that triggers a stop-loss exit.
     stop_loss_pct: f64,
-    /// % gain from entry price that triggers a take-profit exit.
     take_profit_pct: f64,
-    /// When true, reference ratchets upward with the highest observed price.
     trailing_stop: bool,
-    /// Highest price seen since position open (trailing-stop anchor).
     highest_price: f64,
-    /// Entry price stored for inspection / logging by callers.
     entry_price: f64,
-    // ── PR #126 C1: cooldown state (mirrors CircuitBreaker pattern) ──────
-    /// Set when SL/TP fires; cleared after `cooldown_secs` elapses.
     tripped_at: Option<Instant>,
-    /// How long to pause after a stop-loss or take-profit event.
-    /// Source: config.risk.stop_loss_cooldown_secs (default 300s).
     cooldown_secs: u64,
-    /// Why the manager is currently tripped (None when not tripped).
     trip_reason: Option<SlTripReason>,
 }
 
 impl StopLossManager {
-    /// Construct from master config.
     pub fn new(config: &Config) -> Self {
         let enabled       = config.risk.stop_loss_pct > 0.0;
         let trailing_stop = config.risk.enable_trailing_stop;
@@ -108,12 +96,6 @@ impl StopLossManager {
         }
     }
 
-    // ── PR #126 C1: cooldown gate ────────────────────────────────────────
-
-    /// Returns `true` when the bot may trade; `false` during SL/TP cooldown.
-    ///
-    /// Auto-resets after `cooldown_secs` elapses — callers do not need to
-    /// call `reset_sl()` manually. Mirrors `CircuitBreaker::is_trading_allowed()`.
     pub fn is_trading_allowed(&mut self) -> bool {
         let Some(tripped_at) = self.tripped_at else {
             return true;
@@ -132,22 +114,13 @@ impl StopLossManager {
         }
     }
 
-    /// Trip the manager with the given reason and start the cooldown clock.
-    /// Called internally by `should_stop_loss()` / `should_take_profit()`
-    /// when a threshold is crossed. Safe to call multiple times — subsequent
-    /// calls while already tripped are silently ignored.
     fn trip(&mut self, reason: SlTripReason) {
-        if self.tripped_at.is_some() {
-            return; // already tripped — don't reset the clock
-        }
+        if self.tripped_at.is_some() { return; }
         error!("🚨 SL MANAGER TRIPPED: {} | cooldown={}s", reason, self.cooldown_secs);
         self.tripped_at  = Some(Instant::now());
         self.trip_reason = Some(reason);
     }
 
-    /// Manually clear the tripped state (also called by `is_trading_allowed()`
-    /// after the cooldown expires). Resets the trailing-stop high so the next
-    /// `reset_for_new_position()` starts fresh.
     pub fn reset_sl(&mut self) {
         info!("🔄 Resetting stop-loss manager state");
         self.tripped_at  = None;
@@ -155,7 +128,6 @@ impl StopLossManager {
         self.highest_price = 0.0;
     }
 
-    /// Remaining cooldown duration. `None` when not tripped or already expired.
     pub fn sl_cooldown_remaining(&self) -> Option<Duration> {
         let tripped_at = self.tripped_at?;
         let cooldown   = Duration::from_secs(self.cooldown_secs);
@@ -163,111 +135,59 @@ impl StopLossManager {
         if elapsed < cooldown { Some(cooldown - elapsed) } else { None }
     }
 
-    /// Current trip reason. `None` when not tripped.
-    pub fn trip_reason(&self) -> Option<SlTripReason> {
-        self.trip_reason
-    }
+    pub fn trip_reason(&self) -> Option<SlTripReason> { self.trip_reason }
 
-    // ── Predicate checks (unchanged public API from V5.2) ────────────────
-
-    /// Returns true if the position should be closed at a loss.
-    /// Also trips the cooldown gate when threshold is crossed.
     pub fn should_stop_loss(&mut self, entry_price: f64, current_price: f64) -> bool {
-        if !self.enabled {
-            return false;
-        }
-
-        if self.trailing_stop && self.highest_price == 0.0 {
-            self.highest_price = entry_price;
-        }
-        if self.trailing_stop && current_price > self.highest_price {
-            self.highest_price = current_price;
-        }
-
-        let reference_price = if self.trailing_stop {
-            self.highest_price
-        } else {
-            entry_price
-        };
-
+        if !self.enabled { return false; }
+        if self.trailing_stop && self.highest_price == 0.0 { self.highest_price = entry_price; }
+        if self.trailing_stop && current_price > self.highest_price { self.highest_price = current_price; }
+        let reference_price = if self.trailing_stop { self.highest_price } else { entry_price };
         let loss_pct = ((current_price - reference_price) / reference_price) * 100.0;
-
         if loss_pct <= -self.stop_loss_pct {
             let mode = if self.trailing_stop { "trailing" } else { "fixed" };
             warn!("🛑 STOP-LOSS TRIGGERED! ({})", mode);
-            warn!(
-                "   Entry: ${:.4} | Ref: ${:.4} | Current: ${:.4} | Loss: {:.2}% | Threshold: -{:.1}%",
-                entry_price, reference_price, current_price, loss_pct, self.stop_loss_pct
-            );
+            warn!("   Entry: ${:.4} | Ref: ${:.4} | Current: ${:.4} | Loss: {:.2}% | Threshold: -{:.1}%",
+                entry_price, reference_price, current_price, loss_pct, self.stop_loss_pct);
             self.trip(SlTripReason::StopLoss);
             return true;
         }
-
         false
     }
 
-    /// Returns true if the position should be closed at a profit.
-    /// Also trips the cooldown gate when threshold is crossed.
     pub fn should_take_profit(&mut self, entry_price: f64, current_price: f64) -> bool {
-        if !self.enabled {
-            return false;
-        }
-
+        if !self.enabled { return false; }
         let profit_pct = ((current_price - entry_price) / entry_price) * 100.0;
-
         if profit_pct >= self.take_profit_pct {
             info!("🎯 TAKE-PROFIT TRIGGERED!");
-            info!(
-                "   Entry: ${:.4} | Current: ${:.4} | Profit: {:.2}% | Threshold: +{:.1}%",
-                entry_price, current_price, profit_pct, self.take_profit_pct
-            );
+            info!("   Entry: ${:.4} | Current: ${:.4} | Profit: {:.2}% | Threshold: +{:.1}%",
+                entry_price, current_price, profit_pct, self.take_profit_pct);
             self.trip(SlTripReason::TakeProfit);
             return true;
         }
-
         false
     }
 
-    /// Reset for a new position — call before entering each trade.
     pub fn reset(&mut self, entry_price: f64) {
         self.entry_price   = entry_price;
         self.highest_price = entry_price;
     }
 
-    /// Alias for `reset()` — preferred name at call sites for clarity.
     #[inline]
-    pub fn reset_for_new_position(&mut self, entry_price: f64) {
-        self.reset(entry_price);
-    }
+    pub fn reset_for_new_position(&mut self, entry_price: f64) { self.reset(entry_price); }
 
-    /// Returns the stored entry price (set by the last `reset()` call).
     #[inline]
-    pub fn entry_price(&self) -> f64 {
-        self.entry_price
-    }
+    pub fn entry_price(&self) -> f64 { self.entry_price }
 
-    /// Expose thresholds for display / logging.
-    pub fn thresholds(&self) -> (f64, f64) {
-        (self.stop_loss_pct, self.take_profit_pct)
-    }
+    pub fn thresholds(&self) -> (f64, f64) { (self.stop_loss_pct, self.take_profit_pct) }
 
-    /// True if trailing-stop mode is active.
     #[inline]
-    pub fn is_trailing(&self) -> bool {
-        self.trailing_stop
-    }
+    pub fn is_trailing(&self) -> bool { self.trailing_stop }
 
-    /// Current trailing-stop high (0.0 if not yet anchored).
     #[inline]
-    pub fn highest_observed_price(&self) -> f64 {
-        self.highest_price
-    }
+    pub fn highest_observed_price(&self) -> f64 { self.highest_price }
 
-    /// True when currently in a cooldown period.
     #[inline]
-    pub fn is_tripped(&self) -> bool {
-        self.tripped_at.is_some()
-    }
+    pub fn is_tripped(&self) -> bool { self.tripped_at.is_some() }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -347,6 +267,11 @@ mod tests {
                 max_consecutive_losses: 5,
                 enable_trailing_stop: false,
                 stop_loss_cooldown_secs: 300,
+                // ✅ PR #131 C4: WinRateGuard fields
+                enable_win_rate_guard:     false,
+                min_win_rate_pct:          40.0,
+                win_rate_guard_resume_pct: 45.0,
+                min_trades_before_guard:   10,
             },
             fees: FeesConfig::default(),
             priority_fees: PriorityFeeConfig::default(),
@@ -372,8 +297,6 @@ mod tests {
         cfg
     }
 
-    // ── V5.2 field binding tests (unchanged) ─────────────────────────────
-
     #[test]
     fn test_reads_correct_config_fields() {
         let config = test_config();
@@ -398,8 +321,6 @@ mod tests {
         assert!(!mgr.should_stop_loss(100.0, 50.0));
     }
 
-    // ── Fixed stop tests ──────────────────────────────────────────────────
-
     #[test]
     fn test_fixed_stop_triggers_at_threshold() {
         let config = test_config();
@@ -420,8 +341,6 @@ mod tests {
         let mut mgr = StopLossManager::new(&config);
         assert!(!mgr.should_stop_loss(100.0, 99.5));
     }
-
-    // ── Trailing stop tests ────────────────────────────────────────────────
 
     #[test]
     fn test_trailing_stop_config_wired_from_risk_config() {
@@ -463,8 +382,6 @@ mod tests {
         assert_eq!(mgr.highest_observed_price(), 120.0);
     }
 
-    // ── Take-profit tests ─────────────────────────────────────────────────
-
     #[test]
     fn test_take_profit_triggers_at_threshold() {
         let config = test_config();
@@ -478,8 +395,6 @@ mod tests {
         let mut mgr = StopLossManager::new(&config);
         assert!(!mgr.should_take_profit(100.0, 109.9));
     }
-
-    // ── Reset + entry_price accessor tests ───────────────────────────────
 
     #[test]
     fn test_reset_sets_entry_and_highest() {
@@ -498,8 +413,6 @@ mod tests {
         assert_eq!(mgr.entry_price(), 150.0);
     }
 
-    // ── PR #126 C1: cooldown gate tests ───────────────────────────────────
-
     #[test]
     fn test_not_tripped_initially() {
         let config = test_config();
@@ -513,9 +426,7 @@ mod tests {
     fn test_stop_loss_trips_cooldown_gate() {
         let config = test_config();
         let mut mgr = StopLossManager::new(&config);
-        // Trigger SL
         assert!(mgr.should_stop_loss(100.0, 94.9));
-        // Gate must now be closed
         assert!(mgr.is_tripped());
         assert!(!mgr.is_trading_allowed());
         assert_eq!(mgr.trip_reason(), Some(SlTripReason::StopLoss));
@@ -533,14 +444,11 @@ mod tests {
 
     #[test]
     fn test_cooldown_auto_resets_after_expiry() {
-        // Use a 1-second cooldown so the test doesn't have to sleep 300s.
         let config = test_config_short_cooldown();
         let mut mgr = StopLossManager::new(&config);
         assert!(mgr.should_stop_loss(100.0, 94.9));
         assert!(mgr.is_tripped());
-        // Sleep past cooldown
         std::thread::sleep(std::time::Duration::from_millis(1100));
-        // is_trading_allowed() must auto-reset
         assert!(mgr.is_trading_allowed(),
             "is_trading_allowed() must return true after cooldown expires");
         assert!(!mgr.is_tripped(), "tripped_at must be cleared after auto-reset");
@@ -567,16 +475,13 @@ mod tests {
 
     #[test]
     fn test_double_trip_does_not_reset_clock() {
-        // Firing SL twice while already tripped must NOT reset tripped_at
-        // (would extend the cooldown indefinitely if it did).
         let config = test_config();
         let mut mgr = StopLossManager::new(&config);
-        mgr.should_stop_loss(100.0, 94.9); // first trip
+        mgr.should_stop_loss(100.0, 94.9);
         let first_remaining = mgr.sl_cooldown_remaining().unwrap();
         std::thread::sleep(std::time::Duration::from_millis(50));
-        mgr.should_stop_loss(100.0, 94.9); // second call while tripped
+        mgr.should_stop_loss(100.0, 94.9);
         let second_remaining = mgr.sl_cooldown_remaining().unwrap();
-        // Clock was NOT reset — second_remaining must be <= first_remaining
         assert!(second_remaining <= first_remaining,
             "double-trip must not reset cooldown clock: first={:?} second={:?}",
             first_remaining, second_remaining);
