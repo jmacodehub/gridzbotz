@@ -1,11 +1,20 @@
-# ═════════════════════════════════════════════════════════════════════════
-#  🚀 GRIDZBOTZ MAINNET V3.8 — SOL/USDC PRODUCTION
+# ═══════════════════════════════════════════════════════════════════════
+#  🚀 GRIDZBOTZ MAINNET V3.9 — SOL/USDC PRODUCTION
+#
+#  ✅ V3.9 (March 16, 2026 — PR #131 C4: WinRateGuard TOML sync):
+#    + [risk] stop_loss_cooldown_secs = 300 (now canonical — was serde(default) only)
+#    + [risk] enable_win_rate_guard   = false (safe opt-in — set true to activate)
+#    + [risk] min_win_rate_pct          = 40.0
+#    + [risk] win_rate_guard_resume_pct = 45.0
+#    + [risk] min_trades_before_guard   = 10
+#    Zero behaviour change — enable_win_rate_guard = false.
+#    To activate on mainnet: set enable_win_rate_guard = true.
+#    Conservative production tuning: min=50%, resume=55%, warmup=20.
 #
 #  ✅ V3.8 patch 2 (March 15, 2026 — V6.2 master.toml sync):
 #    + [execution] max_requote_attempts = 3  (was absent)
 #    + [trading]   vol_floor_resume_pct = 0.05  (was absent)
 #    ~ [strategies] wma_confidence_threshold: 0.5 → 0.65  (BUG FIX)
-#      Comment said 0.65 balanced/paper-validated; live value was 0.5.
 #
 #  ✅ V3.8 (March 14, 2026 — V6 Forensics Audit recommendations):
 #    - grid_spacing_percent: 0.18 → 0.15 (more fills at ~$87 SOL)
@@ -15,27 +24,11 @@
 #    - stats_interval:       kept at 3000 (avoid Telegram spam)
 #
 #  ✅ Config System V6.1 (PR #124): GridRebalancer configurable vol floor
-#    vol_floor_resume_pct is now a TOML field (V6.2). Set explicitly below.
-#    apply_environment("production") raises min_volatility_to_trade to
-#    vol_floor_resume_pct ONLY if min_volatility_to_trade < vol_floor_resume_pct.
-#    Current: both = 0.05 — floor has no effect (condition false).
-#
 #  ✅ Config System V5.8 (PR #107): max/min_grid_spacing_pct wired
 #  ✅ V3.7 (PR #102): Fill level_id wired + CB delta P&L fix
-#    GridStateTracker.mark_buy/sell_filled() now called in live mode.
-#    CB receives per-fill P&L delta (not cumulative snapshot).
-#    RealTradingEngine emits synthetic FillEvents from confirmed Jupiter swaps.
-#    GridBot V6.2 | RealTradingEngine V3.2
-#
-#  ✅ V3.6 + PR #99 + PR #100 + PR #101:
-#    ATR Dynamic Spacing, Dual vol gates, Tighter retries
-#    Helius fallback, Enhanced regime detection
-#    wma_confidence_threshold = 0.65 (PR #100)
-#    Telegram alerts fully wired (PR #101)
+#  ✅ V3.6 + PR #99 + PR #100 + PR #101: ATR spacing, regime gates, Telegram
 #
 #  ⚠️  SECRETS — RPC keys and Telegram tokens are NEVER committed.
-#    Two options (use either or combine):
-#
 #    Option A — Environment variables (recommended for servers):
 #      export GRIDZBOTZ_RPC_URL="https://solana-mainnet.core.chainstack.com/<KEY>"
 #      export GRIDZBOTZ_RPC_FALLBACK="https://mainnet.helius-rpc.com/?api-key=<KEY>"
@@ -48,12 +41,12 @@
 #      Fill in your real keys. The *.secrets.toml pattern is in .gitignore.
 #
 #  Run: cargo run --release -- --config config/production/mainnet-sol-usdc-v3.8.toml
-# ═════════════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════
 
 
 [bot]
-name            = "GridzBot-Mainnet-V3.8"
-version         = "6.2.0"   # V6.2 — V3.8 patch 2: V6.2 master.toml sync
+name            = "GridzBot-Mainnet-V3.9"
+version         = "6.3.0"   # V6.3 — WinRateGuard TOML sync (PR #131 C4)
 environment     = "production"
 execution_mode  = "live"
 instance_id     = "mainnet-sol-usdc-v3.8"
@@ -62,7 +55,6 @@ instance_id     = "mainnet-sol-usdc-v3.8"
 # ─────────────────────────────────────────────────────────────────────────────
 # NETWORK — Chainstack primary, Helius fallback
 # Fill real keys in your local *.secrets.toml (gitignored) or via env vars.
-# Uncomment ws_url when WebSocket price streaming is wired.
 # ─────────────────────────────────────────────────────────────────────────────
 [network]
 cluster    = "mainnet-beta"
@@ -80,19 +72,15 @@ require_password = false
 # EXECUTION — Jupiter V6 swap caps + Helius fallback RPC
 # max_slippage_bps: 150 → 100 (V3.8: tighter execution, 1% max slippage)
 # max_requote_attempts: V6.1 field — RealTrader re-quote retries on slippage.
-#   3 = balanced default. Lower to 1 (fail-fast) or raise to 5 (persistent).
-#   Validation: must be > 0 (startup bail if 0).
-# jito_tip_lamports: uncomment only when Jito bundle submit is wired in
-#   realtrader.rs (R&D pipeline — not yet production-ready).
 # ─────────────────────────────────────────────────────────────────────────────
 [execution]
 max_trade_sol              = 0.5
 max_trade_size_usdc        = 50.0
 priority_fee_microlamports = 10_000
-max_slippage_bps           = 100   # V3.8: tightened from 150 → 100 (1% max)
+max_slippage_bps           = 100
 confirmation_timeout_secs  = 60
 max_retries                = 4
-max_requote_attempts       = 3     # V6.1: re-quote retries on slippage/stale quote
+max_requote_attempts       = 3
 # jito_tip_lamports        = 10_000   # Uncomment when Jito bundle submit is live
 rpc_fallback_urls = []
 
@@ -100,7 +88,6 @@ rpc_fallback_urls = []
 # ─────────────────────────────────────────────────────────────────────────────
 # PRIORITY FEES — PriorityFeeEstimator V1.1
 # Percentile-based, cached (10s TTL), bounded (1K–500K µLCU).
-# "percentile" is the validated production strategy.
 # ─────────────────────────────────────────────────────────────────────────────
 [priority_fees]
 enable_dynamic         = true
@@ -114,10 +101,6 @@ cache_ttl_secs         = 10
 sample_blocks          = 150
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# PAPER TRADING — retained for quick paper regression without a separate TOML.
-# Entirely ignored when execution_mode = "live".
-# ─────────────────────────────────────────────────────────────────────────────
 [paper_trading]
 initial_usdc        = 200.0
 initial_sol         = 1.0
@@ -128,9 +111,6 @@ test_duration_hours = 1
 # TRADING — V3.8 tuning: tighter grid, more levels, faster rebalance
 # ─────────────────────────────────────────────────────────────────────────────
 [trading]
-# Core grid
-# V3.8: grid_spacing_percent 0.18 → 0.15 (more fills at ~$87 SOL)
-# V3.8: grid_levels 10 → 15 (wider coverage, ~$27/level at $411 NAV)
 grid_levels          = 15
 grid_spacing_percent = 0.15
 min_order_size       = 0.05
@@ -138,73 +118,51 @@ max_position_size    = 50.0
 min_usdc_reserve     = 20.0
 min_sol_reserve      = 0.1
 
-# Dynamic grid — V5.8: spacing bounds now config-driven (were hardcoded)
 enable_dynamic_grid     = true
 volatility_window       = 100
 enable_adaptive_spacing = true
 reposition_threshold    = 0.30
-max_grid_spacing_pct    = 0.0075   # 0.75% — replaces hardcoded GridRebalancerConfig value
-min_grid_spacing_pct    = 0.001    # 0.10% — replaces hardcoded GridRebalancerConfig value
+max_grid_spacing_pct    = 0.0075
+min_grid_spacing_pct    = 0.001
 
-# Auto-rebalance
-# V3.8: rebalance_cooldown_secs 120 → 60 (faster repositioning)
 enable_auto_rebalance   = true
 enable_smart_rebalance  = true
 rebalance_threshold_pct = 5.0
-rebalance_cooldown_secs = 60   # V3.8: halved from 120 → 60 for faster repositioning
+rebalance_cooldown_secs = 60
 
-# Order management
 max_orders_per_side         = 5
 order_refresh_interval_secs = 120
 enable_market_orders        = false
 enable_fee_optimization     = true
 
-# Order lifecycle — production apply_environment() force-enables this
 enable_order_lifecycle         = true
 order_max_age_minutes          = 5
 order_refresh_interval_minutes = 2
 min_orders_to_maintain         = 4
 
-# Risk / profitability
 min_profit_threshold_pct = 0.25
 max_slippage_pct         = 1.5
 
-# Price bounds — disabled, regime gate handles range control
 enable_price_bounds = false
 lower_price_bound   = 50.0
 upper_price_bound   = 500.0
 
-# ─── Market regime gate ──────────────────────────────────────────────────
-# V6.2 VOL FLOOR: both fields are now explicit TOML values.
-# apply_environment("production") raises min_volatility_to_trade to
-# vol_floor_resume_pct ONLY when min_volatility_to_trade < vol_floor_resume_pct.
-# Current: both = 0.05 — floor condition is false, no override at startup.
-#
-# To trade in lower-vol markets lower BOTH fields together, e.g.:
-#   min_volatility_to_trade = 0.03
-#   vol_floor_resume_pct    = 0.03
-# (setting only min_volatility_to_trade would get overridden back to 0.05)
+# ─── Market regime gate ───────────────────────────────────────────────────────
 enable_regime_gate      = true
-min_volatility_to_trade = 0.05   # trades when vol ≥ 0.05%
-vol_floor_resume_pct    = 0.05   # V6.2: production safety floor (was absent)
+min_volatility_to_trade = 0.05
+vol_floor_resume_pct    = 0.05
 pause_in_very_low_vol   = false
 
-# Smart position sizing — V5.5 / PR #94 Commit 5a
-# signal_size_multiplier range: [0.5, 3.0] when enabled
-# 1.0 = flat (zero effect) — raise to scale order size with signal strength
 enable_smart_position_sizing = true
 signal_size_multiplier       = 1.0
 
-# Adaptive optimizer cadence — V5.3 / PR #94 Commit 1 (replaces hardcoded const 50)
 optimizer_interval_cycles = 50
 
-# ── SmartFeeFilter — V5.4 / PR #94 Commit 3 ──────────────────────────────────────
-# Grid levels with projected fee outside [min, max] BPS are silently skipped.
 [trading.fee_filter]
 enable_smart_fee_filter = true
-min_fee_threshold_bps   = 8    # skip suspiciously cheap levels (stale quote / bad route)
-max_fee_threshold_bps   = 50   # skip levels that consume the entire spread
-fee_filter_window_secs  = 30   # rolling average fee baseline window
+min_fee_threshold_bps   = 8
+max_fee_threshold_bps   = 50
+fee_filter_window_secs  = 30
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -213,12 +171,7 @@ fee_filter_window_secs  = 30   # rolling average fee baseline window
 [strategies]
 active         = ["grid"]
 consensus_mode = "single"
-
-# WMA confidence gate — 0.65 = balanced (historic default, paper-validated)
-# 0.50 lenient | 0.65 balanced | 0.75 strict | 0.85 very strict
-# V3.8 patch 2 BUG FIX: was 0.5 (comment said 0.65, value disagreed)
-wma_confidence_threshold = 0.65   # ⬆️ fixed from 0.5 → 0.65 to match documented intent
-
+wma_confidence_threshold    = 0.65
 enable_multi_timeframe      = false
 require_timeframe_alignment = false
 
@@ -226,7 +179,7 @@ require_timeframe_alignment = false
 enabled            = true
 weight             = 1.0
 min_confidence     = 0.5
-seed_orders_bypass = true   # V5.7 / PR #100: skip seed sequence on (re)start
+seed_orders_bypass = true
 
 [strategies.momentum]
 enabled         = false
@@ -276,7 +229,28 @@ enable_circuit_breaker        = true
 circuit_breaker_threshold_pct = 4.0
 circuit_breaker_cooldown_secs = 300
 max_consecutive_losses        = 5
-enable_trailing_stop          = false   # V5.2 / PR #89 — enable when StopLossManager is production-tested
+enable_trailing_stop          = false
+
+# 🆕 PR #126 C3: Stop-loss cooldown — seconds trading is suppressed after SL trips.
+# 300s = 5 min standard default. Set 180s for faster re-entry or 600s conservative.
+stop_loss_cooldown_secs = 300
+
+# 🆕 PR #131 C4: Win Rate Guard — suppress trading when win-rate degrades.
+#
+# DISABLED by default — zero behaviour change from V3.8.
+# To activate on mainnet, set enable_win_rate_guard = true.
+#
+# Conservative production tuning recommendation:
+#   enable_win_rate_guard     = true
+#   min_win_rate_pct          = 50.0   # tighter than master default (40%)
+#   win_rate_guard_resume_pct = 55.0   # wider hysteresis band for production
+#   min_trades_before_guard   = 20     # larger warmup window for mainnet
+#
+# Escalation ladder: SL cooldown → Win Rate Guard → Regime gate → CB
+enable_win_rate_guard     = false   # opt-in — set true to activate
+min_win_rate_pct          = 40.0   # suppress below 40% (conservative: 50.0)
+win_rate_guard_resume_pct = 45.0   # resume above 45% (conservative: 55.0)
+min_trades_before_guard   = 10     # warmup window (conservative: 20)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -291,10 +265,6 @@ enable_smart_filter       = false
 market_impact_coefficient = 0.01
 
 
-# ──────────────────────────────────────────────────═──────────────────────────
-# PYTH — SOL/USD price feed (Hermes HTTP, 500ms polling)
-# feed_id: canonical SOL/USD Pyth mainnet price account
-# ──────────────────────────────────────────────────═──────────────────────────
 [pyth]
 http_endpoint      = "https://hermes.pyth.network"
 feed_ids           = ["0xef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d"]
@@ -315,14 +285,14 @@ enable_file_logging = true
 
 [metrics]
 enable_metrics = true
-stats_interval = 3000   # V3.8: kept at 3000 — avoid Telegram spam
+stats_interval = 3000   # kept at 3000 — avoid Telegram spam
 
 
 [database]
 enabled = false
 
 
-# ═════════════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════
 #  🔔 ALERTS — Telegram Mobile Notifications (PR #101)
 #
 #  Setup (one-time, ~2 minutes):
@@ -335,15 +305,11 @@ enabled = false
 #         export GRIDZBOTZ_TELEGRAM_TOKEN=YOUR_TOKEN
 #         export GRIDZBOTZ_TELEGRAM_CHAT_ID=YOUR_CHAT_ID
 #
-#  Notifications:
-#    🚀 Bot started (pair, capital, spacing, WMA gate, mode)
-#    💰 Every SELL fill (price, size, Δ P&L, fill #)
-#    🚨 Circuit breaker tripped (reason, drawdown, cooldown)
-#    ✅ Circuit breaker reset (trading resumed)
-#    📊 Heartbeat every 50 cycles ~5s (NAV, P&L, ROI, win rate)
-#    🏁 Shutdown summary (uptime, fills, P&L, ROI, win rate)
+#  Notifications fired:
+#    🚀 Bot started | 💰 Every SELL fill | 🚨 Circuit breaker tripped
+#    ✅ Circuit breaker reset | 📊 Heartbeat | 🏁 Shutdown summary
 #
 #  If env vars are absent — silent no-op, zero impact on trading.
-# ═════════════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════
 [alerts]
-enabled = true   # ✅ PR #101: Telegram wired — set env vars to activate
+enabled = true
